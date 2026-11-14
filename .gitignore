@@ -6,7 +6,8 @@ mutation.json
 *.test
 .obsidian/
 .dtui.yaml
-.claude/
+.claude/*
+!.claude/skills
 
 # mac
 .DS_Store
