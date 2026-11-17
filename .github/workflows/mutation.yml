@@ -2,7 +2,9 @@ name: mutation
 
 # Mutation testing (gremlins): flips operators and conditions in the code and
 # checks that some test fails. Line coverage says a line ran; this says a
-# test would notice if its logic were wrong. See CONTRIBUTING.md.
+# test would notice if its logic were wrong. This workflow checks a PR's
+# changed lines; mutation-full.yml runs the whole module weekly. See
+# CONTRIBUTING.md.
 on:
   pull_request:
     branches: [main]
@@ -12,11 +14,8 @@ on:
       - 'go.sum'
       - '.gremlins.yaml'
       - 'makefile'
-      - 'scripts/mutation-report.sh'
+      - 'scripts/mutation-*.sh'
       - '.github/workflows/mutation.yml'
-  schedule:
-    - cron: '41 3 * * 0' # weekly full report
-  workflow_dispatch:
 
 permissions:
   contents: read
@@ -27,8 +26,7 @@ concurrency:
 
 jobs:
   changed-lines:
-    name: Mutation (changed lines)
-    if: github.event_name == 'pull_request'
+    name: changed lines (80% gate)
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -47,35 +45,3 @@ jobs:
         env:
           BASE_REF: ${{ github.base_ref }}
         run: make mutation-diff MUTATION_BASE="origin/$BASE_REF"
-
-  full:
-    name: Mutation (full report)
-    if: github.event_name != 'pull_request'
-    runs-on: ubuntu-latest
-    timeout-minutes: 360
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Set up Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: go.mod
-
-      # One worker per CPU starves the hosted runner until it drops off
-      # ("lost communication with the server"); the resource log shows
-      # which of memory or disk ran out if it happens again.
-      - name: Mutation test the module
-        run: |
-          (while sleep 60; do echo "::group::resources $(date -u +%H:%M)"; free -m; df -h / /tmp; echo "::endgroup::"; done) &
-          make mutation MUTATION_WORKERS=2
-
-      - name: Upload report
-        if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: mutation-report
-          path: mutation.json
-          if-no-files-found: ignore
