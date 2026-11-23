@@ -239,20 +239,41 @@ dtui query 'fetch logs, from:now()-1h | filter loglevel == "ERROR"'   # runs on 
 dtui query -f investigation.dql                 # or --dql '…'
 dtui list-presets
 dtui --context prod list-presets
+dtui save-preset payments-errors logs --facet loglevel=ERROR --search payment
 dtui delete-preset payments-errors
+dtui --listen                                   # accept pages from dtui send (e.g. an agent)
+dtui send logs --facet loglevel=ERROR           # open a page in that TUI; esc returns
+dtui send logs --facet loglevel=ERROR --save errs   # … and save it as W would
 ```
 
 Press `?` inside the TUI for the full key reference, `:` to browse views, and
 `q` to quit. `:preset` lists saved facet presets (name, target view, filters);
-`:preset <name>` opens one; `d` in that list deletes a personal save (`dtui delete-preset` is the CLI form). dtui refuses to start without a terminal (or inside an AI-agent
+`:preset <name>` opens one; `d` in that list deletes a personal save (`dtui save-preset` and `dtui delete-preset` are the CLI forms). dtui refuses to start without a terminal (or inside an AI-agent
 environment): it is interactive only. An agent that has investigated something
 with dtctl can still hand you the evidence: the launch flags above are a stable
 contract for a command you paste and run yourself
-([ADR-0018](docs/adr/0018-launch-flags-are-a-handoff-contract.md)). It keeps its own UI state (navigation
+([ADR-0018](docs/adr/0018-launch-flags-are-a-handoff-contract.md)). Or let the agent drive your TUI directly (below). It keeps its own UI state (navigation
 history) under `~/.local/state/dtui/`.
 
 Contexts and credentials are managed with dtctl; a `--context` flag or
 `DTCTL_CONTEXT` applies to the running session only.
+
+## Let an agent drive dtui
+
+An agent can't run the TUI, but it can drive one you started:
+
+1. In your terminal, run `dtui --listen`.
+2. The agent runs `dtui send` with the same arguments as a launch, for
+   example `dtui send logs --facet loglevel=ERROR --search timeout`. The page
+   opens on top of what you were reading; `esc` returns.
+3. `--save NAME` on `send`, or `dtui save-preset NAME VIEW --facet …`,
+   saves the narrowing as a personal preset of the TUI's context, as if you
+   pressed `W`.
+
+`send` prints what it opened or saved and exits 1 with the reason on
+failure, including when no dtui is listening. It never switches your context
+and never writes to the tenant. `--session NAME` runs several listening TUIs
+side by side. See [ADR-0019](docs/adr/0019-agents-may-navigate-a-listening-tui.md).
 
 ## Workspace file (`.dtui.yaml`)
 

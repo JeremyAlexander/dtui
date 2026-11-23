@@ -33,7 +33,11 @@ type Options struct {
 	// Launch is the first page (Target "" = home) and its narrowing — the CLI
 	// view, argument and launch flags, built like a deep link. Context is
 	// ignored here: the caller already chose the context.
-	Launch           NavigateMsg
+	Launch NavigateMsg
+	// Listen, when set, starts serving remote requests (dtui --listen)
+	// before the program runs; stop is called on exit. The transport lives
+	// in the main package so this package opens no listener.
+	Listen           func(Remote) (stop func(), err error)
 	HistoryPath      string // navigation-history file; "" = in-memory only
 	QueryHistoryPath string // submitted-DQL history file; "" = in-memory only
 	// Presets are named facet sets available to :preset this session
@@ -102,7 +106,15 @@ func Run(opts Options) error {
 	if err != nil {
 		return err
 	}
-	_, err = tea.NewProgram(app, tea.WithAltScreen()).Run()
+	p := tea.NewProgram(app, tea.WithAltScreen())
+	if opts.Listen != nil {
+		stop, err := opts.Listen(remoteHandler(p))
+		if err != nil {
+			return err
+		}
+		defer stop()
+	}
+	_, err = p.Run()
 	return err
 }
 
@@ -154,6 +166,9 @@ type app struct {
 
 	stack []viewModel
 	prev  []viewModel // '-' toggles between the two most recent stacks
+	// windowBelow is the session window to restore when esc pops a page
+	// an agent pushed on a new window: the pages it covers still use it.
+	windowBelow map[viewModel]catalog.Timeframe
 
 	// overlay is the open modal (nil = none): command palette, help,
 	// timeframe/history/open-with/segment/context pickers. One at a time —
@@ -447,6 +462,9 @@ func (a *app) dispatch(msg tea.Msg) tea.Cmd {
 	case NavigateMsg:
 		return a.navigateExternal(msg)
 
+	case remoteMsg:
+		return a.handleRemote(msg)
+
 	case requestSavePresetMsg:
 		return a.openPresetSave(msg)
 
@@ -694,8 +712,14 @@ func (a *app) handleKey(msg tea.KeyMsg) tea.Cmd {
 			}
 			if len(a.stack) > 1 {
 				a.prev = a.stack
+				popped := top
 				a.stack = a.stack[:len(a.stack)-1]
 				a.notice = queryNotice{} // stale for the view we just left
+				if tf, ok := a.windowBelow[popped]; ok {
+					delete(a.windowBelow, popped)
+					a.tf = tf
+					a.prev = nil // '-' would return to a page on the other window
+				}
 			}
 			return nil
 		}
@@ -820,8 +844,7 @@ func (a *app) launchPage(msg NavigateMsg, tf catalog.Timeframe, warns *[]string)
 			*warns = append(*warns, fmt.Sprintf("dropping facet with unsafe field %q", f.Field))
 			continue
 		}
-		facets = append(facets, catalog.Facet{Field: f.Field, Value: f.Value, Tokens: f.Tokens,
-			MapField: f.MapField, MapKey: f.MapKey})
+		facets = append(facets, f.Facet())
 	}
 	scope := catalog.Scope{Timeframe: tf}
 	if msg.Lens != "" {
@@ -1087,6 +1110,7 @@ func (a *app) broadcast(msg tea.Msg) tea.Cmd {
 // refetch) uses the window the header advertises.
 func (a *app) setTimeframe(tf catalog.Timeframe) tea.Cmd {
 	a.tf = tf
+	a.windowBelow = nil
 	seen := map[viewModel]bool{}
 	var cmds []tea.Cmd
 	for _, v := range append(append([]viewModel{}, a.stack...), a.prev...) {

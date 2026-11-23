@@ -33,10 +33,12 @@ import (
 var version = "dev"
 
 var (
-	cfgFile     string
-	contextName string
-	noAgent     bool
-	launch      launchFlags
+	cfgFile       string
+	contextName   string
+	noAgent       bool
+	launch        launchFlags
+	listen        bool
+	remoteSession string
 )
 
 var rootCmd = &cobra.Command{
@@ -68,7 +70,11 @@ sessions — and restores a page with its full breadcrumb trail.
 Press ? inside the TUI for the full key reference.
 
 dtui reads dtctl's contexts and credentials; create and manage them with
-dtctl (dtctl ctx set). dtui is read-only and interactive-only.`,
+dtctl (dtctl ctx set). dtui is read-only and interactive-only.
+
+An agent cannot run the TUI, but it can drive one the user started with
+--listen: dtui send opens pages in it and dtui save-preset saves presets
+as W would. See dtui send --help.`,
 	Example: `  # Launch on the home triage view (default)
   dtui
 
@@ -103,7 +109,13 @@ dtctl (dtctl ctx set). dtui is read-only and interactive-only.`,
   dtui logs --facet loglevel=ERROR
   dtui list-presets
   dtui --context prod list-presets
-  dtui delete-preset payments-errors`,
+  dtui save-preset payments-errors logs --facet loglevel=ERROR --search payment
+  dtui delete-preset payments-errors
+
+  # Let an agent drive this TUI: you run the first, the agent the others
+  dtui --listen
+  dtui send logs --facet loglevel=ERROR --search timeout
+  dtui send logs --facet loglevel=ERROR --save payments-errors`,
 	Args:              cobra.MaximumNArgs(2),
 	ValidArgsFunction: viewCompletion,
 	SilenceUsage:      true,
@@ -114,7 +126,7 @@ dtctl (dtctl ctx set). dtui is read-only and interactive-only.`,
 
 		if !noAgent {
 			if info := aidetect.Detect(); info.Detected {
-				return fmt.Errorf("dtui is interactive-only and does not run in AI agent sessions (pass --no-agent if this session was misdetected)")
+				return fmt.Errorf("dtui is interactive-only and does not run in AI agent sessions (pass --no-agent if this session was misdetected); to show the user a page, run 'dtui send ...' against their 'dtui --listen', or hand them the dtui command")
 			}
 		}
 		if !term.IsTerminal(int(os.Stdout.Fd())) {
@@ -183,6 +195,9 @@ dtctl (dtctl ctx set). dtui is read-only and interactive-only.`,
 			WorkspacePresets: namedPresets(ws, false),
 			SavePreset:       savePersonalPreset(personalPresetsPath(cfg.CurrentContext)),
 			DeletePreset:     deletePersonalPreset(personalPresetsPath(cfg.CurrentContext)),
+		}
+		if listen {
+			opts.Listen = listenRemote(remoteSession)
 		}
 		if ws != nil {
 			opts.WorkspaceSegments = workspaceSegments(ws)
@@ -472,20 +487,28 @@ func personalPresetCompletion(cmd *cobra.Command, args []string, toComplete stri
 	return personal.PresetNames(), cobra.ShellCompDirectiveNoFileComp
 }
 
+// addLaunchFlags registers the page-narrowing flags shared by the launch
+// and by send, so a handoff command and a drive command read the same.
+func addLaunchFlags(cmd *cobra.Command, f *launchFlags) {
+	cmd.Flags().StringVar(&f.preset, "preset", "", "named facet preset from .dtui.yaml or this context's personal presets (session-local; not auto-applied)")
+	cmd.Flags().StringArrayVar(&f.facets, "facet", nil, "server-side field=value filter on the starting view (repeatable)")
+	cmd.Flags().StringArrayVar(&f.searches, "search", nil, "server-side text search on the starting view (repeatable)")
+	cmd.Flags().StringVar(&f.timeframe, "timeframe", "", "relative starting window: 45m, 2h, 7d")
+	cmd.Flags().StringVar(&f.from, "from", "", "absolute window start, RFC 3339 with a zone (2026-01-02T15:04Z)")
+	cmd.Flags().StringVar(&f.to, "to", "", "absolute window end (default: now); requires --from")
+	cmd.Flags().StringVar(&f.lens, "lens", "", "lens to open the starting view on (e.g. traces --lens genai)")
+	cmd.Flags().StringVar(&f.dql, "dql", "", "open the query view running this DQL (alias for dtui query '<dql>')")
+	cmd.Flags().StringVarP(&f.file, "file", "f", "", "open the query view running the DQL in this file")
+	_ = cmd.RegisterFlagCompletionFunc("preset", presetCompletion)
+}
+
 func main() {
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "dtctl config file (searches .dtctl.yaml upward, then $XDG_CONFIG_HOME/dtctl/config; env: DTCTL_CONFIG)")
 	rootCmd.PersistentFlags().StringVar(&contextName, "context", "", "use a specific context for this session (env: DTCTL_CONTEXT; not persisted)")
 	rootCmd.PersistentFlags().BoolVar(&noAgent, "no-agent", false, "launch even if an AI agent environment is detected")
-	rootCmd.Flags().StringVar(&launch.preset, "preset", "", "named facet preset from .dtui.yaml or this context's personal presets (session-local; not auto-applied)")
-	rootCmd.Flags().StringArrayVar(&launch.facets, "facet", nil, "server-side field=value filter on the starting view (repeatable)")
-	rootCmd.Flags().StringArrayVar(&launch.searches, "search", nil, "server-side text search on the starting view (repeatable)")
-	rootCmd.Flags().StringVar(&launch.timeframe, "timeframe", "", "relative starting window: 45m, 2h, 7d")
-	rootCmd.Flags().StringVar(&launch.from, "from", "", "absolute window start, RFC 3339 with a zone (2026-01-02T15:04Z)")
-	rootCmd.Flags().StringVar(&launch.to, "to", "", "absolute window end (default: now); requires --from")
-	rootCmd.Flags().StringVar(&launch.lens, "lens", "", "lens to open the starting view on (e.g. traces --lens genai)")
-	rootCmd.Flags().StringVar(&launch.dql, "dql", "", "open the query view running this DQL (alias for dtui query '<dql>')")
-	rootCmd.Flags().StringVarP(&launch.file, "file", "f", "", "open the query view running the DQL in this file")
-	_ = rootCmd.RegisterFlagCompletionFunc("preset", presetCompletion)
+	addLaunchFlags(rootCmd, &launch)
+	rootCmd.Flags().BoolVar(&listen, "listen", false, "accept page requests from dtui send on a local socket (e.g. from an agent)")
+	rootCmd.PersistentFlags().StringVar(&remoteSession, "session", defaultSession, "socket name for --listen, send and save-preset, to run several listening TUIs")
 
 	// dtctl reserves -v for --verbose; keep the long form only.
 	rootCmd.Flags().Bool("version", false, "version for dtui")

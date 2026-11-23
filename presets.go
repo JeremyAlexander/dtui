@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"net/url"
@@ -64,9 +65,77 @@ var deletePresetCmd = &cobra.Command{
 	},
 }
 
+var saveLaunch launchFlags
+
+var savePresetCmd = &cobra.Command{
+	Use:   "save-preset NAME VIEW",
+	Short: "Save a personal named facet preset and exit",
+	Long: `Saves VIEW narrowed by --facet and --search as the personal preset NAME
+of the active context, exactly as W would on that page: no timeframe is
+pinned, and an existing personal preset of the same name is replaced. When a
+dtui --listen is running (see --session) the save goes through it, so its
+:preset list has the new preset at once; it saves to that TUI's context and
+refuses if --context names another. Otherwise
+~/.local/state/dtui/presets/<context>.yaml is written directly. .dtui.yaml
+is never edited. Does not need a TTY.`,
+	Example: `  dtui save-preset payments-errors logs --facet loglevel=ERROR --search payment
+  dtui logs --preset payments-errors`,
+	Args:              cobra.ExactArgs(2),
+	ValidArgsFunction: savePresetCompletion,
+	SilenceUsage:      true,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		name, view := args[0], args[1]
+		if !workspace.ValidPresetName(name) {
+			return fmt.Errorf("preset name %q must be kebab-case (a-z, digits, hyphens)", name)
+		}
+		if len(saveLaunch.facets) == 0 && len(saveLaunch.searches) == 0 {
+			return fmt.Errorf("a preset needs at least one --facet or --search")
+		}
+		nav, err := resolveLaunch(view, "", nil, saveLaunch)
+		if err != nil {
+			return err
+		}
+		path, err := socketPath(remoteSession)
+		if err == nil {
+			// An explicit --context must match the listening TUI's; otherwise
+			// the save follows whatever context the user is looking at.
+			nav.Context = contextOverride()
+			var reply remoteReply
+			if reply, err = sendRemote(path, tui.RemoteRequest{Page: nav, SaveAs: name}); err == nil {
+				return reportRemote(cmd.OutOrStdout(), reply)
+			}
+		}
+		if !errors.Is(err, errNoListener) && !errors.Is(err, errRemoteUnsupported) {
+			return err
+		}
+		ctx, err := presetContext()
+		if err != nil {
+			return err
+		}
+		p := tui.NamedPreset{Name: name, View: canonicalViewName(nav.Target),
+			Facets: catalogFacetsFromNav(nav.Facets), Searches: nav.Searches, Personal: true}
+		if err := savePersonalPreset(personalPresetsPath(ctx))(p); err != nil {
+			return err
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "saved preset %s (context %s) — dtui --preset %s\n", name, ctx, name)
+		return nil
+	},
+}
+
 func init() {
 	rootCmd.AddCommand(listPresetsCmd)
 	rootCmd.AddCommand(deletePresetCmd)
+	savePresetCmd.Flags().StringArrayVar(&saveLaunch.facets, "facet", nil, "server-side field=value filter (repeatable)")
+	savePresetCmd.Flags().StringArrayVar(&saveLaunch.searches, "search", nil, "server-side text search (repeatable)")
+	rootCmd.AddCommand(savePresetCmd)
+}
+
+// savePresetCompletion completes VIEW (the second argument) only.
+func savePresetCompletion(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	if len(args) == 1 {
+		return viewCompletion(cmd, nil, toComplete)
+	}
+	return nil, cobra.ShellCompDirectiveNoFileComp
 }
 
 // presetContext is the context a preset subcommand acts on: the same one a
@@ -355,8 +424,15 @@ func navFacets(in []catalog.Facet) []tui.NavFacet {
 	}
 	out := make([]tui.NavFacet, 0, len(in))
 	for _, f := range in {
-		out = append(out, tui.NavFacet{Field: f.Field, Value: f.Value, Tokens: f.Tokens,
-			MapField: f.MapField, MapKey: f.MapKey})
+		out = append(out, tui.NavFacetOf(f))
+	}
+	return out
+}
+
+func catalogFacetsFromNav(in []tui.NavFacet) []catalog.Facet {
+	out := make([]catalog.Facet, 0, len(in))
+	for _, f := range in {
+		out = append(out, f.Facet())
 	}
 	return out
 }

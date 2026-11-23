@@ -285,7 +285,7 @@ pod → workload → namespace → the sibling workload that's actually broken.
 | `H` | **history** — every breadcrumb trail visited, persisted per context across sessions (`~/.local/state/dtui/history.json`); enter restores the whole trail (data refetched, timeframe reapplied) |
 | `/` | incremental filter of the current table (client-side, per keystroke); **enter adds it as a server-side `\| search`** over every field of the unfetched dataset (terms stack as AND), **alt+enter replaces** the active terms; `esc` clears |
 | `f` / `F` | **facet manager** — active filters listed first (enter edits in place, `ctrl+x` removes one, `W` saves a named preset to `~/.local/state/dtui/presets/<context>.yaml`), below them the attributes (quick-search over the fetched records' keys) to add a new facet: pick a value from the server's `fieldsSummary` top values, or type a `*` pattern (`payment*`, `*ayment*`); filters stack, render as pills, survive refresh/timeframe, and persist into history / `F` clears them all (esc-chain clears too). On bucket-backed views `dt.system.bucket` is pinned first (tagged `bucket`): buckets are Grail's physical data separation, so a bucket facet prunes reads at the source — its filter injects right after the fetch, and every record is projected with its bucket (`fieldsAdd dt.system.bucket`) so the inspector shows it |
-| `:preset` / `:preset <name>` | **preset list** — name, target view, **source** (`personal` vs `workspace`), and saved facets; enter opens the highlighted one, `d` deletes a personal save (workspace `.dtui.yaml` presets are read-only here). `:preset <name>` skips the list. `dtui --preset` / `dtui delete-preset` are the CLI forms; `W` on a faceted DQL table saves to `~/.local/state/dtui/presets/<context>.yaml`. Personal presets are per dtctl context (`:ctx` swaps the list; `list-presets`/`delete-preset` act on the active context); `.dtui.yaml` presets are shared |
+| `:preset` / `:preset <name>` | **preset list** — name, target view, **source** (`personal` vs `workspace`), and saved facets; enter opens the highlighted one (`1`–`9` open the numbered rows), `d` deletes a personal save (workspace `.dtui.yaml` presets are read-only here). `:preset <name>` skips the list. `dtui --preset` / `dtui save-preset` / `dtui delete-preset` are the CLI forms (`save-preset NAME VIEW` takes `--facet` and `--search` and saves through the same `SavePreset` as `W`); `W` on a faceted DQL table saves to `~/.local/state/dtui/presets/<context>.yaml`. Personal presets are per dtctl context (`:ctx` swaps the list; `list-presets`/`delete-preset` act on the active context); `.dtui.yaml` presets are shared |
 | `f` (inspector / details tab) | facet the **list beneath** by the selected field's value — scalars apply exactly, array elements as a contains pattern; refused with a message when the list's rows don't carry the field |
 | `shift-j/k` | sort by column, toggle direction |
 | `0`–`9` | hotkeys — fixed view bookmarks (0 home, 1 problems, 2 services, 3 hosts, 4 pods, 5 logs, 6 traces, 7 workloads, 8 events, 9 aws); on entered pages digits follow the numbered tab strip |
@@ -345,6 +345,31 @@ their page through `launchView`:
 Guards, checked before entering the alternate screen: not a TTY → error; agent
 mode → structured error envelope (`"ui is interactive-only"`); `--plain` →
 error suggesting non-interactive equivalents.
+
+**Remote requests**
+([ADR-0019](../adr/0019-agents-may-navigate-a-listening-tui.md)).
+`dtui --listen [--session NAME]` serves `$XDG_RUNTIME_DIR/dtui/<NAME>.sock`
+(mode `0600`, default name `default`) from the main package (`remote.go`).
+Each connection carries one JSON `RemoteRequest`: a `NavigateMsg` page,
+`open`, and `save_as`. The TUI answers one JSON reply: the page's
+breadcrumb, the preset saved, or an error. `dtui send` resolves the launch
+grammar with `resolveLaunch` and sets `open` (and `save_as` with `--save`).
+`dtui save-preset` sends a save-only request, and writes the personal file
+itself only when nothing is listening. On Windows, where the socket cannot
+be made owner-only, `--listen` and `send` refuse and `save-preset` always
+writes the file.
+
+Inside `internal/tui` (`remote.go`), opening *pushes* through `launchView`
+(unlike a deep link), refuses a `Context` other than the session's, and sets
+"agent opened …" on the status line. An open is refused while a text input
+or overlay is active. A page pushed on a new window records the old one in
+`app.windowBelow`; `esc` off it restores the header's window to the one the
+covered pages still use. A request that reaches `Update` after its caller
+timed out is dropped. Saving takes `tableView.presetDraft`
+and `app.savePreset`, the same pair `W` uses, so the file, the `:preset`
+list and the saved shape match a keypress. Warnings such as a dropped unsafe
+facet still open the page, come back as an error, and block the save. `send`
+and `save-preset` need no TTY and skip the agent guard.
 
 ### Layout
 
