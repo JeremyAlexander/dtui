@@ -36,8 +36,7 @@ var (
 	cfgFile     string
 	contextName string
 	noAgent     bool
-	presetName  string
-	facetFlags  []string
+	launch      launchFlags
 )
 
 var rootCmd = &cobra.Command{
@@ -82,6 +81,19 @@ dtctl (dtctl ctx set). dtui is read-only and interactive-only.`,
   dtui nav SERVICE
   dtui nav payments
 
+  # A second word works as in the command bar: a trace id, a table filter
+  dtui trace 4bf92f3577b34da6a3ce929d0e0e4736
+  dtui pods checkout
+
+  # Hand over an investigation: window, server-side narrowing, or DQL
+  dtui logs --from 2026-01-02T14:00Z --to 2026-01-02T15:00Z --facet loglevel=ERROR --search timeout
+  dtui problems --timeframe 24h
+  dtui traces --lens genai --timeframe 7d
+
+  # Open the query view running a DQL query — the same forms as dtctl query
+  dtui query 'fetch logs, from:now()-1h | filter loglevel == "ERROR"'
+  dtui query -f investigation.dql
+
   # Launch against a specific context (session-local, never persisted)
   dtui --context prod
 
@@ -109,27 +121,11 @@ dtctl (dtctl ctx set). dtui is read-only and interactive-only.`,
 			return fmt.Errorf("dtui requires a terminal (stdout is not a TTY)")
 		}
 
-		view := "home"
-		if ws != nil && ws.View != "" {
-			if isBespokeView(ws.View) || catalog.Lookup(ws.View) != nil {
-				view = ws.View
-			} else {
-				wsWarnings = append(wsWarnings, fmt.Sprintf("unknown workspace view %q — starting on home", ws.View))
-			}
-		}
-		cliView := ""
-		viewArg := ""
+		var cliView, viewArg string
 		if len(args) >= 1 {
 			cliView = args[0]
-			view = args[0]
 		}
 		if len(args) == 2 {
-			// Only the navigator takes an argument (`dtui nav <type|id|name>`,
-			// smartscape-navigator.md) — everywhere else the second word is a
-			// mistake worth naming.
-			if !isNavView(view) {
-				return fmt.Errorf("only nav takes an argument (dtui nav <type|id|name>); %q does not", view)
-			}
 			viewArg = args[1]
 		}
 
@@ -151,18 +147,18 @@ dtctl (dtctl ctx set). dtui is read-only and interactive-only.`,
 			wsWarnings = append(wsWarnings, personalWarn)
 		}
 		presetCatalog := workspace.MergePresetCatalog(ws, personal)
-		narrow, err := resolveLaunchNarrowing(cliView, presetCatalog, presetName, facetFlags)
+		page, err := resolveLaunch(cliView, viewArg, presetCatalog, launch)
 		if err != nil {
 			return err
 		}
-		if narrow.view != "" {
-			view = narrow.view
-		}
-
-		// Only an explicit CLI argument can still be unknown here (the
-		// workspace view fell back above) — that stays a hard error.
-		if !isBespokeView(view) && catalog.Lookup(view) == nil {
-			return fmt.Errorf("unknown view %q (available: home, query, nav, %s)", view, strings.Join(catalog.Names(), ", "))
+		// No view named: the workspace default, which falls back to home
+		// rather than failing (a committed file must never brick dtui).
+		if page.Target == "" && ws != nil && ws.View != "" {
+			if isBespokeView(ws.View) || catalog.Lookup(ws.View) != nil {
+				page.Target = ws.View
+			} else {
+				wsWarnings = append(wsWarnings, fmt.Sprintf("unknown workspace view %q — starting on home", ws.View))
+			}
 		}
 		// dtui ships its own client identity:
 		// tenant-side request logs must distinguish dtui from dtctl.
@@ -180,10 +176,7 @@ dtctl (dtctl ctx set). dtui is read-only and interactive-only.`,
 			SegmentSource:    segmentSource(segment.NewHandler(c)),
 			SwitchContext:    switchContext,
 			Contexts:         contextNames(cfg),
-			InitialView:      view,
-			InitialArg:       viewArg,
-			InitialFacets:    narrow.facets,
-			InitialSearches:  narrow.searches,
+			Launch:           page,
 			HistoryPath:      historyPath(),
 			QueryHistoryPath: queryHistoryPath(),
 			Presets:          mergedNamedPresets(ws, personal),
@@ -195,9 +188,6 @@ dtctl (dtctl ctx set). dtui is read-only and interactive-only.`,
 			opts.WorkspaceSegments = workspaceSegments(ws)
 			opts.WorkspacePrimaryTags = ws.PrimaryTags
 			opts.InitialTimeframe = ws.Timeframe
-		}
-		if narrow.tf != "" {
-			opts.InitialTimeframe = narrow.tf
 		}
 		switch {
 		case len(wsWarnings) > 0:
@@ -442,8 +432,7 @@ func isBespokeView(name string) bool {
 	return isNavView(name)
 }
 
-// isNavView reports whether the name opens the smartscape navigator — the
-// one view whose CLI form takes an argument.
+// isNavView reports whether the name opens the smartscape navigator.
 func isNavView(name string) bool {
 	switch name {
 	case "nav", "smartscape", "navigator":
@@ -487,8 +476,15 @@ func main() {
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "dtctl config file (searches .dtctl.yaml upward, then $XDG_CONFIG_HOME/dtctl/config; env: DTCTL_CONFIG)")
 	rootCmd.PersistentFlags().StringVar(&contextName, "context", "", "use a specific context for this session (env: DTCTL_CONTEXT; not persisted)")
 	rootCmd.PersistentFlags().BoolVar(&noAgent, "no-agent", false, "launch even if an AI agent environment is detected")
-	rootCmd.Flags().StringVar(&presetName, "preset", "", "named facet preset from .dtui.yaml or this context's personal presets (session-local; not auto-applied)")
-	rootCmd.Flags().StringArrayVar(&facetFlags, "facet", nil, "server-side field=value filter on the starting view (repeatable)")
+	rootCmd.Flags().StringVar(&launch.preset, "preset", "", "named facet preset from .dtui.yaml or this context's personal presets (session-local; not auto-applied)")
+	rootCmd.Flags().StringArrayVar(&launch.facets, "facet", nil, "server-side field=value filter on the starting view (repeatable)")
+	rootCmd.Flags().StringArrayVar(&launch.searches, "search", nil, "server-side text search on the starting view (repeatable)")
+	rootCmd.Flags().StringVar(&launch.timeframe, "timeframe", "", "relative starting window: 45m, 2h, 7d")
+	rootCmd.Flags().StringVar(&launch.from, "from", "", "absolute window start, RFC 3339 with a zone (2026-01-02T15:04Z)")
+	rootCmd.Flags().StringVar(&launch.to, "to", "", "absolute window end (default: now); requires --from")
+	rootCmd.Flags().StringVar(&launch.lens, "lens", "", "lens to open the starting view on (e.g. traces --lens genai)")
+	rootCmd.Flags().StringVar(&launch.dql, "dql", "", "open the query view running this DQL (alias for dtui query '<dql>')")
+	rootCmd.Flags().StringVarP(&launch.file, "file", "f", "", "open the query view running the DQL in this file")
 	_ = rootCmd.RegisterFlagCompletionFunc("preset", presetCompletion)
 
 	// dtctl reserves -v for --verbose; keep the long form only.
