@@ -205,6 +205,10 @@ type app struct {
 	qhist            *queryHistory
 	presets          map[string]NamedPreset
 	workspacePresets map[string]NamedPreset
+	// lastFilter is this session's latest server-side narrowing per catalog
+	// view (facets + searches). Hotkey and command-bar jumps restore it;
+	// named presets are never auto-applied. Dropped on :ctx.
+	lastFilter map[string]viewFilter
 
 	status    string
 	statusErr bool
@@ -281,6 +285,9 @@ func newApp(opts Options) (*app, error) {
 		a.opts.StartupNoticeErr = true
 	}
 	a.stack = []viewModel{initial}
+	if !opts.Launch.FromPreset {
+		a.rememberLastFilter(false)
+	}
 	return a, nil
 }
 
@@ -526,6 +533,7 @@ func (a *app) dispatch(msg tea.Msg) tea.Cmd {
 
 	case historyMarkMsg:
 		a.recordHistory()
+		a.rememberLastFilter(true)
 		return nil
 
 	case applyFacetMsg:
@@ -887,21 +895,40 @@ func (a *app) jumpTo(name, filter string) tea.Cmd {
 	if err != nil {
 		return statusErr(err.Error())
 	}
-	if tv, ok := view.(*tableView); ok && filter != "" {
-		tv.setFilter(filter)
+	var restored string
+	if tv, ok := view.(*tableView); ok {
+		if filter != "" {
+			tv.setFilter(filter)
+		} else {
+			restored = a.applyLastFilter(tv)
+		}
 	}
 	nav := a.navigate(view, true)
+	var notes []string
+	isErr := false
 	// The view was built unscoped when the pin didn't apply — say so, so the
 	// user isn't left reading an unfiltered list wondering why.
 	if a.pinRejected(name) {
-		return tea.Batch(nav, statusErr(fmt.Sprintf("%s can't scope to %s — showing all (ctrl+x unpins)", name, a.pin.Type)))
+		notes = append(notes, fmt.Sprintf("%s can't scope to %s — showing all (ctrl+x unpins)", name, a.pin.Type))
+		isErr = true
 	}
 	// Same honesty for segments: API-backed views bypass query:execute, so
 	// the global scope doesn't reach them (the header pill dims too).
 	if a.segmentsRejected(name) {
-		return tea.Batch(nav, statusErr(fmt.Sprintf("%s is API-backed — segments don't apply", name)))
+		notes = append(notes, fmt.Sprintf("%s is API-backed — segments don't apply", name))
+		isErr = true
 	}
-	return nav
+	if restored != "" {
+		notes = append(notes, restored)
+	}
+	if len(notes) == 0 {
+		return nav
+	}
+	msg := strings.Join(notes, " · ")
+	if isErr {
+		return tea.Batch(nav, statusErr(msg))
+	}
+	return tea.Batch(nav, status(msg))
 }
 
 // openNav routes a command-bar navigator jump: no argument opens the
@@ -968,6 +995,7 @@ func (a *app) handleCtxSwitched(msg ctxSwitchedMsg) tea.Cmd {
 	a.hist.ctx = w.ContextName // H now records and lists the new context
 	a.opts.SavePreset, a.opts.DeletePreset = w.SavePreset, w.DeletePreset
 	a.presets = map[string]NamedPreset{}
+	a.lastFilter = nil
 	for _, p := range w.Presets {
 		if p.Name != "" {
 			a.presets[p.Name] = p
