@@ -127,13 +127,19 @@ rest how the view uses it.
   the number the sample line gives.
 - **A sample line says what the rows were computed from.** It is built from
   the same response as the rows. When nothing cut the sample it reads
-  `all 3 exception spans · last 2h`. When something did, the reason leads and
-  the window trails, because a narrow table cuts the line at its end:
-  `limit hit: newest 1000 exception spans, back to 11:48:19; older ones are not counted · last 2h`.
-  The reasons are the row limit, the result size limit, Grail's scan limit and
-  the fetch timeout. The reach (`back to`) is given only when the row or the
-  size limit cut the sample: a loud bug can fill it in seconds, and a count
-  alone hides that. After a scan limit or a timeout the spans are not known to
+  `all 3 exception spans · last 2h`. A sample of one span has no "all"
+  (`1 exception span · last 2h`), and an empty sample that nothing cut has no
+  line. When something did cut it, the reason leads and the window trails,
+  because a narrow table cuts the line at its end: the line starts
+  `limit hit: newest 1000 exception spans, back to 11:48:19`, then says that
+  older ones are not counted, then gives the window. A sample of exactly the
+  row limit is reported as cut by it, because it cannot be told from a longer
+  one. The reasons the line names are the row limit, the result size limit,
+  Grail's scan limit and the fetch timeout. A response Grail marks as sampled
+  is not called `all`. The reach (`back to`) is given only when the row or
+  the size limit cut the sample and a span's time can be read: a loud bug can
+  fill it in seconds, and a count alone hides that. After a scan limit or a
+  timeout the spans are not known to
   be the newest, so the line says `of what was scanned` and gives no reach. An
   empty sample that was cut never reads as "no exceptions": it says the scan
   gave up, or that no span fit the size limit. A group's count is the number
@@ -230,8 +236,9 @@ Rejected:
 - The golden files of the key are not layout snapshots.
   [CONTRIBUTING.md](../../CONTRIBUTING.md) allows them as versioned
   compatibility fixtures.
-- The view's tests cover: a full sample, which claims nothing about older
-  spans; a sample one short of the row limit; a result cut by the size limit,
+- The view's tests cover: a sample of exactly the row limit, which is
+  reported as cut; a sample one short of the row limit, which is not; a
+  sample of one span; a result cut by the size limit,
   by the scan limit and by a timeout, each named as that; an empty cut sample;
   typing a key, pressing Enter and asserting that no DQL holds it; the facet
   picker's fields taken from the spans; the layout at four sizes.
