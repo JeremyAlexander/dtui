@@ -35,7 +35,7 @@ func TestParseStackFramesJava(t *testing.T) {
 	at java.base/java.lang.Thread.run(Thread.java:833)
 	at app//com.acme.shop.Main.main(Main.java:9)
 	at com.acme.shop.Native.call(Native Method)`,
-			frames(StackDotted,
+			frames(StackJava,
 				"com.acme.shop.CartService", "addItem",
 				"com.acme.shop.CartController", "post",
 				"java.lang.Thread", "run",
@@ -47,7 +47,7 @@ func TestParseStackFramesJava(t *testing.T) {
 			"com.acme.shop.Gen.run(Unknown Source)\n" +
 			"com.acme.shop.Gen.go(<generated>)\n" +
 			"com.acme.shop.Kt.run(Cart.kt)",
-			frames(StackDotted,
+			frames(StackJava,
 				"com.acme.shop.CartService", "addItem",
 				"com.acme.shop.CartService", "<init>",
 				"com.acme.shop.Native", "call",
@@ -61,7 +61,7 @@ func TestParseStackFramesJava(t *testing.T) {
 	at jdk.internal.reflect.GeneratedConstructorAccessor7.newInstance(Unknown Source)
 	at com.sun.proxy.$Proxy88.addItem(Unknown Source)
 	at jdk.proxy3.$Proxy41.addItem(Unknown Source)`,
-			frames(StackDotted,
+			frames(StackJava,
 				"com.acme.shop.CartService<auto>", "addItem",
 				"com.acme.shop.CartService<auto>", "invoke",
 				"sun.reflect.<auto>", "invoke",
@@ -72,7 +72,7 @@ func TestParseStackFramesJava(t *testing.T) {
 	at com.acme.shop.CartService$$Lambda$214/0x0000000800d1a840.accept(Unknown Source)
 	at com.acme.shop.CartService$$Lambda/0x0000000800d1a840.accept(Unknown Source)
 	at com.acme.shop.CartService.addItem(CartService.java:50)`,
-			frames(StackDotted, "com.acme.shop.CartService", "addItem")},
+			frames(StackJava, "com.acme.shop.CartService", "addItem")},
 		{"the last cause is the root, completed from its parent", `com.acme.shop.CheckoutException: checkout failed
 	at com.acme.shop.Checkout.run(Checkout.java:30)
 	at com.acme.shop.Api.post(Api.java:12)
@@ -81,7 +81,7 @@ Caused by: java.lang.IllegalStateException: Cart 7 is locked
 	at com.acme.shop.CartService.addItem(CartService.java:42)
 	at com.acme.shop.Checkout.run(Checkout.java:28)
 	... 2 more`,
-			frames(StackDotted,
+			frames(StackJava,
 				"com.acme.shop.CartService", "addItem",
 				"com.acme.shop.Checkout", "run",
 				"com.acme.shop.Api", "post",
@@ -95,7 +95,7 @@ Caused by: com.acme.shop.CheckoutException: checkout failed
 Caused by: java.lang.IllegalStateException: locked
 	at com.acme.shop.CartService.addItem(CartService.java:42)
 	... 2 more`,
-			frames(StackDotted,
+			frames(StackJava,
 				"com.acme.shop.CartService", "addItem",
 				"com.acme.shop.Api", "post",
 				"com.acme.shop.Server", "handle")},
@@ -103,11 +103,11 @@ Caused by: java.lang.IllegalStateException: locked
 Caused by: java.lang.IllegalStateException: locked
 	at com.acme.shop.CartService.addItem(CartService.java:42)
 	... 9 more`,
-			frames(StackDotted, "com.acme.shop.CartService", "addItem", "com.acme.shop.Api", "post")},
+			frames(StackJava, "com.acme.shop.CartService", "addItem", "com.acme.shop.Api", "post")},
 		{"a cause without the marker stands alone", `	at com.acme.shop.Api.post(Api.java:12)
 Caused by: java.lang.IllegalStateException: locked
 	at com.acme.shop.CartService.addItem(CartService.java:42)`,
-			frames(StackDotted, "com.acme.shop.CartService", "addItem")},
+			frames(StackJava, "com.acme.shop.CartService", "addItem")},
 		{"suppressed exceptions are left out", `	at com.acme.shop.Api.post(Api.java:12)
 	Suppressed: java.io.IOException: close failed
 		at com.acme.shop.Conn.close(Conn.java:5)
@@ -115,16 +115,16 @@ Caused by: java.lang.IllegalStateException: locked
 Caused by: java.lang.IllegalStateException: locked
 	at com.acme.shop.CartService.addItem(CartService.java:42)
 	... 1 more`,
-			frames(StackDotted, "com.acme.shop.CartService", "addItem", "com.acme.shop.Api", "post")},
+			frames(StackJava, "com.acme.shop.CartService", "addItem", "com.acme.shop.Api", "post")},
 		{"recursion collapses", `	at com.acme.shop.Tree.walk(Tree.java:10)
 	at com.acme.shop.Tree.walk(Tree.java:14)
 	at com.acme.shop.Tree.walk(Tree.java:14)
 	at com.acme.shop.Tree.start(Tree.java:3)
 	at com.acme.shop.Tree.walk(Tree.java:14)`,
-			frames(StackDotted,
+			frames(StackJava,
 				"com.acme.shop.Tree", "walk", "com.acme.shop.Tree", "start", "com.acme.shop.Tree", "walk")},
 		{"windows line ends", "\tat com.acme.shop.Api.post(Api.java:12)\r\n\tat com.acme.shop.Server.handle(Server.java:80)\r\n",
-			frames(StackDotted, "com.acme.shop.Api", "post", "com.acme.shop.Server", "handle")},
+			frames(StackJava, "com.acme.shop.Api", "post", "com.acme.shop.Server", "handle")},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) { assertFrames(t, tc.stack, tc.want) })
@@ -143,7 +143,7 @@ func TestParseStackFramesDotNet(t *testing.T) {
    at Acme.Shop.Repo` + "`" + `1.Get[T](Int32 id)
    at Acme.Shop.Cart..ctor(String owner)
    at lambda_method(Closure, Object)`,
-			frames(StackDotted,
+			frames(StackDotNet,
 				"Acme.Shop.CartService", "AddItem",
 				"Acme.Shop.CartController", "Post",
 				"Acme.Shop.Repo`1", "Get",
@@ -153,25 +153,25 @@ func TestParseStackFramesDotNet(t *testing.T) {
 --- End of stack trace from previous location ---
    at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()
    at Acme.Shop.CartController.<PostAsync>d__4.MoveNext() in /src/shop/CartController.cs:line 20`,
-			frames(StackDotted,
+			frames(StackDotNet,
 				"Acme.Shop.CartService", "AddItemAsync",
 				"System.Runtime.ExceptionServices.ExceptionDispatchInfo", "Throw",
 				"Acme.Shop.CartController", "PostAsync")},
 		{"closures unwrap to the method", `   at Acme.Shop.CartService.<>c__DisplayClass5_0.<AddItem>b__0(Item item)
    at Acme.Shop.CartService.<>c.<Total>b__7_1(Item item)
    at Acme.Shop.CartService.<>c.<Total>b__9(Item item)`,
-			frames(StackDotted,
+			frames(StackDotNet,
 				"Acme.Shop.CartService", "AddItem", "Acme.Shop.CartService", "Total")},
-		{"a name that starts with a dot", "   at .Run()", frames(StackDotted, "", "Run")},
+		{"a name that starts with a dot", "   at .Run()", frames(StackDotNet, "", "Run")},
 		{"the innermost exception is the root", `Acme.Shop.CheckoutException: failed
  ---> System.InvalidOperationException: Cart 7 is locked
    at Acme.Shop.CartService.AddItem(String sku)
    --- End of inner exception stack trace ---
    at Acme.Shop.Checkout.Run()`,
-			frames(StackDotted, "Acme.Shop.CartService", "AddItem")},
+			frames(StackDotNet, "Acme.Shop.CartService", "AddItem")},
 		{"the inner marker before any frame ends nothing", `   --- End of inner exception stack trace ---
    at Acme.Shop.Checkout.Run()`,
-			frames(StackDotted, "Acme.Shop.Checkout", "Run")},
+			frames(StackDotNet, "Acme.Shop.Checkout", "Run")},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) { assertFrames(t, tc.stack, tc.want) })
@@ -251,7 +251,7 @@ func TestParseStackFramesNode(t *testing.T) {
     at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
     at Array.map (<anonymous>)
     at <anonymous>`,
-			frames(StackNode,
+			frames(StackJS,
 				"/app/src/cart/service.js", "CartService.addItem",
 				"/app/src/cart/controller.js", "CartController.post",
 				"/app/src/cart/cart.mjs", "new Cart",
@@ -264,10 +264,10 @@ func TestParseStackFramesNode(t *testing.T) {
 				"<anonymous>", "Array.map",
 				"<anonymous>", "<anonymous>")},
 		{"nested dependencies address the innermost", "    at parse (/app/node_modules/a/node_modules/b/index.js:1:2)",
-			frames(StackNode, "node_modules/b/index.js", "parse")},
+			frames(StackJS, "node_modules/b/index.js", "parse")},
 		{"an unclosed location is kept", "    at parse (/app/src/parse.js:1:2",
-			frames(StackNode, "/app/src/parse.js", "parse")},
-		{"an empty location", "    at parse ()", frames(StackNode, "", "parse")},
+			frames(StackJS, "/app/src/parse.js", "parse")},
+		{"an empty location", "    at parse ()", frames(StackJS, "", "parse")},
 		{"at without a frame", "    at \n    at async \n    at some words here", nil},
 	}
 	for _, tc := range cases {
@@ -318,15 +318,43 @@ Traceback (most recent call last):
     cart.add_item(sku)
 RuntimeError: failed`,
 			frames(StackPython, "/app/shop/cart.py", "add_item")},
-		{"a source line that looks like a frame is skipped", `  File "/app/shop/cart.py", line 42, in add_item
+		{"a line in another notation is not a frame", `  File "/app/shop/cart.py", line 42, in add_item
     session.commit()
-main.run()`,
-			[]StackFrame{
-				{Module: "main", Function: "run", Syntax: StackGo},
-				{Module: "/app/shop/cart.py", Function: "add_item", Syntax: StackPython}}},
+main.run()
+    at com.acme.shop.CartService.addItem(CartService.java:42)`,
+			frames(StackPython, "/app/shop/cart.py", "add_item")},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) { assertFrames(t, tc.stack, tc.want) })
+	}
+}
+
+// stackNotations is indexed by StackSyntax: each notation must read its own
+// sample line and stamp the frame with the index it sits at.
+func TestStackNotationsMatchTheirSyntax(t *testing.T) {
+	samples := map[StackSyntax]string{
+		StackJava:   "at com.acme.shop.CartService.addItem(CartService.java:42)",
+		StackDotNet: "at Acme.Shop.CartService.AddItem(String sku)",
+		StackJS:     "at CartService.addItem (/app/src/cart/service.js:42:17)",
+		StackPython: `File "/app/shop/cart.py", line 42, in add_item`,
+		StackGo:     "github.com/acme/shop/cart.(*Service).AddItem(0xc000010000)",
+	}
+	if len(samples) != len(stackNotations) {
+		t.Fatalf("%d notations, %d samples", len(stackNotations), len(samples))
+	}
+	for syntax, line := range samples {
+		f, ok := stackNotations[syntax].frame(line)
+		if !ok || f.Syntax != syntax {
+			t.Errorf("notation %d read %q as %+v, %v", syntax, line, f, ok)
+		}
+		// The trace as a whole is read in the same notation.
+		if got := ParseStackFrames(line); len(got) != 1 || got[0] != f {
+			t.Errorf("ParseStackFrames(%q) = %+v, want %+v", line, got, f)
+		}
+	}
+	if DefaultFrameClassifier.InApp(StackFrame{Module: "com.acme.shop.Cart", Syntax: StackSyntax(len(stackNotations))}) ||
+		DefaultFrameClassifier.InApp(StackFrame{Module: "com.acme.shop.Cart", Syntax: -1}) {
+		t.Error("a frame of an unknown notation must not be in-app")
 	}
 }
 
@@ -347,17 +375,17 @@ func TestDefaultFrameClassifier(t *testing.T) {
 		frame StackFrame
 		inApp bool
 	}{
-		{StackFrame{Module: "com.acme.shop.CartService", Syntax: StackDotted}, true},
-		{StackFrame{Module: "Acme.Shop.CartService", Syntax: StackDotted}, true},
-		{StackFrame{Module: "system.cart.Service", Syntax: StackDotted}, true},
-		{StackFrame{Module: "javafx", Syntax: StackDotted}, true},
-		{StackFrame{Module: "java.lang.Thread", Syntax: StackDotted}, false},
-		{StackFrame{Module: "org.springframework.web.Dispatcher", Syntax: StackDotted}, false},
-		{StackFrame{Module: "com.dynatrace.agent.Hook", Syntax: StackDotted}, false},
-		{StackFrame{Module: "System.Threading.Tasks.Task", Syntax: StackDotted}, false},
-		{StackFrame{Module: "Microsoft.AspNetCore.Routing.Endpoint", Syntax: StackDotted}, false},
-		{StackFrame{Module: "com.acme.shop.CartService<auto>", Syntax: StackDotted}, false},
-		{StackFrame{Module: "", Function: "lambda_method", Syntax: StackDotted}, false},
+		{StackFrame{Module: "com.acme.shop.CartService", Syntax: StackJava}, true},
+		{StackFrame{Module: "Acme.Shop.CartService", Syntax: StackDotNet}, true},
+		{StackFrame{Module: "system.cart.Service", Syntax: StackDotNet}, true},
+		{StackFrame{Module: "javafx", Syntax: StackJava}, true},
+		{StackFrame{Module: "java.lang.Thread", Syntax: StackJava}, false},
+		{StackFrame{Module: "org.springframework.web.Dispatcher", Syntax: StackJava}, false},
+		{StackFrame{Module: "com.dynatrace.agent.Hook", Syntax: StackJava}, false},
+		{StackFrame{Module: "System.Threading.Tasks.Task", Syntax: StackDotNet}, false},
+		{StackFrame{Module: "Microsoft.AspNetCore.Routing.Endpoint", Syntax: StackDotNet}, false},
+		{StackFrame{Module: "com.acme.shop.CartService<auto>", Syntax: StackJava}, false},
+		{StackFrame{Module: "", Function: "lambda_method", Syntax: StackDotNet}, false},
 
 		{StackFrame{Module: "main", Syntax: StackGo}, true},
 		{StackFrame{Module: "github.com/acme/shop/cart", Syntax: StackGo}, true},
@@ -369,13 +397,13 @@ func TestDefaultFrameClassifier(t *testing.T) {
 		{StackFrame{Module: "google.golang.org/grpc", Syntax: StackGo}, false},
 		{StackFrame{Module: "", Function: "panic", Syntax: StackGo}, false},
 
-		{StackFrame{Module: "/app/src/cart/service.js", Syntax: StackNode}, true},
-		{StackFrame{Module: `C:\app\src\cart.js`, Syntax: StackNode}, true},
-		{StackFrame{Module: "node_modules/express/lib/router/layer.js", Syntax: StackNode}, false},
-		{StackFrame{Module: "node:internal/process/task_queues", Syntax: StackNode}, false},
-		{StackFrame{Module: "internal/process/next_tick.js", Syntax: StackNode}, false},
-		{StackFrame{Module: "events.js", Syntax: StackNode}, false},
-		{StackFrame{Module: "<anonymous>", Syntax: StackNode}, false},
+		{StackFrame{Module: "/app/src/cart/service.js", Syntax: StackJS}, true},
+		{StackFrame{Module: `C:\app\src\cart.js`, Syntax: StackJS}, true},
+		{StackFrame{Module: "node_modules/express/lib/router/layer.js", Syntax: StackJS}, false},
+		{StackFrame{Module: "node:internal/process/task_queues", Syntax: StackJS}, false},
+		{StackFrame{Module: "internal/process/next_tick.js", Syntax: StackJS}, false},
+		{StackFrame{Module: "events.js", Syntax: StackJS}, false},
+		{StackFrame{Module: "<anonymous>", Syntax: StackJS}, false},
 
 		{StackFrame{Module: "/app/shop/cart.py", Syntax: StackPython}, true},
 		{StackFrame{Module: "cart.py", Syntax: StackPython}, true},

@@ -1,0 +1,75 @@
+package catalog
+
+import (
+	"regexp"
+	"strings"
+)
+
+// .NET traces: "at Ns.Type.Method(String arg) in File.cs:line 1" frames. An
+// exception that wraps another prints the inner one first, closed by an
+// "End of inner exception stack trace" line.
+
+var (
+	dotnetTypeArgsRe = regexp.MustCompile(`\[[^\]]*\]`)
+	// Compiler-generated names: async state machines, closure classes and
+	// the lambdas in them.
+	dotnetAsyncRe   = regexp.MustCompile(`<(\w+)>d__\d+\.MoveNext$`)
+	dotnetClosureRe = regexp.MustCompile(`<>c(?:__DisplayClass\d+_\d+)?\.`)
+	dotnetLambdaRe  = regexp.MustCompile(`<(\w+)>b__\d+(?:_\d+)?`)
+)
+
+// dotnetVendorPrefixes are the runtime and framework namespaces. Matching is
+// case-sensitive: "System." is .NET, "system." is somebody's namespace.
+var dotnetVendorPrefixes = []string{
+	"System.", "Microsoft.", "Newtonsoft.", "Grpc.", "OpenTelemetry.", "Dynatrace.",
+}
+
+const dotnetInnerEnd = "--- End of inner exception stack trace"
+
+func dotnetFrame(line string) (StackFrame, bool) {
+	rest, ok := strings.CutPrefix(line, "at ")
+	if !ok {
+		return StackFrame{}, false
+	}
+	name, _, ok := strings.Cut(strings.TrimSpace(rest), "(")
+	if !ok || strings.ContainsAny(name, " \t") {
+		return StackFrame{}, false
+	}
+	name = dotnetTypeArgsRe.ReplaceAllString(name, "")
+	name = dotnetAsyncRe.ReplaceAllString(name, "$1")
+	name = dotnetClosureRe.ReplaceAllString(name, "")
+	name = dotnetLambdaRe.ReplaceAllString(name, "$1")
+
+	module, function := "", name
+	if dot := strings.LastIndexByte(name, '.'); dot >= 0 {
+		module, function = name[:dot], name[dot+1:]
+	}
+	// Constructors are "Type..ctor".
+	if trimmed, ok := strings.CutSuffix(module, "."); ok {
+		module, function = trimmed, "."+function
+	}
+	if function == "" {
+		return StackFrame{}, false
+	}
+	return StackFrame{Module: module, Function: function, Syntax: StackDotNet}, true
+}
+
+// dotnetRootCause returns the frames of the innermost exception, which is
+// printed first.
+func dotnetRootCause(lines []string) []StackFrame {
+	var out []StackFrame
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if len(out) > 0 && strings.HasPrefix(line, dotnetInnerEnd) {
+			break
+		}
+		if f, ok := dotnetFrame(line); ok {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+func dotnetInApp(f StackFrame) bool {
+	return f.Module != "" && !hasAnyPrefix(f.Module, dotnetVendorPrefixes)
+}

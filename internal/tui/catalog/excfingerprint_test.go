@@ -38,7 +38,7 @@ func TestFingerprintExceptionsLadder(t *testing.T) {
 
 	t.Run("in-app frames", func(t *testing.T) {
 		fp := mustFingerprint(t, SpanException{Type: " " + typ + "\n", Message: "Cart 7 is locked", StackTrace: cartStack})
-		want := frames(StackDotted, "com.acme.shop.CartService", "addItem", "com.acme.shop.CartController", "post")
+		want := frames(StackJava, "com.acme.shop.CartService", "addItem", "com.acme.shop.CartController", "post")
 		if fp.Rung != RungAppFrames || !reflect.DeepEqual(fp.Frames, want) {
 			t.Errorf("rung %v frames %+v", fp.Rung, fp.Frames)
 		}
@@ -48,7 +48,7 @@ func TestFingerprintExceptionsLadder(t *testing.T) {
 	})
 	t.Run("all frames when none is in-app", func(t *testing.T) {
 		fp := mustFingerprint(t, SpanException{Type: typ, Message: "Cart 7 is locked", StackTrace: runtimeStack})
-		want := frames(StackDotted, "java.util.ArrayList", "get", "java.lang.Thread", "run")
+		want := frames(StackJava, "java.util.ArrayList", "get", "java.lang.Thread", "run")
 		if fp.Rung != RungFrames || !reflect.DeepEqual(fp.Frames, want) {
 			t.Errorf("rung %v frames %+v", fp.Rung, fp.Frames)
 		}
@@ -194,7 +194,7 @@ func (m onlyModule) InApp(f StackFrame) bool { return f.Module == string(m) }
 func TestFingerprintUsesTheGivenClassifier(t *testing.T) {
 	ex := SpanException{Type: "T", StackTrace: cartStack}
 	fp, _ := FingerprintExceptions([]SpanException{ex}, onlyModule("org.springframework.web.Dispatcher"))
-	want := frames(StackDotted, "org.springframework.web.Dispatcher", "dispatch")
+	want := frames(StackJava, "org.springframework.web.Dispatcher", "dispatch")
 	if fp.Rung != RungAppFrames || !reflect.DeepEqual(fp.Frames, want) {
 		t.Errorf("rung %v frames %+v", fp.Rung, fp.Frames)
 	}
