@@ -30,6 +30,13 @@ func (a *app) openSelection() tea.Cmd {
 		dql = p.DQL()
 	}
 	opts := linkOptionsFor(a.opts.Environment, rec, entity, traceID, dql)
+	if note := exitNote(a.top()); note != "" {
+		for i := range opts {
+			if opts[i].URL == queryLink(a.opts.Environment, dql) {
+				opts[i].Label += " " + note
+			}
+		}
+	}
 	if len(opts) == 0 {
 		return statusErr("nothing to open here")
 	}

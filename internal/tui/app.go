@@ -138,6 +138,21 @@ type dqlProvider interface {
 	DQL() string
 }
 
+// exitNoter is implemented by views whose two exits (o's Notebook, c's
+// echo) hand over something other than the rows on screen; the note says
+// what, wherever an exit reports what it did.
+type exitNoter interface {
+	ExitNote() string
+}
+
+// exitNote is the top view's note on its exits ("" for most views).
+func exitNote(v viewModel) string {
+	if n, ok := v.(exitNoter); ok {
+		return n.ExitNote()
+	}
+	return ""
+}
+
 // traceProvider is implemented by views standing on one trace (waterfall).
 type traceProvider interface {
 	TraceID() string
@@ -689,6 +704,9 @@ func (a *app) handleKey(msg tea.KeyMsg) tea.Cmd {
 		case "c":
 			if echo := top.Echo(); echo != "" {
 				yank(echo)
+				if note := exitNote(top); note != "" {
+					return status("copied " + note + ": " + flatten(echo))
+				}
 				return status("copied: " + flatten(echo))
 			}
 			return nil

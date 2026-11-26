@@ -511,3 +511,40 @@ func TestSampleLineKeepsItsReachOnANarrowScreen(t *testing.T) {
 		}
 	}
 }
+
+// Both exits hand over the query that fetched the sample: spans, one per
+// row, with no issue key and no count. Each says so where the user reads
+// what happened, so the notebook or the pasted command is not taken for the
+// grouped table.
+func TestExceptionsExitsSayTheyHandOverTheUngroupedSample(t *testing.T) {
+	var opened string
+	a, err := newApp(Options{ContextName: "test", SafetyLevel: "readonly", Environment: "https://tenant.example.invalid",
+		Launch: NavigateMsg{Target: "exceptions"}, OpenURL: func(u string) error { opened = u; return nil }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.ds.runFn = func(string) ([]map[string]any, error) { return nil, nil }
+	a.Update(tea.WindowSizeMsg{Width: 160, Height: 40})
+	deliver(a, a.Init())
+	tv := seedSample(t, a, issueSpans(), nil)
+	const note = "(the sampled exception spans, ungrouped)"
+
+	press(a, key("o"))
+	if want := queryLink(a.opts.Environment, tv.DQL()); opened != want {
+		t.Errorf("o opened %q\nwant     %q", opened, want)
+	}
+	if want := "opened query in a Notebook " + note; a.status != want {
+		t.Errorf("status after o = %q, want %q", a.status, want)
+	}
+	press(a, key("c"))
+	if want := "copied " + note + ": " + flatten(tv.Echo()); a.status != want {
+		t.Errorf("status after c = %q\nwant             %q", a.status, want)
+	}
+
+	// Another view's exits are its rows and say nothing more.
+	logs := testApp(t, "logs")
+	press(logs, key("c"))
+	if !strings.HasPrefix(logs.status, "copied: dtctl query ") {
+		t.Errorf("logs status after c = %q", logs.status)
+	}
+}

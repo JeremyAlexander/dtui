@@ -496,6 +496,16 @@ func (v *tableView) Echo() string {
 	return v.ds.echoQuery(v.dql)
 }
 
+// ExitNote says what o and c hand over on a sampled view: the query that
+// fetched the sample returns its records one by one, not the rows computed
+// from them, and no query computes those.
+func (v *tableView) ExitNote() string {
+	if v.spec.Sample == nil {
+		return ""
+	}
+	return "(the sampled " + v.spec.Sample.Noun + "s, ungrouped)"
+}
+
 // YankText supplies what the spec names for the selected row to the global
 // 'y' (catalog.Spec.Yank); views that name nothing keep the app's default.
 func (v *tableView) YankText() (text, label string, ok bool) {
