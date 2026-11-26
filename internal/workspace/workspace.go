@@ -4,8 +4,8 @@
 // own project and that tools apply on top of the user's personal dtctl config. Unlike the local .dtctl.yaml (which
 // replaces the global config wholesale), a workspace file carries no contexts,
 // no credentials, and no executable keys by construction — it can only narrow
-// what a session shows, never change what it can do. Consumed by dtui; dtctl
-// CLI adoption is planned.
+// what a session shows, never change what it can do. Consumed by dtui. dtctl
+// does not read it (ADR-0021).
 package workspace
 
 import (
