@@ -121,11 +121,11 @@ func TestSafeText(t *testing.T) {
 		"ünïcode ✓":                   "ünïcode ✓",
 		// Controls that reorder the text around them show a name other than
 		// the one that was sent.
-		"com.example.\u202eevil\u202c.run":    "com.example.evil.run",
-		"a\u202ab\u202bc\u202dd":              "abcd",
+		"com.example.\u202eevil\u202c.run":   "com.example.evil.run",
+		"a\u202ab\u202bc\u202dd":             "abcd",
 		"iso\u2066l\u2067r\u2068f\u2069late": "isolrflate",
 		"marks\u200e\u200f\u061c":            "marks",
-		"שלום עולם":                           "שלום עולם",
+		"שלום עולם":                          "שלום עולם",
 	} {
 		if got := SafeText(in); got != want {
 			t.Errorf("SafeText(%q) = %q, want %q", in, got, want)

@@ -87,12 +87,12 @@ func Total() int { return 0 }
 
 func Map[K comparable](k K) {}
 `,
-	"api/internal/cart/service_test.go":           "package cart\n\nfunc Total() int { return 1 }\n",
-	"api/internal/order/service.go":               "package order\n\ntype Service struct{}\n\nfunc (s *Service) AddItem() {}\n",
-	"api/cmd/api/main.go":                         "package main\n\nfunc main() {\n\trun()\n}\n\nfunc run() {}\n",
+	"api/internal/cart/service_test.go": "package cart\n\nfunc Total() int { return 1 }\n",
+	"api/internal/order/service.go":     "package order\n\ntype Service struct{}\n\nfunc (s *Service) AddItem() {}\n",
+	"api/cmd/api/main.go":               "package main\n\nfunc main() {\n\trun()\n}\n\nfunc run() {}\n",
 	// Names a library and the runtime have too.
-	"api/internal/lock/lock.go": "package lock // of the cart\n\ntype Mutex struct{}\n\nfunc (m *Mutex) Lock() {}\n\nfunc NewServer() {}\n\nfunc Open() {}\n",
-	"tool.go":                   "package tool\n\nfunc Run() {}\n",
+	"api/internal/lock/lock.go":                   "package lock // of the cart\n\ntype Mutex struct{}\n\nfunc (m *Mutex) Lock() {}\n\nfunc NewServer() {}\n\nfunc Open() {}\n",
+	"tool.go":                                     "package tool\n\nfunc Run() {}\n",
 	"jobs/shop/reports/daily.py":                  "import os\n\nclass Report:\n    def render(self):\n        return render(self)\n\nasync def render(report):\n    pass\n",
 	"web/src/server/handler.ts":                   "export async function resolve(req: Request) {\n  return other(req)\n}\n\nexport const other = (req) => 1\n\nclass Handler {\n  handle(req) {\n    return 1\n  }\n}\n",
 	"web/src/client/handler.ts":                   "export function resolve() {}\n",
