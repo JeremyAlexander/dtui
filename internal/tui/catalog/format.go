@@ -13,9 +13,12 @@ import (
 // SafeText makes a tenant-supplied string safe to display: terminal control
 // characters become visible Control Pictures glyphs (ESC → ␛, BEL → ␇),
 // DEL becomes ␡, C1 controls and invalid UTF-8 become U+FFFD, and carriage
-// returns are dropped. Newlines and tabs pass through for the callers' own
-// line handling. Record data can then neither drive the terminal nor skew
-// width math. Display-only: queries and yank keep the raw value.
+// returns are dropped, as are the controls that reorder the text around them
+// (bidirectional marks, embeddings, overrides and isolates), with which a
+// name would read as another one. Newlines and tabs pass through for the
+// callers' own line handling. Record data can then neither drive the
+// terminal nor skew width math. Display-only: queries and yank keep the raw
+// value.
 func SafeText(s string) string {
 	if utf8.ValidString(s) && strings.IndexFunc(s, unsafeRune) < 0 {
 		return s
@@ -24,12 +27,18 @@ func SafeText(s string) string {
 }
 
 func unsafeRune(r rune) bool {
-	return (r < 0x20 && r != '\n' && r != '\t') || (r >= 0x7f && r <= 0x9f)
+	return (r < 0x20 && r != '\n' && r != '\t') || (r >= 0x7f && r <= 0x9f) || bidiControl(r)
+}
+
+// bidiControl reports the characters that set the direction of the text
+// around them and show nothing themselves.
+func bidiControl(r rune) bool {
+	return r == 0x061c || r == 0x200e || r == 0x200f || (r >= 0x202a && r <= 0x202e) || (r >= 0x2066 && r <= 0x2069)
 }
 
 func safeRune(r rune) rune {
 	switch {
-	case r == '\r':
+	case r == '\r', bidiControl(r):
 		return -1
 	case r < 0x20 && r != '\n' && r != '\t':
 		return 0x2400 + r
