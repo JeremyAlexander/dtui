@@ -51,8 +51,13 @@ nothing about the format.
   query with an outcome and a reason, and the warning to show. The value is
   built again on every context switch and travels on `ContextWiring`, so a
   scope and the executor it belongs to are replaced together, and a context
-  whose host has no entry clears it. A switch-off chosen at launch survives
-  the switch. Resolving can walk the repository (dtctl reads a Gradle build's
+  whose host has no entry clears it. A query is sent with the executor, the
+  segments and the scope it was composed under, also when a switch arrives
+  before it is sent, and a reply that belongs to the previous context (a
+  segment list, a segment check) is dropped. Today a query command reads its
+  executor when it runs and a segment list reply is not checked for its
+  context, so the implementing pull request changes both. A switch-off chosen
+  at launch survives the switch. Resolving can walk the repository (dtctl reads a Gradle build's
   modules for a file with a path entry), so it runs once per launch and once
   per context switch, never per query, and not on the UI goroutine: the shell
   paints first, and a view the scope can narrow sends its first query when the
@@ -248,8 +253,9 @@ header. A view that carries neither shows no scope.
 - The pull request that implements this owes tests for: the echo of a name
   with an apostrophe and of one with two spaces, parsed back by a shell into
   the query that was sent; a context switch from one host to a second and on
-  to a host without an entry, asserting the request each executor receives; an
-  entry that holds only segments; an entry whose filter is refused while its
+  to a host without an entry, asserting the request each executor receives; a
+  command of the first context released after the switch, asserting that the
+  second executor receives nothing; an entry that holds only segments; an entry whose filter is refused while its
   segments are sent; one segment id named by the entry and by the user with
   different variables; eleven segments in total; a missing segment and a
   failed check; `:traces` without `--lens` under an applied filter; a pinned
