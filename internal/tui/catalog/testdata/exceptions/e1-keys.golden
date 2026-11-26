@@ -1,0 +1,22 @@
+e1:7d683399c7bf	dotnet: baseline
+e1:7d683399c7bf	dotnet: other state machine numbers
+e1:7be6ee5f3d1f	go: another goroutine, arguments and offsets
+e1:7be6ee5f3d1f	go: baseline
+e1:49a0cb225fa6	java: baseline
+e1:49a0cb225fa6	java: other ids, line numbers and proxy suffixes
+e1:49a0cb225fa6	java: root cause flagged, wrapper last
+e1:49a0cb225fa6	java: root cause linked by id, wrapper last
+e1:d25edc0adc64	java: runtime frames only
+e1:d25edc0adc64	java: runtime frames only, another JDK build
+e1:97bbc31cbbed	java: same type, another top in-app frame
+e1:f946f94cc2ee	java: the wrapper alone
+e1:f9cfdf9ba6aa	message: an unknown stack notation
+e1:fed56b8915f0	message: another type, same message
+e1:fa2d77026dcd	message: baseline
+e1:fa2d77026dcd	message: other ids
+e1:e13ed72b95ee	node: async frames
+e1:e13ed72b95ee	node: baseline
+e1:51aeb4148eea	python: baseline
+e1:51aeb4148eea	python: other line numbers and interpreter
+e1:62aca02becf2	type: no message, no stack
+e1:62aca02becf2	type: without a chain the last event counts

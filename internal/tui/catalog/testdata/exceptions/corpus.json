@@ -1,0 +1,276 @@
+[
+  {
+    "name": "java: baseline",
+    "group": "java-cart-add",
+    "rung": "app frames",
+    "events": [
+      {
+        "type": "java.lang.IllegalStateException",
+        "message": "Cart 7 is locked by order 3f2b8c1e-9d4a-4b7c-8e21-0a1b2c3d4e5f",
+        "stack": "java-locked-a.txt"
+      }
+    ]
+  },
+  {
+    "name": "java: other ids, line numbers and proxy suffixes",
+    "group": "java-cart-add",
+    "rung": "app frames",
+    "events": [
+      {
+        "type": "java.lang.IllegalStateException",
+        "message": "Cart 1190 is locked by order 0a1b2c3d-4e5f-4b7c-8e21-3f2b8c1e9d4a",
+        "stack": "java-locked-b.txt"
+      }
+    ]
+  },
+  {
+    "name": "java: root cause flagged, wrapper last",
+    "group": "java-cart-add",
+    "rung": "app frames",
+    "events": [
+      {
+        "type": "java.lang.IllegalStateException",
+        "message": "Cart 7 is locked",
+        "stack": "java-locked-a.txt",
+        "root": true
+      },
+      {
+        "type": "com.acme.shop.checkout.CheckoutException",
+        "message": "checkout failed",
+        "stack": "java-locked-wrapper.txt"
+      }
+    ]
+  },
+  {
+    "name": "java: root cause linked by id, wrapper last",
+    "group": "java-cart-add",
+    "rung": "app frames",
+    "events": [
+      {
+        "type": "java.lang.IllegalStateException",
+        "message": "Cart 7 is locked",
+        "stack": "java-locked-b.txt",
+        "id": "2"
+      },
+      {
+        "type": "com.acme.shop.checkout.CheckoutException",
+        "message": "checkout failed",
+        "stack": "java-locked-wrapper.txt",
+        "id": "1",
+        "caused_by_id": "2"
+      }
+    ]
+  },
+  {
+    "name": "java: same type, another top in-app frame",
+    "group": "java-cart-remove",
+    "rung": "app frames",
+    "events": [
+      {
+        "type": "java.lang.IllegalStateException",
+        "message": "Cart 7 is locked by order 3f2b8c1e-9d4a-4b7c-8e21-0a1b2c3d4e5f",
+        "stack": "java-locked-remove.txt"
+      }
+    ]
+  },
+  {
+    "name": "java: the wrapper alone",
+    "group": "java-checkout",
+    "rung": "app frames",
+    "events": [
+      {
+        "type": "com.acme.shop.checkout.CheckoutException",
+        "message": "checkout failed",
+        "stack": "java-locked-wrapper.txt"
+      }
+    ]
+  },
+  {
+    "name": "java: runtime frames only",
+    "group": "java-comodification",
+    "rung": "frames",
+    "events": [
+      {
+        "type": "java.util.ConcurrentModificationException",
+        "stack": "java-runtime-only-a.txt"
+      }
+    ]
+  },
+  {
+    "name": "java: runtime frames only, another JDK build",
+    "group": "java-comodification",
+    "rung": "frames",
+    "events": [
+      {
+        "type": "java.util.ConcurrentModificationException",
+        "stack": "java-runtime-only-b.txt"
+      }
+    ]
+  },
+  {
+    "name": "go: baseline",
+    "group": "go-cart-add",
+    "rung": "app frames",
+    "events": [
+      {
+        "type": "runtime.Error",
+        "message": "invalid memory address or nil pointer dereference",
+        "stack": "go-nil-a.txt"
+      }
+    ]
+  },
+  {
+    "name": "go: another goroutine, arguments and offsets",
+    "group": "go-cart-add",
+    "rung": "app frames",
+    "events": [
+      {
+        "type": "runtime.Error",
+        "message": "invalid memory address or nil pointer dereference",
+        "stack": "go-nil-b.txt"
+      }
+    ]
+  },
+  {
+    "name": "node: baseline",
+    "group": "node-cart-add",
+    "rung": "app frames",
+    "events": [
+      {
+        "type": "TypeError",
+        "message": "Cannot read properties of undefined (reading 'sku')",
+        "stack": "node-sku-a.txt"
+      }
+    ]
+  },
+  {
+    "name": "node: async frames",
+    "group": "node-cart-add",
+    "rung": "app frames",
+    "events": [
+      {
+        "type": "TypeError",
+        "message": "Cannot read properties of undefined (reading 'sku')",
+        "stack": "node-sku-b.txt"
+      }
+    ]
+  },
+  {
+    "name": "dotnet: baseline",
+    "group": "dotnet-cart-add",
+    "rung": "app frames",
+    "events": [
+      {
+        "type": "System.InvalidOperationException",
+        "message": "Cart 7 is locked",
+        "stack": "dotnet-locked-a.txt"
+      }
+    ]
+  },
+  {
+    "name": "dotnet: other state machine numbers",
+    "group": "dotnet-cart-add",
+    "rung": "app frames",
+    "events": [
+      {
+        "type": "System.InvalidOperationException",
+        "message": "Cart 1190 is locked",
+        "stack": "dotnet-locked-b.txt"
+      }
+    ]
+  },
+  {
+    "name": "python: baseline",
+    "group": "python-cart-add",
+    "rung": "app frames",
+    "events": [
+      {
+        "type": "ValueError",
+        "message": "cart 7 is locked",
+        "stack": "python-locked-a.txt"
+      }
+    ]
+  },
+  {
+    "name": "python: other line numbers and interpreter",
+    "group": "python-cart-add",
+    "rung": "app frames",
+    "events": [
+      {
+        "type": "ValueError",
+        "message": "cart 1190 is locked",
+        "stack": "python-locked-b.txt"
+      }
+    ]
+  },
+  {
+    "name": "message: baseline",
+    "group": "message-timeout",
+    "rung": "message",
+    "events": [
+      {
+        "type": "com.acme.shop.TimeoutException",
+        "message": "timeout after 250ms calling 10.0.0.7:8080 for order 17"
+      }
+    ]
+  },
+  {
+    "name": "message: other ids",
+    "group": "message-timeout",
+    "rung": "message",
+    "events": [
+      {
+        "type": "com.acme.shop.TimeoutException",
+        "message": "timeout after 3s calling 10.0.0.19:9090 for order 2301"
+      }
+    ]
+  },
+  {
+    "name": "message: another type, same message",
+    "group": "message-timeout-io",
+    "rung": "message",
+    "events": [
+      {
+        "type": "java.io.IOException",
+        "message": "timeout after 250ms calling 10.0.0.7:8080 for order 17"
+      }
+    ]
+  },
+  {
+    "name": "message: an unknown stack notation",
+    "group": "message-ruby",
+    "rung": "message",
+    "events": [
+      {
+        "type": "NoMethodError",
+        "message": "undefined method 'sku' for nil",
+        "stack": "ruby-nil.txt"
+      }
+    ]
+  },
+  {
+    "name": "type: no message, no stack",
+    "group": "type-only",
+    "rung": "type",
+    "events": [
+      {
+        "type": "com.acme.shop.TimeoutException"
+      }
+    ]
+  },
+  {
+    "name": "type: without a chain the last event counts",
+    "group": "type-only",
+    "rung": "type",
+    "events": [
+      {
+        "type": "java.lang.IllegalStateException",
+        "message": "Cart 7 is locked",
+        "stack": "java-locked-a.txt"
+      },
+      {
+        "type": "com.acme.shop.TimeoutException"
+      }
+    ]
+  }
+]
