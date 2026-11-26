@@ -116,12 +116,14 @@ func (d *dataSource) echoQuery(dql string) string {
 
 // echoQueryExact is echoQuery for a query that must reach the shell as it
 // ran: quoted by catalog.EchoCommand, its line breaks kept, each segment id
-// a word of its own however it is spelled.
-func (d *dataSource) echoQueryExact(dql string) string {
+// a word of its own however it is spelled. limits are the flags of the
+// result limits the query ran under; they come before the segments.
+func (d *dataSource) echoQueryExact(dql string, limits ...string) string {
 	if dql == "" {
 		return ""
 	}
-	flags := make([]string, 0, 2*len(d.segments))
+	flags := make([]string, 0, len(limits)+2*len(d.segments))
+	flags = append(flags, limits...)
 	for _, ref := range d.segments {
 		flags = append(flags, "-S", ref.ID)
 	}

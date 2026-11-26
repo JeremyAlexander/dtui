@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textinput"
@@ -495,8 +496,12 @@ func (v *tableView) Echo() string {
 	if v.dql == "" {
 		return ""
 	}
-	if v.spec.Sample != nil {
-		return v.ds.echoQueryExact(v.dql)
+	if s := v.spec.Sample; s != nil {
+		// The sample was fetched under two limits (sampleOpts). Without
+		// them the command returns another set where the size limit cut it.
+		return v.ds.echoQueryExact(v.dql,
+			"--max-result-records", strconv.FormatInt(s.Rows, 10),
+			"--max-result-bytes", strconv.FormatInt(s.Bytes, 10))
 	}
 	return v.ds.echoQuery(v.dql)
 }

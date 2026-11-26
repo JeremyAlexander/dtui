@@ -504,7 +504,10 @@ func TestExceptionsEchoSurvivesTheShell(t *testing.T) {
 		t.Fatalf("echo = %q", echo)
 	}
 	got := echoArgs(t, echo)
-	want := []string{"query", tv.DQL(), "-S", "seg'; touch pwned #", "-S", "plain-id"}
+	// The two limits the sample was fetched under go with it: without the
+	// size limit a sample that was cut by it replays as a different set.
+	want := []string{"query", tv.DQL(), "--max-result-records", "1000", "--max-result-bytes", "8388608",
+		"-S", "seg'; touch pwned #", "-S", "plain-id"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("dtctl got %q\nwant      %q", got, want)
 	}
