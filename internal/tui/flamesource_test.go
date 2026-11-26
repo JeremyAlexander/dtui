@@ -87,11 +87,11 @@ func TestOpenSourceFromAFrame(t *testing.T) {
 		isErr  bool
 	}{
 		{"com.example.shop.CartService.total", "vscode://file" + java + ":6",
-			"opened src/main/java/com/example/shop/CartService.java:6 in VS Code (the declaration of total)", false},
+			"asked the system to open src/main/java/com/example/shop/CartService.java:6 in VS Code (the declaration of total) · if nothing opened, the file is " + java, false},
 		{"com.example.shop.CartService.addItem", "vscode://file" + java + ":4",
-			"opened src/main/java/com/example/shop/CartService.java:4 in VS Code (approximate: the first of several declarations of addItem)", false},
+			"asked the system to open src/main/java/com/example/shop/CartService.java:4 in VS Code (approximate: the first of several declarations of addItem) · if nothing opened, the file is " + java, false},
 		{"com.example.shop.Unnamed.generated", "vscode://file" + root + "/src/main/java/com/example/shop/Unnamed.java:3",
-			"opened src/main/java/com/example/shop/Unnamed.java:3 in VS Code (approximate: the type's declaration, the function was not found by name)", false},
+			"asked the system to open src/main/java/com/example/shop/Unnamed.java:3 in VS Code (approximate: the type's declaration, the function was not found by name) · if nothing opened, the file is " + root + "/src/main/java/com/example/shop/Unnamed.java", false},
 		{"java.lang.Thread.run", "", "java.lang.Thread.run is part of the JDK: its source is not in this directory", false},
 		{"org.library.Client.call", "", "no source file for org.library.Client.call under " + filepath.Base(root) +
 			": a library, or another repository (y copies the name)", true},
@@ -195,7 +195,7 @@ func TestOpenSourceIsDroppedOnceTheGraphIsLeft(t *testing.T) {
 // is the first found and not known to be the only one: the status line says
 // so, and a miss says it too.
 func TestOpenSourceSaysWhatWasNotRead(t *testing.T) {
-	a, fv, _, opened := sourceApp(t, "vscode")
+	a, fv, root, opened := sourceApp(t, "vscode")
 	onFrame(t, a, fv, "com.example.shop.CartService.total")
 	ix, err := a.ds.source.get(t.Context())
 	if err != nil {
@@ -203,7 +203,8 @@ func TestOpenSourceSaysWhatWasNotRead(t *testing.T) {
 	}
 	one := []source.Match{{Path: "src/main/java/com/example/shop/CartService.java", Line: 6, How: source.Declaration}}
 	a.Update(sourceFoundMsg{view: fv, label: "com.example.shop.CartService.total", index: ix, matches: one, unread: 1250})
-	want := "opened src/main/java/com/example/shop/CartService.java:6 in VS Code (the declaration of total; the first found, 1,250 files that could hold it were not read)"
+	want := "asked the system to open src/main/java/com/example/shop/CartService.java:6 in VS Code (the declaration of total; the first found, 1,250 files that could hold it were not read)" +
+		" · if nothing opened, the file is " + root + "/src/main/java/com/example/shop/CartService.java"
 	if len(*opened) != 1 {
 		t.Errorf("opened %v", *opened)
 	}
@@ -225,7 +226,7 @@ func TestOpenSourceSaysWhatWasNotRead(t *testing.T) {
 	}
 	_, cmd = a.Update(sourceFoundMsg{view: fv, label: "com.example.shop.CartService.total", index: ix, matches: one, unread: 7, late: true})
 	deliver(a, cmd)
-	if !strings.HasSuffix(a.status, "(the declaration of total; the first found, the search was cut after 2 seconds: 7 files that could hold it were not read)") {
+	if !strings.Contains(a.status, "(the declaration of total; the first found, the search was cut after 2 seconds: 7 files that could hold it were not read)") {
 		t.Errorf("one match out of time: status %q", a.status)
 	}
 }

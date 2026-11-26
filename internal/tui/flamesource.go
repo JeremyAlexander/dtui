@@ -251,7 +251,11 @@ func (a *app) openSource(ix *source.Index, f source.Frame, m source.Match, unrea
 	if err := open(link); err != nil {
 		return statusErr(editor.Name + ": " + oneLine(err.Error()))
 	}
-	return status(fmt.Sprintf("opened %s in %s (%s)", oneLine(sourceWhere(m.Path, m)), editor.Name, how))
+	// The link is handed over and not waited for: whether an editor took it
+	// is not known here, so the status says what was done and where the
+	// file is, for when nothing opened.
+	return status(fmt.Sprintf("asked the system to open %s in %s (%s) · if nothing opened, the file is %s",
+		oneLine(sourceWhere(m.Path, m)), editor.Name, how, oneLine(abs)))
 }
 
 // keepEnd cuts a line from the left to at most width cells.

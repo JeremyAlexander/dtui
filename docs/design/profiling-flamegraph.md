@@ -159,7 +159,9 @@ it must never do, is in ADR-0023; this is how it behaves.
    handed to the system the way `o` hands it a Dynatrace link, with the path
    percent-encoded. With no editor known (a terminal editor, nothing set) the
    place is copied as `path:line` and the status line says how to name one.
-6. **The answer.** One file opens. Several (the same class in two modules)
+6. **The answer.** One file opens. The link is handed to the system and
+   not waited for, so the status line says that the system was asked, and
+   where the file is for when no editor took the link. Several (the same class in two modules)
    are offered in a short list: `enter` or a digit opens, `y` copies. None
    says so, and that the frame is a library's or another repository's.
    At most 400 files, 2 MB of each, are read for one frame, for at most
