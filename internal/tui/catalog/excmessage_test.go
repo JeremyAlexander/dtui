@@ -41,6 +41,7 @@ func TestParameterizeMessageReplacesEachKind(t *testing.T) {
 		{"longest ipv6 form", "peer 0000:0000:0000:0000:0000:ffff:192.168.100.200 gone", "peer <ip> gone"},
 		{"two colons are not enough", "a::g", "a::g"},
 		{"one colon is not an address", "f:1", "f:<n>"},
+		{"ipv6 with groups that read as a time", "peer 2001:db8:10:20:30::1 gone", "peer <ip> gone"},
 		{"ipv6 ends the message", "peer fd00::1f", "peer <ip>"},
 		{"ipv6 starts the message", "::1 refused", "<ip> refused"},
 		{"ipv6 before a colon", "peer fd00::1f: gone", "peer <ip>: gone"},
@@ -57,21 +58,59 @@ func TestParameterizeMessageReplacesEachKind(t *testing.T) {
 		{"relative path", "open ./data/cart.json", "open <path>"},
 		{"path after an equals sign", "file=/var/data/cart.json", "file=<path>"},
 		{"one segment is not a path", "POST /cart failed", "POST /cart failed"},
+		{"a route keeps its words", "GET /cart/items failed", "GET /cart/items failed"},
+		{"a route loses its ids", "GET /cart/42/items/4bf92f3577b34da6 failed", "GET /cart/<n>/items/<hex> failed"},
+		{"a route with a uuid", "no handler for /orders/3f2b8c1e-9d4a-4b7c-8e21-0a1b2c3d4e5f/lines",
+			"no handler for /orders/<uuid>/lines"},
+		{"a file under a dated directory", "open /logs/2026-03-01/shop.log", "open <path>"},
+		{"a file ends a sentence", "cannot read /etc/shop/cart.yaml.", "cannot read <path>"},
+		{"a directory is kept", "cannot list /var/data/cart", "cannot list /var/data/cart"},
 		{"a slash between words is not a path", "read/write error", "read/write error"},
 		{"windows path", `open C:\data\cart\7.json failed`, "open <path> failed"},
+		{"windows path with a space", `open C:\Program Files\Shop\cart.json failed`, "open <path> failed"},
+		{"two windows paths", `copy C:\data\a.json to D:\backup files\a.json`, "copy <path> to <path>"},
 
 		{"hex literal", "bad pointer 0x1F", "bad pointer <hex>"},
 		{"object identity", "Cart@1b2c3d is closed", "Cart@<hex> is closed"},
 		{"object identity of digits", "Cart@123456 is closed", "Cart@<hex> is closed"},
 		{"mail address is not an identity", "bob@added.example.invalid", "bob@added.example.invalid"},
 		{"hex run", "trace 4bf92f3577b34da6a3ce929d0e0e4736 lost", "trace <hex> lost"},
-		{"long digit run", "id 1234567890 lost", "id <hex> lost"},
+		{"a digit run is a number, however long", "id 1234567890 lost", "id <n> lost"},
+		{"seven and eight digits read alike", "order 1234567 or 12345678", "order <n> or <n>"},
 		{"hex word without a digit stays", "deadbeef", "deadbeef"},
 		{"short hex run is a number with a unit", "id 12ab lost", "id <n> lost"},
 
 		{"number", "retry 3 of 5", "retry <n> of <n>"},
 		{"decimal", "took 1.5 seconds", "took <n> seconds"},
 		{"number with unit", "timeout after 250ms", "timeout after <n>"},
+		{"number with a long unit", "waited 5000msec then 12.5secs", "waited <n> then <n>"},
+		{"a negative number", "Index -1 out of bounds for length 0", "Index <n> out of bounds for length <n>"},
+		{"a negative value after a sign", "offset=-5 (-2, -3)", "offset=<n> (<n>, <n>)"},
+		{"a negative number starts the message", "-1 is not an index", "<n> is not an index"},
+		{"a hyphen between numbers is no sign", "pages 2-10", "pages <n>-<n>"},
+		{"a hyphen after a word is no sign", "kettle-1 missing", "kettle-<n> missing"},
+
+		{"prefixed id", "user_12345 not found", "user_<id> not found"},
+		{"prefixed opaque id", "customer cus_9s6XAbCdEf is blocked", "customer cus_<id> is blocked"},
+		{"two-part id prefix", "key api_key_7f3a rejected", "key api_key_<id> rejected"},
+		{"a snake case name is no id", "max_retries exceeded", "max_retries exceeded"},
+		{"an upper case constant is no id", "ERR_HTTP2_STREAM_ERROR and E_42", "ERR_HTTP2_STREAM_ERROR and E_42"},
+
+		{"http status is kept", "HTTP 404 sendError called", "HTTP 404 sendError called"},
+		{"http status with a version", "got HTTP/1.1 503 from upstream", "got HTTP/1.1 503 from upstream"},
+		{"status code wording", "status code: 500, retry 3", "status code: 500, retry <n>"},
+		{"status with an equals sign", "upstream status=502 after 30ms", "upstream status=502 after <n>"},
+		{"camel case status code", "statusCode=404", "statusCode=404"},
+		{"exit code", "process ended with exit code 137", "process ended with exit code 137"},
+		{"error code", "error code 1045 for user_77", "error code 1045 for user_<id>"},
+		{"errno", "connect failed: errno 111", "connect failed: errno 111"},
+		{"sqlstate of digits", "SQLSTATE 23505: duplicate key", "SQLSTATE 23505: duplicate key"},
+		{"sqlstate in brackets", "SQLSTATE[08006] connection failure", "SQLSTATE[08006] connection failure"},
+		{"sqlstate with a letter", "SQLSTATE 2200G", "SQLSTATE 2200G"},
+		{"vendor error code", "ORA-00942: table or view does not exist", "ORA-00942: table or view does not exist"},
+		{"a long number after code wording is an id", "code 1234567", "code <n>"},
+		{"code wording after a hyphen", "x-code 5 and x -code -5", "x-code 5 and x -code <n>"},
+		{"a number elsewhere is still a number", "404 items in cart 500", "<n> items in cart <n>"},
 		{"digits inside a word stay", "utf8 and http2 and x86_64", "utf8 and http2 and x86_64"},
 		{"version", "v 1.2.3", "v <n>.<n>"},
 	}
@@ -86,7 +125,7 @@ func TestParameterizeMessageReplacesEachKind(t *testing.T) {
 
 // The rule order is part of the fingerprint: reordering changes keys.
 func TestParameterizeMessageRuleOrder(t *testing.T) {
-	want := []string{"quoted", "url", "uuid", "date", "ip", "path", "hex", "number"}
+	want := []string{"quoted", "url", "uuid", "ip", "date", "path", "hex", "id", "number"}
 	if len(messageRules) != len(want) {
 		t.Fatalf("rules = %d, want %d", len(messageRules), len(want))
 	}
@@ -107,11 +146,14 @@ func TestParameterizeMessageEarlierRuleWins(t *testing.T) {
 		{"url over ip", "GET http://10.0.0.7:8080/cart", "GET <url>"},
 		{"uuid over hex and number", "3f2b8c1e-9d4a-4b7c-8e21-0a1b2c3d4e5f", "<uuid>"},
 		{"date over number", "2026-03-01", "<date>"},
-		{"date over ipv6", "at 10:11:12", "at <date>"},
+		{"ip leaves a clock time to date", "at 10:11:12", "at <date>"},
+		{"ip over date", "2001:db8:10:11:12::1", "<ip>"},
 		{"ip over number", "10.0.0.7", "<ip>"},
-		{"path over hex", "/orders/4bf92f3577b34da6", "<path>"},
-		{"path over number", "/orders/42", "<path>"},
-		{"hex over number", "12345678", "<hex>"},
+		{"path over hex", "/orders/4bf92f3577b34da6.json", "<path>"},
+		{"path over number", "/orders/42.json", "<path>"},
+		{"hex over number", "1234567a", "<hex>"},
+		{"id over number", "user_42", "user_<id>"},
+		{"a kept code over number", "status 404", "status 404"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -134,6 +176,53 @@ func TestParameterizeMessageMergesVariants(t *testing.T) {
 		if a, b := ParameterizeMessage(p[0]), ParameterizeMessage(p[1]); a != b {
 			t.Errorf("variants differ:\n  %q\n  %q", a, b)
 		}
+	}
+}
+
+// Every rule has a pair of messages it must bring together and a pair it
+// must keep apart: a rule that merges too little splits one bug into many
+// issues, one that merges too much hides a bug behind another.
+func TestParameterizeMessageRulesMergeAndSplit(t *testing.T) {
+	cases := []struct {
+		rule         string
+		merge, split [2]string
+	}{
+		{"quoted", [2]string{`unknown sku "kettle"`, `unknown sku "pan"`},
+			[2]string{`unknown sku "kettle"`, `unknown shelf "kettle"`}},
+		{"url", [2]string{"GET https://shop.example.invalid/a failed", "GET http://pay.example.invalid/b?c=1 failed"},
+			[2]string{"GET https://shop.example.invalid/a failed", "PUT https://shop.example.invalid/a failed"}},
+		{"uuid", [2]string{"order 3f2b8c1e-9d4a-4b7c-8e21-0a1b2c3d4e5f lost", "order 0a1b2c3d-4e5f-4b7c-8e21-3f2b8c1e9d4a lost"},
+			[2]string{"order 3f2b8c1e-9d4a-4b7c-8e21-0a1b2c3d4e5f lost", "cart 3f2b8c1e-9d4a-4b7c-8e21-0a1b2c3d4e5f lost"}},
+		{"ip", [2]string{"peer 10.0.0.7:8080 gone", "peer 2001:db8:10:20:30::1 gone"},
+			[2]string{"peer 10.0.0.7 gone", "peer 10.0.0.7 refused"}},
+		{"date", [2]string{"expired 2026-03-01T10:11:12Z", "expired 2026-11-26 09:00"},
+			[2]string{"expired 2026-03-01", "created 2026-03-01"}},
+		{"path", [2]string{"open /var/data/cart/7.json", `open C:\data files\cart\9.json`},
+			[2]string{"GET /cart/items", "GET /checkout/pay"}},
+		{"path ids", [2]string{"GET /cart/7/items", "GET /cart/1190/items"},
+			[2]string{"GET /cart/7/items", "GET /cart/7/coupons"}},
+		{"hex", [2]string{"trace 4bf92f3577b34da6 lost at 0x1F", "trace a3ce929d0e0e4736 lost at 0xc000012345"},
+			[2]string{"Cart@1b2c3d closed", "Order@1b2c3d closed"}},
+		{"id", [2]string{"user_12345 blocked", "user_9s6XAbCdEf blocked"},
+			[2]string{"user_12345 blocked", "cus_12345 blocked"}},
+		{"number", [2]string{"Index -1 out of bounds for length 1234567", "Index 7 out of bounds for length 12345678"},
+			[2]string{"retry 3 of 5", "page 3 of 5"}},
+		{"number units", [2]string{"timeout after 250ms", "timeout after 12.5secs"},
+			[2]string{"timeout after 250ms", "timeout after 250 rows"}},
+		{"http status", [2]string{"HTTP 404 for cart 7", "HTTP 404 for cart 1190"},
+			[2]string{"HTTP 404 sendError called", "HTTP 500 sendError called"}},
+		{"error codes", [2]string{"SQLSTATE 23505 on row 7", "SQLSTATE 23505 on row 9"},
+			[2]string{"SQLSTATE 23505", "SQLSTATE 08006"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.rule, func(t *testing.T) {
+			if a, b := ParameterizeMessage(tc.merge[0]), ParameterizeMessage(tc.merge[1]); a != b {
+				t.Errorf("must merge:\n  %q\n  %q", a, b)
+			}
+			if a, b := ParameterizeMessage(tc.split[0]), ParameterizeMessage(tc.split[1]); a == b {
+				t.Errorf("must split, both %q:\n  %q\n  %q", a, tc.split[0], tc.split[1])
+			}
+		})
 	}
 }
 
@@ -248,6 +337,8 @@ func FuzzParameterizeMessage(f *testing.F) {
 	for _, seed := range []string{
 		"", "'<q>'", `''a''`, "order 3f2b8c1e-9d4a-4b7c-8e21-0a1b2c3d4e5f", "::1.", "[::1]:80",
 		"/a/b '/c/d' 0x1F 10.0.0.7:80 2026-03-01T10:11:12Z 250ms", "<", "<uui", "a@1b", `C:\a\b`,
+		"GET /cart/42/items", "/a/b.c.", `C:\a b\c d\e.f g`, "user_1 cus_9s6X", "Index -1", "x=-5",
+		"HTTP 404", "status code: 500", "SQLSTATE[08006]", "ORA-00942", "2001:db8:10:20:30::1", "5000msec",
 		strings.Repeat("9 ", 300), strings.Repeat("<", 300), "\xff'\xfe'",
 	} {
 		f.Add(seed)
