@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 )
 
 // frames builds the expected result of a parse: module, function pairs.
@@ -1464,6 +1465,24 @@ func TestDotNetGeneratedNames(t *testing.T) {
 		{"at Example.Shop.CartService+<>c__DisplayClass5_0.<AddItem>b__0 (Example.Shop.Item item) [0x00007] in <3f2b8c1e>:0",
 			"Example.Shop.CartService", "AddItem"},
 		{"at Example.Shop.Cart+Line.Total () [0x00000] in <3f2b8c1e>:0", "Example.Shop.Cart.Line", "Total"},
+		// Three deep, each kind once.
+		{"at Example.Shop.Cart.<<<Run>b__4_0>g__Check|4_1>d__3.MoveNext()", "Example.Shop.Cart.Run", "Check"},
+		// Brackets that hold no method name, or that nothing generated
+		// follows, stay as they are written, and so does what wraps them.
+		{"at Example.Shop.Cart.<Add|x>b__0()", "Example.Shop.Cart", "<Add|x>b__0"},
+		{"at Example.Shop.Cart.<>b__0()", "Example.Shop.Cart", "<>b__0"},
+		{"at Example.Shop.Cart.<<Add>x>b__0()", "Example.Shop.Cart", "<<Add>x>b__0"},
+		{"at Example.Shop.Cart.<Add>b__()", "Example.Shop.Cart", "<Add>b__"},
+		{"at Example.Shop.Cart.<Add>g__|1_0()", "Example.Shop.Cart", "<Add>g__|1_0"},
+		{"at Example.Shop.Cart.<Add>g__Check|()", "Example.Shop.Cart", "<Add>g__Check|"},
+		{"at Example.Shop.Cart.<Add>d__.MoveNext()", "Example.Shop.Cart.<Add>d__", "MoveNext"},
+		{"at Example.Shop.Cart.<Add>d__12.Dispose()", "Example.Shop.Cart.<Add>d__12", "Dispose"},
+		{"at Example.Shop.Cart.<Add>d__12.MoveNextStep()", "Example.Shop.Cart.<Add>d__12", "MoveNextStep"},
+		{"at Example.Shop.Cart.Add>b__0()", "Example.Shop.Cart", "Add>b__0"},
+		// A method that implements an interface explicitly is named with it.
+		{"at Example.Shop.Cart.<Example.Shop.ICart.Add>b__3_0()", "Example.Shop.Cart.Example.Shop.ICart", "Add"},
+		// The ordinals end where the next name starts.
+		{"at Example.Shop.Cart.<Run>g__Check|1_0<Add>b__2()", "Example.Shop.Cart.Run", "CheckAdd"},
 	}
 	for _, tc := range cases {
 		f, ok := dotnetFrame(tc.line)
@@ -1472,6 +1491,74 @@ func TestDotNetGeneratedNames(t *testing.T) {
 		}
 	}
 }
+
+// dotnetNestedTrace is a .NET trace of the given number of frame lines, each
+// a lambda nested in a lambda to the given depth.
+func dotnetNestedTrace(depth, lines int) string {
+	return "System.InvalidOperationException: Cart 7 is locked\n" + strings.Repeat(
+		"   at Example.Shop.Cart."+strings.Repeat("<", depth)+"Run"+strings.Repeat(">b__0", depth)+"(Item item)\n", lines)
+}
+
+// A generated name is unwrapped in one pass, however deep it nests: the
+// work and the memory are in proportion to the text, at any depth a line
+// has room for.
+func TestDotNetNestedNamesAreReadInLinearTime(t *testing.T) {
+	want := frames(StackDotNet, "Example.Shop.Cart", "Run")
+	cost := func(stack string) (time.Duration, uint64) {
+		t.Helper()
+		best, least := time.Duration(0), uint64(0)
+		for i := range 3 {
+			var before, after runtime.MemStats
+			runtime.ReadMemStats(&before)
+			start := time.Now()
+			got := ParseStackFrames(stack)
+			took := time.Since(start)
+			runtime.ReadMemStats(&after)
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("frames %+v, want %+v", got, want)
+			}
+			if allocated := after.TotalAlloc - before.TotalAlloc; i == 0 || allocated < least {
+				least = allocated
+			}
+			if i == 0 || took < best {
+				best = took
+			}
+		}
+		return best, least
+	}
+	// As deep as a line can hold, on as many lines as the text limit takes.
+	depth := (stackLineMax - len(dotnetNestedTrace(0, 1))) / len("<>b__0")
+	line := len(dotnetNestedTrace(depth, 1)) - len(dotnetNestedTrace(depth, 0))
+	worst := dotnetNestedTrace(depth, (stackTextMax-len(dotnetNestedTrace(depth, 0)))/line)
+	if line > stackLineMax || len(worst) > stackTextMax || len(worst) < stackTextMax*9/10 {
+		t.Fatalf("a line of %d bytes, a trace of %d: want the limits %d and %d", line, len(worst), stackLineMax, stackTextMax)
+	}
+	took, allocated := cost(worst)
+	if limit := uint64(dotnetNestedAllocFactor * len(worst)); allocated > limit {
+		t.Errorf("%d bytes allocated for %d bytes of text at depth %d, want at most %d", allocated, len(worst), depth, limit)
+	}
+	if took > dotnetNestedTimeLimit {
+		t.Errorf("%v for %d bytes of text at depth %d, want at most %v", took, len(worst), depth, dotnetNestedTimeLimit)
+	}
+	// Twice the depth is twice the text, and must not be four times the
+	// memory.
+	_, shallow := cost(dotnetNestedTrace(150, 8))
+	if _, deep := cost(dotnetNestedTrace(300, 8)); deep > 3*shallow {
+		t.Errorf("%d bytes allocated at depth 150, %d at depth 300: more than three times as much", shallow, deep)
+	}
+}
+
+const (
+	// dotnetNestedAllocFactor bounds the bytes allocated per byte of the
+	// deepest trace the limits admit. One unwrapping pass per level of
+	// nesting allocated 1,500 times the text.
+	dotnetNestedAllocFactor = 64
+	// dotnetNestedTimeLimit bounds reading that trace, with room for the
+	// race detector on a busy machine: it takes 20 ms without the detector
+	// and a quarter of a second with it. One pass per level took 2 s
+	// without.
+	dotnetNestedTimeLimit = 1500 * time.Millisecond
+)
 
 // The runtime prints more than the plain dump shows: a system header with
 // the goroutine's pointers, frame pointers after a file line, "_" for an

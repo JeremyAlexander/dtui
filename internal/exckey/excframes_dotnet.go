@@ -25,19 +25,12 @@ var (
 	// type is qualified and a colon or the end of the line follows it.
 	dotnetInnerRe = regexp.MustCompile(
 		"---> (?:\\(Inner Exception #\\d+\\) )?((?:[\\w+`]+\\.)+[\\w+`]+)(?:\\[[^\\]]*\\])?(?::|$)")
-	// Compiler-generated names: the method of top-level statements
-	// ("<Main>$"), local functions ("<Run>g__Validate|5_0"), async state
-	// machines, closure classes and the lambdas in them. Their ordinals
-	// move with every edit of the class, so none stays in a name; a
-	// generic one carries its arity behind them ("d__12`1"). A local
-	// function keeps the method it is declared in, since two methods may
-	// each have one of the same name. The names nest ("<<Run>b__0>d"), so
-	// the method inside the brackets may be one already unwrapped.
-	dotnetMainRe    = regexp.MustCompile(`<(\w+)>\$`)
+	// The method of top-level statements ("<Main>$"); see dotnetLambdaMark
+	// for the generated names that nest.
+	dotnetMainRe = regexp.MustCompile(`<(\w+)>\$`)
+	// The closure class a lambda is compiled into ("<>c.",
+	// "<>c__DisplayClass5_0`1."), which stands before the lambda's name.
 	dotnetClosureRe = regexp.MustCompile("<>c(?:__DisplayClass\\d+_\\d+)?(?:`\\d+)?\\.")
-	dotnetLambdaRe  = regexp.MustCompile("<([\\w.]+)>b__\\d+(?:_\\d+)?(?:`\\d+)?")
-	dotnetLocalRe   = regexp.MustCompile("<([\\w.]+)>g__(\\w+)\\|\\d+(?:_\\d+)?(?:`\\d+)?")
-	dotnetAsyncRe   = regexp.MustCompile("<([\\w.]+)>d(?:__\\d+)?(?:`\\d+)?\\.MoveNext$")
 	// A delegate compiled from an expression tree is numbered per process.
 	dotnetDelegateRe = regexp.MustCompile(`^lambda_method\d+$`)
 )
@@ -72,6 +65,33 @@ const (
 	dotnetNested = "+"
 	// dotnetGenerated ends the method a compiler-generated name wraps.
 	dotnetGenerated = ">"
+)
+
+// Compiler-generated names wrap the method they are compiled from in
+// brackets, and say behind the closing one what they are: a lambda
+// ("<Run>b__5_0"), a local function ("<Run>g__Validate|5_0"), an async
+// state machine ("<Run>d__12.MoveNext"). Their ordinals move with every edit of the
+// class, so none stays in a name; a generic one carries its arity behind
+// them ("d__12`1"). A local function keeps the method it is declared in,
+// since two methods may each have one of the same name. The names nest
+// ("<<Run>b__0>d"), so the method inside the brackets may be one already
+// unwrapped.
+const (
+	dotnetLambdaMark = "b__"
+	dotnetLocalMark  = "g__"
+	// dotnetLocalEnd stands between a local function's name and its
+	// ordinals.
+	dotnetLocalEnd = '|'
+	// dotnetAsyncMark starts what follows an async method, dotnetAsyncEnd
+	// ends it, and with it the name.
+	dotnetAsyncMark     = "d"
+	dotnetAsyncOrdinals = "__"
+	dotnetAsyncEnd      = ".MoveNext"
+	// dotnetArity precedes the number of type parameters.
+	dotnetArity = '`'
+	// dotnetUnwrapped marks, while a name is unwrapped, the place of an
+	// opening bracket that is gone. No frame's name holds the byte.
+	dotnetUnwrapped = 0
 )
 
 // dotnetMonoOffset starts what Mono prints after a frame's parameters: the
@@ -113,16 +133,7 @@ func dotnetFrame(line string) (StackFrame, bool) {
 	// bracket that closes the method it wraps.
 	if strings.Contains(name, dotnetGenerated) {
 		name = dotnetMainRe.ReplaceAllString(name, "$1")
-		name = dotnetClosureRe.ReplaceAllString(name, "")
-		// From the inside out; every pass removes a pair of brackets.
-		for strings.Contains(name, dotnetGenerated) {
-			unwrapped := dotnetLocalRe.ReplaceAllString(dotnetLambdaRe.ReplaceAllString(name, "$1"), "$1.$2")
-			if unwrapped == name {
-				break
-			}
-			name = unwrapped
-		}
-		name = dotnetAsyncRe.ReplaceAllString(name, "$1")
+		name = dotnetUnwrap(dotnetClosureRe.ReplaceAllString(name, ""))
 	}
 
 	module, function := "", name
@@ -138,6 +149,134 @@ func dotnetFrame(line string) (StackFrame, bool) {
 	}
 	function = dotnetDelegateRe.ReplaceAllString(function, "lambda_method")
 	return StackFrame{Module: module, Function: function, Syntax: StackDotNet}, true
+}
+
+// dotnetUnwrap replaces every generated name by the method it wraps, from
+// the inside out: "<<AddItem>b__5_0>d__12.MoveNext" is "AddItem", and
+// "<Run>g__Validate|5_0" is "Run.Validate". It reads the name once, however
+// deep the brackets nest. Brackets that hold no method name, or that
+// nothing generated follows, stay as they are written.
+func dotnetUnwrap(name string) string {
+	// open is a bracket not closed yet: where it stands in out, and
+	// whether all that followed it so far is a method's name.
+	type open struct {
+		at     int
+		method bool
+	}
+	out := make([]byte, 0, len(name))
+	var opens []open
+	unwrapped := false
+	for i := 0; i < len(name); i++ {
+		c := name[i]
+		top := len(opens) - 1
+		switch {
+		case c == '<':
+			opens = append(opens, open{at: len(out), method: true})
+		case c == '>' && top >= 0:
+			o := opens[top]
+			opens = opens[:top]
+			top--
+			if local, n := dotnetGeneratedSuffix(name[i+1:]); n > 0 && o.method && len(out) > o.at+1 {
+				out[o.at], unwrapped = dotnetUnwrapped, true
+				if local != "" {
+					out = append(append(out, '.'), local...)
+				}
+				i += n
+				continue
+			}
+			// The brackets stay, and are part of no method's name.
+			if top >= 0 {
+				opens[top].method = false
+			}
+		case top >= 0 && c != '.' && !isWordByte(c):
+			opens[top].method = false
+		}
+		out = append(out, c)
+	}
+	if !unwrapped {
+		return name
+	}
+	kept := out[:0]
+	for _, c := range out {
+		if c != dotnetUnwrapped {
+			kept = append(kept, c)
+		}
+	}
+	return string(kept)
+}
+
+// dotnetGeneratedSuffix reads what follows the bracket that closes a
+// method's name. n is how many bytes of it say that the name is a generated
+// one, 0 where it is not; local is the name of a local function.
+func dotnetGeneratedSuffix(s string) (local string, n int) {
+	switch {
+	case strings.HasPrefix(s, dotnetLambdaMark):
+		if ordinals := dotnetOrdinals(s[len(dotnetLambdaMark):]); ordinals > 0 {
+			return "", len(dotnetLambdaMark) + ordinals
+		}
+	case strings.HasPrefix(s, dotnetLocalMark):
+		rest := s[len(dotnetLocalMark):]
+		end := 0
+		for end < len(rest) && isWordByte(rest[end]) {
+			end++
+		}
+		if end == 0 || end == len(rest) || rest[end] != dotnetLocalEnd {
+			break
+		}
+		if ordinals := dotnetOrdinals(rest[end+1:]); ordinals > 0 {
+			return rest[:end], len(dotnetLocalMark) + end + 1 + ordinals
+		}
+	case strings.HasPrefix(s, dotnetAsyncMark):
+		// The ordinals are optional, and the name ends with the state
+		// machine's method.
+		n = len(dotnetAsyncMark)
+		if rest, ok := strings.CutPrefix(s[n:], dotnetAsyncOrdinals); ok {
+			digits := countDigits(rest)
+			if digits == 0 {
+				break
+			}
+			n += len(dotnetAsyncOrdinals) + digits
+		}
+		n += dotnetArityLen(s[n:])
+		if s[n:] == dotnetAsyncEnd {
+			return "", len(s)
+		}
+	}
+	return "", 0
+}
+
+// dotnetOrdinals reads the ordinals of a generated name at the start of s,
+// "5", "5_0" or "5_0`1", and returns how long they are; 0 without any.
+func dotnetOrdinals(s string) int {
+	n := countDigits(s)
+	if n == 0 {
+		return 0
+	}
+	if n < len(s) && s[n] == '_' {
+		if more := countDigits(s[n+1:]); more > 0 {
+			n += 1 + more
+		}
+	}
+	return n + dotnetArityLen(s[n:])
+}
+
+// dotnetArityLen is the length of a generic arity ("`1") at the start of s.
+func dotnetArityLen(s string) int {
+	if len(s) > 1 && s[0] == dotnetArity {
+		if n := countDigits(s[1:]); n > 0 {
+			return 1 + n
+		}
+	}
+	return 0
+}
+
+// countDigits is how many ASCII digits s starts with.
+func countDigits(s string) int {
+	n := 0
+	for n < len(s) && s[n] >= '0' && s[n] <= '9' {
+		n++
+	}
+	return n
 }
 
 // dotnetRootCause returns the frames of the innermost exception, which is
