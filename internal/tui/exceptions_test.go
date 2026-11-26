@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	osexec "os/exec"
@@ -762,5 +763,54 @@ func TestExceptionsFacetFieldsAreTheUnionOverTheSample(t *testing.T) {
 	}
 	if !tv.hasField("endpoint.name") || !tv.hasField("span.name") {
 		t.Errorf("facet fields = %q, want both spans' fields", tv.facetCandidates())
+	}
+}
+
+// d opens the inspector on the row's real fields. The page is written to
+// the history file, so it must not carry the issue: a key, a message and
+// frames computed from spans are not a record of the tenant's, and the view
+// stores no keys.
+func TestExceptionsInspectedRowKeepsNoIssueInHistory(t *testing.T) {
+	a := testApp(t, "exceptions")
+	seedSample(t, a, issueSpans(), nil)
+	press(a, key("d"))
+	iv, ok := a.top().(*inspectorView)
+	if !ok {
+		t.Fatalf("d opened %T, want the inspector", a.top())
+	}
+	ref, ok := pageRefOf(iv)
+	if !ok {
+		t.Fatal("the inspector has no history codec")
+	}
+	raw, err := json.Marshal(ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "__") || strings.Contains(string(raw), "e1:") {
+		t.Errorf("the persisted page holds the issue:\n%s", raw)
+	}
+	if catalog.Str(iv.rec, "span.id") == "" || catalog.Str(iv.rec, "trace.id") == "" || catalog.Str(iv.rec, "start_time") == "" {
+		t.Errorf("the inspector lost the row's real fields: %v", iv.rec)
+	}
+	// The table's own row keeps its issue for the cells and the preview.
+	press(a, key("esc"))
+	if _, isIssue := catalog.IssueOf(a.top().(*tableView).selected()); !isIssue {
+		t.Error("inspecting a row took the issue off the table's row")
+	}
+}
+
+// Two issues inspected from one table are two history entries: an issue row
+// has no title, timestamp or display id to tell them apart, so the page is
+// identified by its span.
+func TestExceptionsInspectedIssuesAreSeparateHistoryEntries(t *testing.T) {
+	a := testApp(t, "exceptions")
+	seedSample(t, a, issueSpans(), nil)
+	press(a, key("d"))
+	first := len(a.hist.entries)
+	press(a, key("esc"))
+	press(a, key("j"))
+	press(a, key("d"))
+	if got := len(a.hist.entries); got != first+1 {
+		t.Errorf("history has %d entries after the second inspect, %d after the first: the pages collapsed", got, first)
 	}
 }
