@@ -37,6 +37,15 @@ type sourceLookup struct {
 	index *source.Index
 	err   error
 	done  bool
+
+	// asked is the last frame likely was asked about and what it said: the
+	// footer asks on every draw, and for a Go frame the answer is a pass
+	// over every Go file of the index. Read and written on the update loop.
+	asked struct {
+		index  *source.Index
+		label  string
+		likely bool
+	}
 }
 
 func newSourceLookup(root, editor string) *sourceLookup {
@@ -81,10 +90,14 @@ func (s *sourceLookup) likely(label string) bool {
 	if f.Notation == source.Unknown || f.Runtime != "" {
 		return false
 	}
-	if ix := s.ready(); ix != nil {
-		return ix.Likely(f)
+	ix := s.ready()
+	if ix == nil {
+		return true
 	}
-	return true
+	if s.asked.index != ix || s.asked.label != label {
+		s.asked.index, s.asked.label, s.asked.likely = ix, label, ix.Likely(f)
+	}
+	return s.asked.likely
 }
 
 // sourceAskMsg asks for the source of a frame of a view, and sourceFoundMsg
