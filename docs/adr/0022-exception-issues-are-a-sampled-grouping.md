@@ -176,9 +176,18 @@ its pull request open, until this list is empty:
 - The row limit and the result size limit as numbers. 1000 rows and 8 MB are
   provisional: they were chosen from the size of single spans on an
   environment with very few exception spans and have not been measured on one
-  that fills them. They are confirmed or changed on a busy one (bytes scanned,
-  bytes returned, time to first rows, against the budgets in
-  [vision.md](../design/vision.md)) and then written into this record.
+  that fills them. One measurement of a full sample on a busy environment
+  confirms or changes them before anything merges: bytes scanned, bytes
+  returned and time to first rows, against the budgets in
+  [vision.md](../design/vision.md) and against the shortest auto-refresh
+  interval, 10 s. The result size limit is approximate, a result can exceed
+  it, and the measurement says by how much. The numbers are then written into
+  this record.
+
+The order of landing is this record, then the key, then the view. The key and
+the view are held until this record is Accepted, and the key does not merge
+before its code follows "One event per span is keyed", because the first
+release that shows a key freezes `e1`.
 
 Left undecided on purpose. Nothing above depends on these, and none of them
 needs a further ADR:
