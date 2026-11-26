@@ -836,7 +836,7 @@ func TestEnterOnARowThatIsNoFunction(t *testing.T) {
 // command as it is.
 func TestHostileFunctionNameStaysInItsCell(t *testing.T) {
 	pinSnapshotClock(t)
-	const hostile = "com.example.\x1b[31mRED\x1b[0m\nsecond.line\tClass.method"
+	const hostile = "pkg.\x1b[31mRED\x1b[0m\nsecond\tC.m" // short: nothing abbreviates it
 	sc := loadProfilingScenario(t, "hotspots-running")
 	a, tv := openProfiling(t, sc)
 	sc.answer(tv)
