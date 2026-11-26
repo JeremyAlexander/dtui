@@ -1468,14 +1468,20 @@ func TestProfilingRunsInFlightDoNotEvictAResult(t *testing.T) {
 	runs.now = func() time.Time { return scenarioNow }
 	hotspots := hotspotsSource(p, runs)
 	read := func(i int) {
-		if _, err := hotspots(context.Background(), catalog.Scope{Entity: process(i), Timeframe: timeframe(t, "2h")}, ""); err != nil {
+		// A context of its own, as every call of a view has: the waiters of
+		// an analysis are told apart by it.
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		if _, err := hotspots(ctx, catalog.Scope{Entity: process(i), Timeframe: timeframe(t, "2h")}, ""); err != nil {
 			t.Error(err)
 		}
 	}
 
-	var wg sync.WaitGroup
 	for i := range profileCacheSize {
 		p.held[process(i).ID] = true
+	}
+	var wg sync.WaitGroup
+	for i := range profileCacheSize {
 		wg.Go(func() { read(i) })
 	}
 	for p.asked() != profileCacheSize {
@@ -1487,10 +1493,35 @@ func TestProfilingRunsInFlightDoNotEvictAResult(t *testing.T) {
 		t.Errorf("%d analyses with %d in flight and one more process read twice, want %d: its result must be kept",
 			got, profileCacheSize, profileCacheSize+1)
 	}
+	// Nor is one in flight dropped to make room: a second view of its
+	// process joins it.
+	wg.Go(func() { read(0) })
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(time.Millisecond) {
+		runs.mu.Lock()
+		waiting := 0
+		for _, run := range runs.runs {
+			waiting += len(run.waiters)
+		}
+		runs.mu.Unlock()
+		if waiting == profileCacheSize+1 || p.asked() > profileCacheSize+1 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%d calls wait on the analyses in flight, want %d", waiting, profileCacheSize+1)
+		}
+	}
 	close(p.release)
 	wg.Wait()
+	if got := p.asked(); got != profileCacheSize+1 {
+		t.Errorf("%d analyses after a second view joined one in flight, want %d", got, profileCacheSize+1)
+	}
 	if got := cachedRuns(runs); got != profileCacheSize {
-		t.Errorf("%d analyses kept once all had finished, want %d", got, profileCacheSize)
+		t.Fatalf("%d analyses kept once all had finished, want %d", got, profileCacheSize)
+	}
+	// The one dropped is the oldest: the latest result is still there.
+	read(profileCacheSize)
+	if got := p.asked(); got != profileCacheSize+1 {
+		t.Errorf("the latest of %d finished analyses was dropped, not the oldest", profileCacheSize+1)
 	}
 }
 
