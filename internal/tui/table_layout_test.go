@@ -138,3 +138,24 @@ func TestFootnoteKeepsItsOwnLine(t *testing.T) {
 		}
 	}
 }
+
+// Caption segments share a line while they fit, the separator counted as the
+// three cells it takes.
+func TestCaptionBreaksBetweenSegments(t *testing.T) {
+	spec := &catalog.Spec{Name: "t", API: "t", Columns: []catalog.Column{{Title: "A", Field: "a"}},
+		Caption: func(catalog.Scope, map[string]any) []string { return []string{"aaaa", "bbbb", "cccc"} }}
+	v := newTableView(&dataSource{previewOff: true}, spec, catalog.Scope{})
+	for _, c := range []struct {
+		width int
+		want  []string
+	}{
+		{20, []string{"aaaa · bbbb · cccc"}},
+		{19, []string{"aaaa · bbbb", "cccc"}},
+		{13, []string{"aaaa · bbbb", "cccc"}},
+		{12, []string{"aaaa", "bbbb", "cccc"}},
+	} {
+		if got := v.captionLines(c.width); !slices.Equal(got, c.want) {
+			t.Errorf("caption at %d columns = %q, want %q", c.width, got, c.want)
+		}
+	}
+}
