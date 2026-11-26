@@ -10,6 +10,7 @@ ee2ec91e3d4628e8	const dotnetNested, dotnetGenerated
 61a640576f8dd7db	const exceptionMessageInput, ExceptionMessageMax, msgIPv6Max, msgIPv6Colons, msgIPv6WordColons, msgPlaceholderMax
 6511a88fc8d4cab7	const fingerprintKeyLen
 ba46e319ae5dae85	const goGoroutine, goFileSuffix
+d25c4003fcbc1f21	const goPanicWord, goRuntimePackage
 13a0afea61cdc2a9	const goVendorDir
 93ff8fef9db5608a	const hexLetters, digits, msgControls
 9753a90bf181f7cc	const javaSyntheticClass

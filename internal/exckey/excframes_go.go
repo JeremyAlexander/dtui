@@ -164,6 +164,11 @@ func goAtFault(lines []string) bool {
 		if hasAnyPrefix(line, goPanicHeaders) {
 			return true
 		}
+		// A panic entry is "panic(" or a function of package runtime; no
+		// other line needs reading as a frame.
+		if !strings.Contains(line, goPanicWord) && !strings.Contains(line, goRuntimePackage) {
+			continue
+		}
 		if f, ok := goFrame(line); ok && isGoPanic(f) {
 			return true
 		}
@@ -191,8 +196,15 @@ func goThrowSite(frames []StackFrame) []StackFrame {
 }
 
 func isGoPanic(f StackFrame) bool {
-	return f.Module == "" && f.Function == "panic" || f.Module == "runtime" && goPanicRe.MatchString(f.Function)
+	return f.Module == "" && f.Function == goPanicWord || f.Module+"." == goRuntimePackage && goPanicRe.MatchString(f.Function)
 }
+
+const (
+	// goPanicWord is the frame of the built-in, which has no package.
+	goPanicWord = "panic"
+	// goRuntimePackage starts the name of every function of the runtime.
+	goRuntimePackage = "runtime."
+)
 
 // goFirstGoroutine reads the frames up to the first header that follows
 // one: a dump may start without the header of the goroutine it is about.
