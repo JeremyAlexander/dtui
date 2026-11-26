@@ -200,7 +200,7 @@ func profileLoading(what string) func(Scope) string {
 		if name == "" {
 			name = s.Entity.ID
 		}
-		return fmt.Sprintf("analysing %s of %s — an analysis can take up to about a minute", what, name)
+		return fmt.Sprintf("analysing %s of %s, which can take minutes", what, name)
 	}
 }
 

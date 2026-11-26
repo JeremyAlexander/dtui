@@ -38,8 +38,9 @@ type tableView struct {
 	// marks a call ended by leaving the view, fetched again on the way back.
 	cancel      context.CancelFunc
 	interrupted bool
-	// progress is what the source says about the call in flight, and started
-	// is when it was issued (the loading line counts from it).
+	// started is when the view began to wait, and progress what the source
+	// said last about the call in flight. Both last as long as the wait does,
+	// through every fetch that replaces the call (Refresh).
 	progress *callProgress
 	started  time.Time
 	seq      int
@@ -260,6 +261,7 @@ func (v *tableView) setLens(i int, wrap bool) tea.Cmd {
 	v.scope.Lens = i
 	v.sortCol = -1
 	v.cursor, v.offset = 0, 0
+	v.dropReading()
 	l := v.spec.Lenses[i]
 	return tea.Batch(v.Refresh(), markHistory, status(fmt.Sprintf("lens: %s — %s", l.Name, l.Desc)))
 }
@@ -334,6 +336,9 @@ func (v *tableView) composeRosterDQL() string {
 
 func (v *tableView) Refresh() tea.Cmd {
 	v.seq++
+	if !v.loading {
+		v.started, v.progress = catalog.Now(), &callProgress{}
+	}
 	v.loading = true
 	v.err = nil
 	if cmd := v.discoverCmd(); cmd != nil {
@@ -411,7 +416,6 @@ func (v *tableView) fetch() tea.Cmd {
 			}
 			ctx, v.cancel = context.WithCancel(ctx)
 		}
-		v.progress, v.started = &callProgress{}, catalog.Now()
 		return v.ds.call(withProgress(ctx, v.progress), v, v.seq, v.spec.API, v.scope, v.dql)
 	}
 	if v.spec.RecordCap > 0 {
@@ -461,7 +465,24 @@ func (v *tableView) Returned() tea.Cmd {
 
 func (v *tableView) SetTimeframe(tf catalog.Timeframe) tea.Cmd {
 	v.scope.Timeframe = tf
+	if v.dropReading() {
+		v.loading = false // another window is another wait: count it from now
+	}
 	return v.Refresh()
+}
+
+// dropReading empties a view whose scope just changed when its spec words a
+// slow wait (Spec.Loading), and reports whether it did. Such a view can wait a
+// minute for the next result, and until then the old rows and the old totals
+// would stand under a breadcrumb that names another lens or window. Every
+// other view keeps its rows in sight for the moment a refetch takes.
+func (v *tableView) dropReading() bool {
+	if v.spec.Loading == nil {
+		return false
+	}
+	v.all, v.rows, v.summary = nil, nil, nil
+	v.cursor, v.offset = 0, 0
+	return true
 }
 
 func (v *tableView) InputActive() bool { return v.filtering || v.facetMode != facetOff }
@@ -718,6 +739,11 @@ func (v *tableView) Update(msg tea.Msg) tea.Cmd {
 		v.loading = false
 		v.err = msg.err
 		v.summary = nil
+		if msg.err != nil {
+			// The error screen replaces the table, so nothing may stay behind
+			// it for enter to act on or the next refresh to repaint.
+			v.dropReading()
+		}
 		if msg.err == nil {
 			v.all = msg.records
 			if v.spec.ReadsSummary() {
@@ -1151,7 +1177,7 @@ func (v *tableView) footnote() string {
 }
 
 // loadingText words the wait for a slow first result: the spec's line, how
-// long the call has run, and the latest progress the source reported.
+// long the view has waited, and the latest progress the source reported.
 func (v *tableView) loadingText() []string {
 	if v.spec.Loading == nil || !v.loading || len(v.all) > 0 {
 		return nil
@@ -1168,6 +1194,16 @@ func (v *tableView) loadingText() []string {
 		lines = append(lines, catalog.SafeText(p))
 	}
 	return lines
+}
+
+// placeNote centres a dim line in a body of the given width. One wider than
+// the body wraps instead: wrapping pads to the wrap width, which would push a
+// short line to the left margin.
+func placeNote(text string, width int) string {
+	if lipgloss.Width(text) > width-4 {
+		text = wrap(text, width-4)
+	}
+	return lipgloss.PlaceHorizontal(width, lipgloss.Center, theme.Dim.Render(text))
 }
 
 func (v *tableView) renderTable(width, height int) string {
@@ -1269,7 +1305,7 @@ func (v *tableView) renderTable(width, height int) string {
 	if wait := v.loadingText(); wait != nil {
 		b.WriteString("\n")
 		for _, line := range wait {
-			b.WriteString("\n" + lipgloss.PlaceHorizontal(width, lipgloss.Center, theme.Dim.Render(ansi.Truncate(line, width-2, "…"))))
+			b.WriteString("\n" + placeNote(line, width))
 		}
 	}
 	if len(v.rows) == 0 && !v.loading {
@@ -1287,12 +1323,7 @@ func (v *tableView) renderTable(width, height int) string {
 				empty = fmt.Sprintf("∅ no %s in timeframe (last %s) — [/] switches lens",
 					what, v.scope.Timeframe.Label)
 			}
-			// Only a message wider than the body wraps: wrapping pads to the
-			// wrap width, which would push a short one to the left margin.
-			if lipgloss.Width(empty) > width-4 {
-				empty = wrap(empty, width-4)
-			}
-			b.WriteString("\n" + lipgloss.PlaceHorizontal(width, lipgloss.Center, theme.Dim.Render(empty)))
+			b.WriteString("\n" + placeNote(empty, width))
 		}
 	}
 	if foot != "" {

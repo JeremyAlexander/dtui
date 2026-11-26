@@ -2,8 +2,10 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/charmbracelet/x/ansi"
 
@@ -230,5 +232,27 @@ func TestSummaryIsReadOnlyWhereASpecAsksForIt(t *testing.T) {
 	answer(map[string]any{catalog.SummaryKey: "no", "a": "x"}, map[string]any{"a": "y"})
 	if len(v.all) != 2 || v.summary != nil {
 		t.Errorf("a field of that name is not the marker: %d rows, summary %v", len(v.all), v.summary)
+	}
+}
+
+// A view without a worded wait keeps what it shows while it asks again, in
+// every case a slow view drops it: a lens switch, a timeframe switch, a
+// refresh that fails.
+func TestOrdinaryViewKeepsItsRowsWhileItRefetches(t *testing.T) {
+	a := testApp(t, "traces")
+	seedRows(t, a, []map[string]any{{"span.name": "GET /cart"}, {"span.name": "GET /checkout"}})
+	tv := a.top().(*tableView)
+
+	press(a, key("]"))
+	if !tv.loading || len(tv.rows) != 2 {
+		t.Errorf("lens switch: loading=%v, %d rows; want the 2 rows kept", tv.loading, len(tv.rows))
+	}
+	deliver(a, a.setTimeframe(catalog.Timeframe{Label: "30m", Dur: 30 * time.Minute}))
+	if !tv.loading || len(tv.rows) != 2 {
+		t.Errorf("timeframe switch: loading=%v, %d rows; want the 2 rows kept", tv.loading, len(tv.rows))
+	}
+	tv.Update(dataMsg{owner: tv, seq: tv.seq, err: errors.New("boom")})
+	if len(tv.all) != 2 {
+		t.Errorf("a failed refresh dropped the rows of an ordinary view: %d left", len(tv.all))
 	}
 }

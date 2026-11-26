@@ -320,3 +320,109 @@ func TestProfilingEcho(t *testing.T) {
 		}
 	}
 }
+
+// What is on screen is a reading of the scope in the breadcrumb. A lens or a
+// timeframe switch asks for another reading, and until it arrives the view
+// shows neither the old rows nor the old totals under the new label, and
+// enter has nothing to act on.
+func TestProfilingDropsAReadingItsScopeLeft(t *testing.T) {
+	pinSnapshotClock(t)
+	const hottest = "UTF8JsonGenerator.writeString"
+	for name, leave := range map[string]func(a *app, tv *tableView){
+		"lens": func(a *app, tv *tableView) { press(a, key("]")) },
+		"timeframe": func(a *app, tv *tableView) {
+			deliver(a, a.setTimeframe(catalog.Timeframe{Label: "30m", Dur: 30 * time.Minute}))
+		},
+	} {
+		sc := loadProfilingScenario(t, "hotspots-running")
+		a, tv := openProfiling(t, sc)
+		sc.answer(tv)
+		if out := screen(a); !strings.Contains(out, "77,631 running samples") || !strings.Contains(out, hottest) {
+			t.Fatalf("%s: the running reading is not on screen:\n%s", name, out)
+		}
+		depth := len(a.stack)
+		leave(a, tv)
+		out := screen(a)
+		for _, stale := range []string{"77,631", hottest, "FIXTURE"} {
+			if strings.Contains(out, stale) {
+				t.Errorf("%s switch: %q of the old reading is still on screen:\n%s", name, stale, out)
+			}
+		}
+		if !strings.Contains(out, "analysing the hotspots of shop-backend") {
+			t.Errorf("%s switch: the wait is not worded:\n%s", name, out)
+		}
+		if len(tv.all) != 0 || len(tv.rows) != 0 || tv.summary != nil {
+			t.Errorf("%s switch kept %d rows and summary %v", name, len(tv.all), tv.summary)
+		}
+		press(a, key("enter"))
+		if len(a.stack) != depth {
+			t.Errorf("%s switch: enter opened a view from a row that is not shown", name)
+		}
+	}
+}
+
+// A refresh in place keeps the rows in sight until the new ones arrive, and a
+// failed one leaves nothing behind the error for enter or r to bring back.
+func TestProfilingFailedRefreshLeavesNoRows(t *testing.T) {
+	pinSnapshotClock(t)
+	const hottest = "UTF8JsonGenerator.writeString"
+	sc := loadProfilingScenario(t, "hotspots-running")
+	a, tv := openProfiling(t, sc)
+	sc.answer(tv)
+	depth := len(a.stack)
+
+	press(a, key("r"))
+	if out := screen(a); !tv.loading || len(tv.rows) != 300 || !strings.Contains(out, hottest) {
+		t.Fatalf("r must keep the 300 rows while it asks again: loading=%v, %d rows", tv.loading, len(tv.rows))
+	}
+	tv.Update(dataMsg{owner: tv, seq: tv.seq, err: errors.New("the environment refused the analysis (403)")})
+	if len(tv.all) != 0 || len(tv.rows) != 0 {
+		t.Errorf("a failed refresh kept %d rows behind the error", len(tv.all))
+	}
+	press(a, key("enter"))
+	if len(a.stack) != depth {
+		t.Error("enter behind the error opened a view")
+	}
+	press(a, key("r"))
+	if out := screen(a); strings.Contains(out, hottest) || strings.Contains(out, "300 rows") {
+		t.Errorf("r after a failure repainted the old rows:\n%s", out)
+	}
+}
+
+// The wait is counted from when the view started waiting, and what the source
+// said last stays: a lens switch replaces the call, not the analysis. Another
+// window is another analysis and starts the count again.
+func TestProfilingWaitSurvivesALensSwitch(t *testing.T) {
+	pinSnapshotClock(t)
+	a, tv := openProfiling(t, loadProfilingScenario(t, "hotspots-running"))
+	tv.started = catalog.Now().Add(-41 * time.Second)
+	tv.progress.set("the environment accepted the analysis")
+	press(a, key("]"))
+	if got, want := strings.Join(tv.loadingText(), "|"),
+		"analysing the hotspots of shop-backend, which can take minutes — 41s|the environment accepted the analysis"; got != want {
+		t.Errorf("after a lens switch the view says\n %q, want\n %q", got, want)
+	}
+	deliver(a, a.setTimeframe(catalog.Timeframe{Label: "30m", Dur: 30 * time.Minute}))
+	if got, want := strings.Join(tv.loadingText(), "|"),
+		"analysing the hotspots of shop-backend, which can take minutes — 0s"; got != want {
+		t.Errorf("after a timeframe switch the view says\n %q, want\n %q", got, want)
+	}
+}
+
+// Nothing of the wait is cut off at 80 columns: a line wider than the body
+// wraps.
+func TestProfilingLoadingLineWrapsAtEightyColumns(t *testing.T) {
+	pinSnapshotClock(t)
+	a, tv := openProfiling(t, loadProfilingScenario(t, "hotspots-running"))
+	tv.scope.Entity.Name = "shop-backend-checkout-eu-west-1a"
+	tv.started = catalog.Now().Add(-41 * time.Second)
+	a.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	var lines []string
+	for _, line := range strings.Split(screen(a), "\n") {
+		lines = append(lines, strings.TrimRight(line, " "))
+	}
+	want := "\n  analysing the hotspots of shop-backend-checkout-eu-west-1a, which can take\n  minutes — 41s\n"
+	if out := strings.Join(lines, "\n"); !strings.Contains(out, want) {
+		t.Errorf("the loading text is not whole, want %q in:\n%s", want, out)
+	}
+}
