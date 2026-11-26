@@ -132,6 +132,42 @@
     ]
   },
   {
+    "name": "go: a module path without a host, under a router from the module cache",
+    "group": "go-handler-add",
+    "rung": "app frames",
+    "events": [
+      {
+        "type": "runtime.Error",
+        "message": "invalid memory address or nil pointer dereference",
+        "stack": "go-handler-add.txt"
+      }
+    ]
+  },
+  {
+    "name": "go: another router version, goroutine and offsets",
+    "group": "go-handler-add",
+    "rung": "app frames",
+    "events": [
+      {
+        "type": "runtime.Error",
+        "message": "invalid memory address or nil pointer dereference",
+        "stack": "go-handler-add-b.txt"
+      }
+    ]
+  },
+  {
+    "name": "go: another panic under the same router",
+    "group": "go-handler-remove",
+    "rung": "app frames",
+    "events": [
+      {
+        "type": "runtime.Error",
+        "message": "invalid memory address or nil pointer dereference",
+        "stack": "go-handler-remove.txt"
+      }
+    ]
+  },
+  {
     "name": "node: baseline",
     "group": "node-cart-add",
     "rung": "app frames",

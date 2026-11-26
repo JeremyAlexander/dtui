@@ -2,6 +2,7 @@ package catalog
 
 import (
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -336,6 +337,31 @@ created by github.com/acme/shop/list.Start`,
 				"github.com/acme/shop/list", "Map",
 				"github.com/acme/shop/list", "Set.Add",
 				"github.com/acme/shop/list", "Start")},
+		{"a vendored package is addressed without its vendor directory", `github.com/example/shop/vendor/github.com/gin-gonic/gin.(*Context).Next(0xc0001a2000)
+shop/vendor/golang.org/x/net/http2.(*serverConn).runHandler(0xc000010000)
+vendor/golang.org/x/net/http2/hpack.(*Decoder).Write(0xc000010000)`,
+			[]StackFrame{
+				{Module: "github.com/gin-gonic/gin", Function: "Context.Next", Syntax: StackGo, Dependency: true},
+				{Module: "golang.org/x/net/http2", Function: "serverConn.runHandler", Syntax: StackGo, Dependency: true},
+				{Module: "golang.org/x/net/http2/hpack", Function: "Decoder.Write", Syntax: StackGo, Dependency: true}}},
+		{"the file line tells a dependency from the application", `github.com/gin-gonic/gin.(*Context).Next(0xc0001a2000)
+	/go/pkg/mod/github.com/gin-gonic/gin@v1.9.1/context.go:174 +0x2b
+github.com/example/shop/cart.(*Service).AddItem(0xc000010000)
+	/src/shop/cart/service.go:42 +0x1d
+github.com/example/money.Add(0x1, 0x2)
+	github.com/example/money@v0.3.0/money.go:9 +0x1d
+github.com/example/tax.Rate(0x1)
+	/src/shop/vendor/github.com/example/tax/rate.go:12 +0x3c
+github.com/example/shop/api.Post(0xc000010000)
+created by github.com/example/shop/api.Serve in goroutine 1
+	/src/shop/api/serve.go:30 +0x4a`,
+			[]StackFrame{
+				{Module: "github.com/gin-gonic/gin", Function: "Context.Next", Syntax: StackGo, Dependency: true},
+				{Module: "github.com/example/shop/cart", Function: "Service.AddItem", Syntax: StackGo},
+				{Module: "github.com/example/money", Function: "Add", Syntax: StackGo, Dependency: true},
+				{Module: "github.com/example/tax", Function: "Rate", Syntax: StackGo, Dependency: true},
+				{Module: "github.com/example/shop/api", Function: "Post", Syntax: StackGo},
+				{Module: "github.com/example/shop/api", Function: "Serve", Syntax: StackGo}}},
 		{"a name that starts with a dot", ".run()\nshop/.run()",
 			frames(StackGo, "", "run", "shop/", "run")},
 		{"a one-letter name", "f(0x1)", frames(StackGo, "", "f")},
@@ -612,6 +638,24 @@ func TestParseStackFramesLineBreaks(t *testing.T) {
 		frames(StackDotNet, "Example.Shop.Cart", "Add", "Example.Shop.Api", "Post"))
 }
 
+// goStdlib must be the top-level names of the standard library, sorted: the
+// in-app rule looks a module's first element up in it.
+func TestGoStdlibNamesAreSorted(t *testing.T) {
+	if !sort.StringsAreSorted(goStdlib) {
+		t.Error("goStdlib must stay sorted")
+	}
+	for _, name := range []string{"archive", "net", "runtime", "weak"} {
+		if !isGoStdlib(name + "/x") {
+			t.Errorf("%s is not taken for the standard library", name)
+		}
+	}
+	for _, module := range []string{"main", "shop/net", "nets", "github.com/example/shop", ""} {
+		if isGoStdlib(module) {
+			t.Errorf("%q is taken for the standard library", module)
+		}
+	}
+}
+
 func TestParseStackFramesUnparseable(t *testing.T) {
 	for _, in := range []string{
 		"", "\n\n", "not a stack trace", "Error: something failed (code 5)",
@@ -646,6 +690,13 @@ func TestDefaultFrameClassifier(t *testing.T) {
 		{StackFrame{Module: "main", Syntax: StackGo}, true},
 		{StackFrame{Module: "github.com/acme/shop/cart", Syntax: StackGo}, true},
 		{StackFrame{Module: "shop.example.invalid/cart", Syntax: StackGo}, true},
+		{StackFrame{Module: "shop/internal/cart", Syntax: StackGo}, true},
+		{StackFrame{Module: "cart", Syntax: StackGo}, true},
+		{StackFrame{Module: "mainframe", Syntax: StackGo}, true},
+		{StackFrame{Module: "github.com/gin-gonic/gin", Syntax: StackGo, Dependency: true}, false},
+		{StackFrame{Module: "shop/internal/cart", Syntax: StackGo, Dependency: true}, false},
+		{StackFrame{Module: "internal/poll", Syntax: StackGo}, false},
+		{StackFrame{Module: "sync/atomic", Syntax: StackGo}, false},
 		{StackFrame{Module: "runtime", Syntax: StackGo}, false},
 		{StackFrame{Module: "net/http", Syntax: StackGo}, false},
 		{StackFrame{Module: "encoding/json.v2", Syntax: StackGo}, false},

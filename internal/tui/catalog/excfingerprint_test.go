@@ -186,6 +186,31 @@ func TestFingerprintCollapsesRecursionAcrossFrameworkFrames(t *testing.T) {
 	}
 }
 
+// A panic in a handler of a Go service: the application's module has no host
+// in its path, the router is a dependency from the module cache.
+func TestFingerprintGoApplicationFrames(t *testing.T) {
+	read := func(name string) SpanException {
+		t.Helper()
+		stack, err := os.ReadFile(filepath.Join(exceptionCorpusDir, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return SpanException{Type: "runtime.Error", StackTrace: string(stack)}
+	}
+	add, addAgain, remove := mustFingerprint(t, read("go-handler-add.txt")),
+		mustFingerprint(t, read("go-handler-add-b.txt")), mustFingerprint(t, read("go-handler-remove.txt"))
+	want := frames(StackGo, "shop/internal/cart", "Service.AddItem", "shop/internal/api", "Handler.PostItem")
+	if add.Rung != RungAppFrames || !reflect.DeepEqual(add.Frames, want) {
+		t.Errorf("rung %v frames %+v, want the application's two", add.Rung, add.Frames)
+	}
+	if add.Key != addAgain.Key {
+		t.Error("the same panic under another router version must keep its key")
+	}
+	if add.Key == remove.Key {
+		t.Error("two panics in one binary must not share a key")
+	}
+}
+
 // onlyModule treats one module as the application.
 type onlyModule string
 

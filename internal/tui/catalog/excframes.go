@@ -34,6 +34,10 @@ type StackFrame struct {
 	Module   string
 	Function string
 	Syntax   StackSyntax
+	// Dependency is set where the trace itself shows that the frame is
+	// third-party code and the module cannot: a Go package under a vendor
+	// directory or with its file in the module cache.
+	Dependency bool
 }
 
 // FrameAuto stands in for a generated class name (proxies, reflection

@@ -2,11 +2,28 @@ package catalog
 
 import (
 	"regexp"
+	"sort"
 	"strings"
 )
 
 // Go goroutine dumps: "pkg/path.(*Type).Method(0x1, 0x2)" frames, each
 // followed by its file line, under a "goroutine N [state]:" header.
+//
+// Which frames are the application's cannot be read from an import path:
+// the dump does not name the main module, and a module path needs no host
+// ("shop/internal/cart"). The rule is by elimination. A frame is in-app
+// unless
+//
+//   - its package is the standard library's: the first element of the path
+//     is one of goStdlib;
+//   - the trace shows it is a dependency: the package sits under a vendor
+//     directory, or the file line after the frame is in the module cache
+//     (a "module@version" directory, kept by -trimpath) or under vendor/;
+//   - its module host is one of goVendorPrefixes.
+//
+// This takes a dependency for the application where a trace has no file
+// lines and the host is not listed, and an application package for the
+// standard library where its path starts with one of the library's names.
 
 var (
 	goGoroutineRe = regexp.MustCompile(`^goroutine \d+ \[`)
@@ -15,15 +32,31 @@ var (
 	// braces where they are the fields of one value, "..." when elided.
 	goArgsRe     = regexp.MustCompile(`^(?:0x[0-9a-f]+\??|\.\.\.|[{},\s])*$`)
 	goTypeArgsRe = regexp.MustCompile(`\[[^\]]*\]`)
+	// The file line under a frame, and what in its path shows a dependency.
+	goFileRe       = regexp.MustCompile(`^(\S+\.go):\d+(?: \+0x[0-9a-f]+)?$`)
+	goDependencyRe = regexp.MustCompile(`@v\d|/pkg/mod/|(?:^|/)vendor/`)
 	// A method's receiver is written "(*Type)" or "(Type)".
 	goReceiver = strings.NewReplacer("(*", "", "(", "", ")", "")
 )
+
+// goStdlib are the top-level names of the standard library (go list std,
+// Go 1.26), sorted.
+var goStdlib = []string{
+	"archive", "bufio", "bytes", "cmp", "compress", "container", "context", "crypto", "database", "debug", "embed",
+	"encoding", "errors", "expvar", "flag", "fmt", "go", "hash", "html", "image", "index", "internal", "io", "iter",
+	"log", "maps", "math", "mime", "net", "os", "path", "plugin", "reflect", "regexp", "runtime", "slices", "sort",
+	"strconv", "strings", "structs", "sync", "syscall", "testing", "text", "time", "unicode", "unique", "unsafe",
+	"vendor", "weak",
+}
 
 // goVendorPrefixes are widely used module hosts that are never the
 // application itself.
 var goVendorPrefixes = []string{
 	"golang.org/", "google.golang.org/", "go.opentelemetry.io/", "go.uber.org/", "gopkg.in/",
 }
+
+// goVendorDir is the directory a module keeps its dependencies' packages in.
+const goVendorDir = "vendor/"
 
 // goFrame reads a frame or a "created by" line. The file line that follows
 // each frame matches nothing. A call written in prose ("decode(abc)",
@@ -56,7 +89,13 @@ func goFrame(line string) (StackFrame, bool) {
 	if function == "" {
 		return StackFrame{}, false
 	}
-	return StackFrame{Module: module, Function: function, Syntax: StackGo}, true
+	// "shop/vendor/golang.org/x/net/http2", and the standard library's own
+	// "vendor/golang.org/x/net/http2/hpack": the package is the vendored one.
+	vendored := false
+	if i := strings.LastIndex("/"+module, "/"+goVendorDir); i >= 0 {
+		module, vendored = module[i+len(goVendorDir):], true
+	}
+	return StackFrame{Module: module, Function: function, Syntax: StackGo, Dependency: vendored}, true
 }
 
 // goRootCause returns the frames of the first goroutine, the one that
@@ -64,21 +103,35 @@ func goFrame(line string) (StackFrame, bool) {
 func goRootCause(lines []string) []StackFrame {
 	var out []StackFrame
 	goroutines := 0
+	framed := false // the line before was a frame; this one may be its file
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
-		if goGoroutineRe.MatchString(line) {
-			if goroutines++; goroutines > 1 {
-				break
-			}
-		} else if f, ok := goFrame(line); ok {
+		f, ok := goFrame(line)
+		switch {
+		case ok:
 			out = append(out, f)
+		case goGoroutineRe.MatchString(line):
+			if goroutines++; goroutines > 1 {
+				return out
+			}
+		case framed:
+			if m := goFileRe.FindStringSubmatch(line); m != nil && goDependencyRe.MatchString(m[1]) {
+				out[len(out)-1].Dependency = true
+			}
 		}
+		framed = ok
 	}
 	return out
 }
 
 func goInApp(f StackFrame) bool {
-	// The standard library has no host in its import path.
-	host, _, _ := strings.Cut(f.Module, "/")
-	return f.Module == "main" || strings.Contains(host, ".") && !hasAnyPrefix(f.Module, goVendorPrefixes)
+	return f.Module != "" && !f.Dependency && !isGoStdlib(f.Module) && !hasAnyPrefix(f.Module, goVendorPrefixes)
+}
+
+// isGoStdlib reports whether a package path starts with a top-level name of
+// the standard library.
+func isGoStdlib(module string) bool {
+	first, _, _ := strings.Cut(module, "/")
+	i := sort.SearchStrings(goStdlib, first)
+	return i < len(goStdlib) && goStdlib[i] == first
 }

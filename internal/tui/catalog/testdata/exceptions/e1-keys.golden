@@ -1,6 +1,9 @@
 e1:7d683399c7bf	dotnet: baseline
 e1:7d683399c7bf	dotnet: other state machine numbers
+e1:9fdc3d023c3f	go: a module path without a host, under a router from the module cache
 e1:7be6ee5f3d1f	go: another goroutine, arguments and offsets
+e1:dd4bde725878	go: another panic under the same router
+e1:9fdc3d023c3f	go: another router version, goroutine and offsets
 e1:7be6ee5f3d1f	go: baseline
 e1:49a0cb225fa6	java: baseline
 e1:49a0cb225fa6	java: other ids, line numbers and proxy suffixes
