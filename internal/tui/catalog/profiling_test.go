@@ -285,10 +285,10 @@ func TestHotspotBarsShareOneScale(t *testing.T) {
 		got  string
 		want string
 	}{
-		{"4% self", selfBar.TextAt(rows[0], 8), "▎"},
+		{"4% self", selfBar.TextAt(rows[0], 8), "▍"},
 		{"50% total", totalBar.TextAt(rows[0], 8), "████"},
 		{"2% self", selfBar.TextAt(rows[1], 8), "▏"},
-		{"4% total", totalBar.TextAt(rows[1], 8), "▎"},
+		{"4% total", totalBar.TextAt(rows[1], 8), "▍"},
 	} {
 		if tc.got != tc.want {
 			t.Errorf("%s draws %q, want %q", tc.name, tc.got, tc.want)
