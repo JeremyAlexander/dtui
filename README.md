@@ -149,7 +149,8 @@ credential store. Details in [docs/design/tui.md](docs/design/tui.md) and the
 - **[dtctl](https://github.com/Dynatrace/dtctl) installed locally.** dtui
   uses dtctl's Go libraries and reads its config and credential store. It never
   runs the `dtctl` binary, so you need dtctl only for the one-time sign-in below.
-  Tested against dtctl **v0.43.0**; keep yours reasonably close.
+  dtui builds against the dtctl version pinned in [`go.mod`](go.mod); keep
+  yours reasonably close to it.
 - Go 1.26 or newer, only if you build from source.
 
 ### 2. Sign in with dtctl (once)
