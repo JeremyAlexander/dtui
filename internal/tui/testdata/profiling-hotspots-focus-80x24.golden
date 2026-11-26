@@ -1,0 +1,24 @@
+ ▛▞▟ dtui  ·  context:test  ·  ● readonly                               last 2h
+ hotspots (shop-backend) › hotspots (UTF8JsonGenerator.writeString) (shop-backe…
+ 88 rows · 38s
+  running    lock    net_io    disk_io    wait
+ FIXTURE java-webapp (a recording, not this environment)
+ last 2h (10:00–12:00 UTC)
+ 19,223 running samples with the function on the stack · all threads, leaf: tot…
+ RELATION  SHARE%  SHARE ▇    SAMPLES  FUNCTION
+▌total      100.0  ████████    19,223  c.f.j.c.j.UTF8JsonGenerator.writeString
+ self        69.3  █████▌      13,321  c.f.j.c.j.UTF8JsonGenerator.writeString
+ caller      15.9  █▎           3,049  c.e.s.c.dto.ProductDto.getAttributes
+ caller      12.6  █            2,421  c.e.s.c.dto.ProductDto.getDescription
+ caller       5.6  ▌            1,076  c.e.shop.catalog.dto.ProductDto.getName
+ caller       5.1  ▍              986  c.e.shop.catalog.dto.ProductDto.getImages
+ caller       4.3  ▍              819  c.example.shop.cart.dto.CartDto.getItems
+ caller       3.7  ▎              716  c.e.shop.catalog.dto.ProductDto.getPrice
+ caller       2.9  ▎              552  c.e.s.s.dto.SearchHitDto.getHighlights
+ caller       2.3  ▏              448  c.e.shop.catalog.dto.ProductDto.getTags
+ caller       1.8  ▏              341  c.example.shop.cart.dto.CartDto.getTotals
+ caller       1.7  ▏              331  c.e.shop.search.dto.SearchHitDto.getTitle
+ caller       1.4  ▏              268  c.e.shop.catalog.dto.ProductDto.getSku
+ ▸ com.fasterxml.jackson.core.json.UTF8JsonGenerator.writeString
+ tab lens  enter callers/callees  h allocations  / filter  J/K sort  : views  t…
+ ≡ dtctl exec profiling hotspots PROCESS-000000000000A001 --focus 'com.fasterxm…

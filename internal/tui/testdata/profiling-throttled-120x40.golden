@@ -1,0 +1,40 @@
+ ▛▞▟ dtui  ·  context:test  ·  ● readonly                                                                       last 2h
+ allocations (shop-backend) ───────────────────────────────────────────────────────────────────────────────────────────
+ 0 rows
+
+✗ the environment is running as many profiling analyses as it allows (429) and kept refusing this one — wait for another
+to finish, then press r
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ enter inspect  h hotspots  / filter  J/K sort  : views  t timeframe  S segments  r refresh  ? help  q quit
+ ≡ dtctl exec profiling allocations PROCESS-000000000000A001 --default-timeframe-start 'now()-2h'

@@ -1,0 +1,24 @@
+ ▛▞▟ dtui  ·  context:test  ·  ● readonly                               last 2h
+ hotspots (shop-backend) ──────────────────────────────────────────────────────
+ ⠋ 0 rows
+  running    lock    net_io    disk_io    wait
+ SELF%     SELF  SELF ▇    TOTAL%    TOTAL  TOTAL ▇   PATHS  FUNCTION
+
+
+ analysing the hotspots of shop-backend — an analysis can take up to about a m…
+ throttled (429, 2× so far): the environment runs only a few analyses at once …
+
+
+
+
+
+
+
+
+
+
+
+
+
+ tab lens  enter callers/callees  h allocations  / filter  J/K sort  : views  t…
+ ≡ dtctl exec profiling hotspots PROCESS-000000000000A001 --view functions --st…

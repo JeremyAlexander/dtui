@@ -1,0 +1,24 @@
+ ▛▞▟ dtui  ·  context:test  ·  ● readonly                               last 2h
+ hotspots (shop-backend) ──────────────────────────────────────────────────────
+ 0 rows
+  running    lock    net_io    disk_io    wait
+
+✗ the environment refused the analysis (403): profiling needs
+storage:profiles:read and storage:entities:read, as scopes of the token and
+granted by an IAM policy — the scopes on the token alone are not enough
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ tab lens  enter callers/callees  h allocations  / filter  J/K sort  : views  t…
+ ≡ dtctl exec profiling hotspots PROCESS-000000000000A001 --view functions --st…

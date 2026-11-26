@@ -1,0 +1,24 @@
+ ▛▞▟ dtui  ·  context:test  ·  ● readonly                               last 2h
+ hotspots ─────────────────────────────────────────────────────────────────────
+ 0 rows
+  running    lock    net_io    disk_io    wait
+
+✗ profiling analyses one process — press h on a row of :processes, or open
+:hotspots PROCESS-…
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ tab lens  enter callers/callees  h allocations  / filter  J/K sort  : views  t…
+ ≡ dtctl exec profiling hotspots <PROCESS-id> --view functions --state running …

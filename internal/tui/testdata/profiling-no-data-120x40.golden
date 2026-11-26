@@ -1,0 +1,40 @@
+ ▛▞▟ dtui  ·  context:test  ·  ● readonly                                                                       last 2h
+ hotspots (shop-backend) ──────────────────────────────────────────────────────────────────────────────────────────────
+ 0 rows · 38s
+  running    lock    net_io    disk_io    wait
+ last 2h (10:00–12:00 UTC) · 0 running samples (stacks seen, not time) · all threads, leaf: total
+ SELF%     SELF  SELF ▇    TOTAL%    TOTAL  TOTAL ▇   PATHS  FUNCTION
+
+  ∅ no samples in this window — the process may have been idle or restarted
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ tab lens  enter callers/callees  h allocations  / filter  J/K sort  : views  t timeframe  S segments  r refresh  ? hel…
+ ≡ dtctl exec profiling hotspots PROCESS-000000000000A001 --view functions --state running --default-timeframe-start 'n…

@@ -1,0 +1,322 @@
+package tui
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/dynatrace-oss/dtui/internal/tui/catalog"
+)
+
+// profilingScenario is one call of a profiling source as the main package's
+// TestProfilingScenarios recorded it from the synthetic Java web-app analysis
+// (testdata/profiling/*.json): the rows, or the failure, the view was handed.
+// This package cannot import the sources, so it renders their recorded output.
+type profilingScenario struct {
+	View   string `json:"view"`
+	Entity *struct {
+		ID, Name, Type string
+	} `json:"entity"`
+	Timeframe string           `json:"timeframe"`
+	Lens      string           `json:"lens"`
+	Arg       string           `json:"arg"`
+	Error     string           `json:"error"`
+	Records   []map[string]any `json:"records"`
+}
+
+func loadProfilingScenario(t *testing.T, name string) profilingScenario {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("testdata", "profiling", name+".json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sc profilingScenario
+	if err := json.Unmarshal(data, &sc); err != nil {
+		t.Fatalf("%s: %v", name, err)
+	}
+	return sc
+}
+
+// openProfiling opens a scenario's view the way the command bar does
+// (`:hotspots PROCESS-…`), in the scenario's timeframe and lens, still loading.
+func openProfiling(t *testing.T, sc profilingScenario) (*app, *tableView) {
+	t.Helper()
+	a := testApp(t, "home")
+	tf, ok := catalog.ParseTimeframe(sc.Timeframe)
+	if !ok {
+		t.Fatalf("bad timeframe %q", sc.Timeframe)
+	}
+	deliver(a, a.setTimeframe(tf))
+	nav := NavigateMsg{Target: sc.View}
+	if sc.Entity != nil {
+		nav.Filter = sc.Entity.ID
+	}
+	_, cmd := a.Update(nav)
+	deliver(a, cmd)
+	tv := a.top().(*tableView)
+	if sc.Entity != nil && tv.scope.Entity != nil {
+		tv.scope.Entity.Name = sc.Entity.Name
+	}
+	for i, l := range tv.spec.Lenses {
+		if l.Name == sc.Lens && i != tv.scope.Lens {
+			deliver(a, tv.setLens(i, false))
+		}
+	}
+	return a, tv
+}
+
+// answer delivers the scenario's result to the view that waits for it.
+func (sc profilingScenario) answer(tv *tableView) {
+	var err error
+	if sc.Error != "" {
+		err = errors.New(sc.Error)
+	}
+	tv.Update(dataMsg{owner: tv, seq: tv.seq, records: sc.Records, elapsed: 38 * time.Second, err: err})
+}
+
+// renderProfiling opens a scenario and answers it; a focus scenario is entered
+// from the function's row of the table it was drilled from.
+func renderProfiling(t *testing.T, name string) *app {
+	t.Helper()
+	sc := loadProfilingScenario(t, name)
+	if sc.Arg == "" {
+		a, tv := openProfiling(t, sc)
+		sc.answer(tv)
+		return a
+	}
+	parent := loadProfilingScenario(t, "hotspots-running")
+	a, tv := openProfiling(t, parent)
+	parent.answer(tv)
+	for i, row := range tv.rows {
+		if catalog.Str(row, catalog.ProfFunction) == sc.Arg {
+			tv.cursor = i
+		}
+	}
+	press(a, key("enter"))
+	focus := a.top().(*tableView)
+	if focus == tv || focus.scope.Arg != sc.Arg {
+		t.Fatalf("enter on %s opened %q", sc.Arg, focus.scope.Arg)
+	}
+	sc.answer(focus)
+	return a
+}
+
+// profilingSizes are the two widths every profiling state is pinned at: the
+// 80-column minimum and the default desktop size, both from snapshotSizes.
+var profilingSizes = []struct{ w, h int }{{80, 24}, {120, 40}}
+
+func assertProfilingSnapshots(t *testing.T, prefix string, a *app) {
+	t.Helper()
+	for _, s := range profilingSizes {
+		a.Update(tea.WindowSizeMsg{Width: s.w, Height: s.h})
+		assertSnapshot(t, fmt.Sprintf("%s-%dx%d", prefix, s.w, s.h), screen(a))
+	}
+}
+
+func TestSnapshotProfiling(t *testing.T) {
+	pinSnapshotClock(t)
+	for _, name := range []string{
+		"hotspots-running", "hotspots-lock", "hotspots-focus", "allocations",
+		"no-data", "no-lock-samples", "forbidden", "not-found", "throttled", "service-refused", "no-process",
+	} {
+		t.Run(name, func(t *testing.T) {
+			assertProfilingSnapshots(t, "profiling-"+name, renderProfiling(t, name))
+		})
+	}
+}
+
+// An analysis takes up to a minute: the view says what it waits for, for how
+// long, and what the source reported last.
+func TestSnapshotProfilingLoading(t *testing.T) {
+	pinSnapshotClock(t)
+	a, tv := openProfiling(t, loadProfilingScenario(t, "hotspots-running"))
+	if !tv.loading {
+		t.Fatal("an opened view must be loading")
+	}
+	tv.started = catalog.Now().Add(-41 * time.Second)
+	tv.progress.set("throttled (429, 2× so far): the environment runs only a few analyses at once — trying again, it asks to wait 10s")
+	assertProfilingSnapshots(t, "profiling-loading", a)
+}
+
+// The window the caption states is the one analysed: a selection longer than
+// the API's 2h reads as its last 2h, never as the selection.
+func TestProfilingCaptionStatesTheAnalysedWindow(t *testing.T) {
+	pinSnapshotClock(t)
+	out := screen(renderProfiling(t, "hotspots-lock"))
+	for _, want := range []string{"last 2h of the selected 24h (10:00–12:00 UTC)", "leaf: total", "11,353 lock samples", "FIXTURE java-webapp"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("caption lacks %q:\n%s", want, out)
+		}
+	}
+	out = screen(renderProfiling(t, "hotspots-running"))
+	if !strings.Contains(out, "300 of 309 functions") {
+		t.Errorf("a capped table must say how many functions it leaves out:\n%s", out)
+	}
+	if strings.Contains(out, "last 2h of") {
+		t.Errorf("a 2h selection is analysed whole:\n%s", out)
+	}
+}
+
+// enter walks callers and callees; esc goes back one function at a time.
+func TestProfilingFocusWalksAndReturns(t *testing.T) {
+	pinSnapshotClock(t)
+	a := renderProfiling(t, "hotspots-focus")
+	focus := a.top().(*tableView)
+	depth := len(a.stack)
+
+	// The total and self rows are the function itself: enter stays put.
+	focus.cursor = 0
+	press(a, key("enter"))
+	if len(a.stack) != depth {
+		t.Fatal("enter on the focused function's own row must not open it again")
+	}
+	var caller string
+	for i, row := range focus.rows {
+		if catalog.Str(row, catalog.ProfRelation) == catalog.ProfRelCaller {
+			focus.cursor, caller = i, catalog.Str(row, catalog.ProfFunction)
+			break
+		}
+	}
+	press(a, key("enter"))
+	next := a.top().(*tableView)
+	if len(a.stack) != depth+1 || next.scope.Arg != caller {
+		t.Fatalf("enter on caller %s: stack %d, arg %q", caller, len(a.stack), next.scope.Arg)
+	}
+	if next.scope.Lens != focus.scope.Lens || next.scope.Entity == nil || next.scope.Entity.ID != focus.scope.Entity.ID {
+		t.Errorf("the walk lost its lens or process: %+v", next.scope)
+	}
+	press(a, key("esc"))
+	if a.top() != focus {
+		t.Fatal("esc must return to the function walked from")
+	}
+	press(a, key("esc"))
+	if tv := a.top().(*tableView); tv.scope.Arg != "" || tv.spec.Name != "hotspots" {
+		t.Fatalf("second esc should be back on the functions table, got %s %q", tv.spec.Name, tv.scope.Arg)
+	}
+}
+
+// h is the profiling key: from a process into its hotspots, and between
+// hotspots and allocations of the same process.
+func TestProfilingDrillsFromAProcess(t *testing.T) {
+	a := testApp(t, "processes")
+	seedRows(t, a, []map[string]any{
+		processRecord("PROCESS-000000000000A001", "shop-backend", []string{"JAVA"}, false, map[string]any{}, nil),
+	})
+	press(a, key("h"))
+	hot := a.top().(*tableView)
+	if hot.spec.Name != "hotspots" || hot.scope.Entity == nil || hot.scope.Entity.ID != "PROCESS-000000000000A001" {
+		t.Fatalf("h on a process opened %s scoped to %+v", hot.spec.Name, hot.scope.Entity)
+	}
+	seedRows(t, a, loadProfilingScenario(t, "hotspots-running").Records)
+	press(a, key("h"))
+	alloc := a.top().(*tableView)
+	if alloc.spec.Name != "allocations" || alloc.scope.Entity == nil || alloc.scope.Entity.ID != "PROCESS-000000000000A001" {
+		t.Fatalf("h on hotspots opened %s scoped to %+v", alloc.spec.Name, alloc.scope.Entity)
+	}
+}
+
+// `:hotspots PROCESS-…` scopes the view; any other argument filters it.
+func TestProfilingArgumentIsTheProcess(t *testing.T) {
+	a := testApp(t, "home")
+	_, cmd := a.Update(NavigateMsg{Target: "hotspots", Filter: "PROCESS-000000000000A001"})
+	deliver(a, cmd)
+	tv := a.top().(*tableView)
+	if tv.scope.Entity == nil || tv.scope.Entity.ID != "PROCESS-000000000000A001" || tv.filter != "" {
+		t.Fatalf("entity %+v, filter %q", tv.scope.Entity, tv.filter)
+	}
+	_, cmd = a.Update(NavigateMsg{Target: "hotspots", Filter: "jackson"})
+	deliver(a, cmd)
+	if tv := a.top().(*tableView); tv.scope.Entity != nil || tv.filter != "jackson" {
+		t.Fatalf("a word is a filter: entity %+v, filter %q", tv.scope.Entity, tv.filter)
+	}
+	// Other views keep reading an entity id as filter text.
+	_, cmd = a.Update(NavigateMsg{Target: "processes", Filter: "PROCESS-000000000000A001"})
+	deliver(a, cmd)
+	if tv := a.top().(*tableView); tv.filter != "PROCESS-000000000000A001" {
+		t.Fatalf("processes filter = %q", tv.filter)
+	}
+}
+
+// Leaving a profiling view ends the analysis it waits for; a view merely
+// covered by a drill keeps waiting, and one returned to asks again.
+func TestProfilingCancelsItsCallWhenLeft(t *testing.T) {
+	a := testApp(t, "home")
+	var calls []context.Context
+	a.ds.sources = map[string]Source{
+		"hotspots": func(ctx context.Context, _ catalog.Scope, _ string) ([]map[string]any, error) {
+			calls = append(calls, ctx)
+			return nil, nil
+		},
+	}
+	// deliver runs the view's call and drops its result: the view stays
+	// loading, as it does while an analysis runs.
+	open := func() *tableView {
+		_, cmd := a.Update(NavigateMsg{Target: "hotspots", Filter: "PROCESS-000000000000A001"})
+		deliver(a, cmd)
+		return a.top().(*tableView)
+	}
+
+	tv := open()
+	if len(calls) != 1 || !tv.loading {
+		t.Fatalf("opening issued %d calls, loading=%v", len(calls), tv.loading)
+	}
+	_, cmd := a.Update(NavigateMsg{Target: "problems"})
+	deliver(a, cmd)
+	if calls[0].Err() == nil {
+		t.Fatal("jumping to another view must cancel the analysis in flight")
+	}
+
+	// '-' brings the view back: it asks again.
+	_, cmd = a.Update(key("-"))
+	deliver(a, cmd)
+	if a.top() != tv || len(calls) != 2 || calls[1].Err() != nil {
+		t.Fatalf("returning: top is the view=%v, %d calls", a.top() == tv, len(calls))
+	}
+
+	// Switching the lens replaces the call (the source keeps the analysis).
+	deliver(a, tv.setLens(1, false))
+	if len(calls) != 3 || calls[1].Err() == nil || calls[2].Err() != nil {
+		t.Fatalf("lens switch: %d calls, old cancelled=%v", len(calls), calls[1].Err() != nil)
+	}
+
+	// A drill covers the view without leaving it: the analysis goes on. esc
+	// from the drilled view is not a leave either.
+	tv.Update(dataMsg{owner: tv, seq: tv.seq, records: loadProfilingScenario(t, "hotspots-lock").Records})
+	_, cmd = a.Update(key("enter"))
+	deliver(a, cmd)
+	focus := a.top().(*tableView)
+	if focus == tv || len(calls) != 4 {
+		t.Fatalf("enter did not open the focus: %d calls", len(calls))
+	}
+	press(a, key("esc"))
+	if calls[3].Err() == nil {
+		t.Fatal("esc must cancel the popped view's analysis")
+	}
+	if a.top() != tv {
+		t.Fatal("esc must return to the functions table")
+	}
+}
+
+// The echo is the dtctl command for what is on screen, window included.
+func TestProfilingEcho(t *testing.T) {
+	pinSnapshotClock(t)
+	for name, want := range map[string]string{
+		"hotspots-running": "dtctl exec profiling hotspots PROCESS-000000000000A001 --view functions --state running --default-timeframe-start 'now()-2h'",
+		"hotspots-lock":    "dtctl exec profiling hotspots PROCESS-000000000000A001 --view functions --state lock --show-waiting --default-timeframe-start 'now()-2h'",
+		"hotspots-focus":   "dtctl exec profiling hotspots PROCESS-000000000000A001 --focus 'com.fasterxml.jackson.core.json.UTF8JsonGenerator.writeString' --state running --default-timeframe-start 'now()-2h'",
+		"allocations":      "dtctl exec profiling allocations PROCESS-000000000000A001 --default-timeframe-start 'now()-2h'",
+		"no-process":       "dtctl exec profiling hotspots <PROCESS-id> --view functions --state running --default-timeframe-start 'now()-2h'",
+	} {
+		if got := renderProfiling(t, name).top().(*tableView).Echo(); got != want {
+			t.Errorf("%s echo:\n got %s\nwant %s", name, got, want)
+		}
+	}
+}
