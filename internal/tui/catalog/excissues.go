@@ -32,9 +32,11 @@ const (
 )
 
 // exceptionSampleFields are the span fields the sample keeps: what the key
-// is computed from (span.events), what a row shows, and what enter needs to
-// open the newest span's trace. Everything else on a span is left on the
-// server, which halves the result (measured on single spans).
+// is computed from (span.events), what a row shows (the start time and the
+// service), what enter needs to open the newest span's trace, and three
+// fields no row reads (span.name, endpoint.name, dt.smartscape.service),
+// kept so the facet picker has them to offer. Everything else on a span is
+// left on the server, which halves the result (measured on single spans).
 const exceptionSampleFields = "start_time, span.id, trace.id, span.name, endpoint.name, " +
 	"dt.service.name, service.name, dt.smartscape.service, span.events"
 

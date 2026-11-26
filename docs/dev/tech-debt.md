@@ -52,6 +52,40 @@ query nor a segment id; `echoQueryExact` (the exceptions view) goes through
 `catalog.EchoCommand`. Fix: route `echoQuery` through `EchoCommand` and
 delete `echoQueryExact`.
 
+## A superseded result still sets the footer notice
+
+`app.Update` reads the footer's partial-result notice from any `dataMsg`
+the top view owns, before the view drops a result whose sequence number is
+stale: a slow clean answer to an earlier refresh clears the warning about
+the cut result on screen, and a slow cut one warns about a clean result.
+On the exceptions view the line above the table stays right, because its
+facts travel with its rows. Fix: let the view say whether it accepted the
+result and take the notice only then.
+
+## The command echo leaves a leading `=` bare
+
+`catalog.EchoCommand` quotes for a POSIX shell and counts `=` as a plain
+character. zsh, the default shell on macOS, rewrites a bare word that
+starts with `=` to the path of the command of that name, or fails when
+there is none, so a segment id or a record id spelled `=name` does not
+arrive as it was echoed. Fix: quote a word that starts with `=`, in the
+one copy of `echo.go` that remains once the echo quoting work merges.
+
+## The exceptions view offers no bucket facet
+
+`BucketEligible` reads the view's `| fields` projection as dropping
+`dt.system.bucket`, so the facet manager does not pin the bucket and the
+query does not project it, though a bucket filter in front of the sort
+would narrow the scan before sampling. Fix: teach `BucketEligible` that a
+projection behind the sort/limit tail keeps the field queryable, and
+offer the facet without projecting the field.
+
+## The empty-table text says "last" before a custom window
+
+`renderTable` writes "no data in timeframe (last <label>)" for every
+window, so a custom one reads "last 2026-07-15 10:00→11:00 UTC". Fix: word
+the window with `sampleWindow`, which already tells the two apart.
+
 ## An exception issue has no detail page
 
 `d` on an exceptions row opens the inspector on the row's three real fields
