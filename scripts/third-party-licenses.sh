@@ -86,7 +86,9 @@ awk '{print $1" "$2}' "$work/rows" | sort -u | while read -r module version; do
     [ -f "$f" ] || continue
     # dtctl's NOTICE lists dtctl's own (mostly unrelated) dependencies; only its
     # leading attribution applies to dtui and is reproduced in the root NOTICE.
-    [ "$module/$name" = "github.com/Dynatrace/dtctl/NOTICE" ] && continue
+    # Matched by the module's last element: a full path that went stale would
+    # skip nothing and bundle the file without an error.
+    case "$module/$name" in */dtctl/NOTICE) continue ;; esac
     files+=("$f")
     ids="$ids $(classify "$f")"
   done
