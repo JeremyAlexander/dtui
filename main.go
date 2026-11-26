@@ -23,6 +23,7 @@ import (
 	"github.com/Dynatrace/dtctl/pkg/exec"
 	"github.com/Dynatrace/dtctl/pkg/resources/segment"
 	"github.com/Dynatrace/dtctl/sdk/session"
+	"github.com/dynatrace-oss/dtui/internal/source"
 	"github.com/dynatrace-oss/dtui/internal/workspace"
 
 	"github.com/dynatrace-oss/dtui/internal/tui"
@@ -196,6 +197,7 @@ as W would. See dtui send --help.`,
 			SavePreset:       savePersonalPreset(personalPresetsPath(cfg.CurrentContext)),
 			DeletePreset:     deletePersonalPreset(personalPresetsPath(cfg.CurrentContext)),
 		}
+		opts.SourceRoot, opts.Editor = sourceSettings(os.Getwd, os.Getenv)
 		if listen {
 			opts.Listen = listenRemote(remoteSession)
 		}
@@ -516,4 +518,18 @@ func main() {
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
 	}
+}
+
+// sourceSettings says where the files of profiled frames are looked up and
+// which editor opens them (O on the flame graph): the repository dtui was
+// started in, and the editor DTUI_EDITOR, the terminal or VISUAL/EDITOR
+// names. Neither is a setting of the project file: a committed file must
+// not behave differently per machine, and an editor is a person's.
+func sourceSettings(getwd func() (string, error), getenv func(string) string) (root, editor string) {
+	dir, err := getwd()
+	if err != nil {
+		return "", ""
+	}
+	e, _ := source.DetectEditor(getenv)
+	return source.Root(dir), e.ID
 }

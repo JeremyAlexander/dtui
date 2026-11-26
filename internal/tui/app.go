@@ -62,6 +62,13 @@ type Options struct {
 	// Contexts are the configured context names (:ctx without an argument
 	// lists them).
 	Contexts []string
+	// SourceRoot is the directory the files of profiled frames are looked up
+	// in (O on the flame graph): the repository dtui was started in. ""
+	// turns the lookup off, which is what a host without a file system does.
+	// Editor names the editor a file is opened in (internal/source's ids);
+	// "" means none is known, and the file's place is copied instead.
+	SourceRoot string
+	Editor     string
 	// OpenURL opens a Dynatrace intent/app URL ('o' — open in the Dynatrace UI).
 	// nil falls back to launching the system browser (openBrowser); the wasm
 	// host sets it to a JS window.open, since a browser tab can't shell out.
@@ -248,8 +255,9 @@ type spinnerTickMsg struct{}
 
 func newApp(opts Options) (*app, error) {
 	a := &app{
-		opts:             opts,
-		ds:               &dataSource{exec: opts.Executor, sources: opts.Sources},
+		opts: opts,
+		ds: &dataSource{exec: opts.Executor, sources: opts.Sources,
+			source: newSourceLookup(opts.SourceRoot, opts.Editor)},
 		tf:               catalog.DefaultTimeframe,
 		hist:             loadHistory(opts.HistoryPath, opts.ContextName),
 		qhist:            loadQueryHistory(opts.QueryHistoryPath),
@@ -502,7 +510,16 @@ func (a *app) dispatch(msg tea.Msg) tea.Cmd {
 		return a.navigate(newMetricChartView(a.ds, msg.key, entity, a.tf), false)
 
 	case flameOpenMsg:
-		return a.navigate(msg.view, false)
+		return tea.Batch(a.navigate(msg.view, false), a.ds.source.warm())
+
+	case sourceAskMsg:
+		return a.findSource(msg.label)
+
+	case sourceFoundMsg:
+		return a.foundSource(msg)
+
+	case sourceWarmMsg:
+		return nil // the next frame is drawn knowing which frames have a file
 
 	case flameBuiltMsg:
 		// The tree was built off the update loop for one view, which may be

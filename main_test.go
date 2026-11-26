@@ -344,3 +344,25 @@ func TestNewTenantClientNamesAuthLoginOnMissingToken(t *testing.T) {
 		}
 	}
 }
+
+// The source directory is the repository dtui is started in, and the editor
+// is named by the environment; without a working directory there is neither.
+func TestSourceSettings(t *testing.T) {
+	root := t.TempDir()
+	deep := filepath.Join(root, "a", "b")
+	if err := os.MkdirAll(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(deep, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	env := map[string]string{"DTUI_EDITOR": "cursor"}
+	gotRoot, gotEditor := sourceSettings(func() (string, error) { return deep, nil }, func(k string) string { return env[k] })
+	if gotRoot != root || gotEditor != "cursor" {
+		t.Errorf("from %s: root %q, editor %q", deep, gotRoot, gotEditor)
+	}
+	gotRoot, gotEditor = sourceSettings(func() (string, error) { return "", os.ErrNotExist }, func(string) string { return "" })
+	if gotRoot != "" || gotEditor != "" {
+		t.Errorf("without a working directory: root %q, editor %q", gotRoot, gotEditor)
+	}
+}

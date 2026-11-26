@@ -61,6 +61,10 @@ type dataSource struct {
 	// it where it cannot fit.
 	previewOff bool
 
+	// source finds the files of profiled frames under the directory dtui
+	// was started in; nil where there is none to look in.
+	source *sourceLookup
+
 	// primaryTags is the active ordered set of primary_tags.* key names
 	// (bare, without the prefix) contributed by the workspace global config
 	// and the currently-applied segment definitions. Updated by the app

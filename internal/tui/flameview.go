@@ -28,6 +28,7 @@ var flameHelp = []keyHint{
 	{"enter", "zoom into the selected frame"},
 	{"backspace", "zoom out one step"},
 	{"esc", "clear the search, then the zoom, then return to the functions"},
+	{"O", "open the selected frame's source in the editor, at its declaration (DTUI_EDITOR names the editor)"},
 	{"P / d", "details of the selected frame on or off / given most of the screen"},
 	{"/", "search by regular expression (enter applies, empty clears)"},
 	{"#", "search for the selected function"},
@@ -330,7 +331,13 @@ func (v *flameView) Hints() []keyHint {
 		return []keyHint{{"tab", "functions"}, {"[ ]", "thread state"}}
 	}
 	g := v.graph
-	hints := []keyHint{{"↑↓←→", "move"}, {"enter", "zoom"}, {"tab", "functions"}, {"/", "search"}}
+	hints := []keyHint{{"↑↓←→", "move"}, {"enter", "zoom"}}
+	// The key is offered where it has a chance: on a frame that may have a
+	// file under the directory dtui was started in.
+	if fn, ok := v.selectedFunction(); ok && v.ds.source.likely(fn) {
+		hints = append(hints, keyHint{"O", "open source"})
+	}
+	hints = append(hints, keyHint{"tab", "functions"}, keyHint{"/", "search"})
 	if g.Top()+g.Height() < len(g.Layout().Rows) {
 		hints = append(hints, keyHint{"pgdn", "more levels"})
 	} else if g.Top() > 0 {
@@ -496,6 +503,9 @@ func (v *flameView) handleKey(msg tea.KeyMsg) tea.Cmd {
 		g.ScrollBottom()
 	case "enter":
 		g.ZoomIn()
+	case "O":
+		fn, _ := v.selectedFunction()
+		return func() tea.Msg { return sourceAskMsg{label: fn} }
 	case "d":
 		v.detailsFirst = !v.detailsFirst
 		switch {
