@@ -25,7 +25,10 @@ whether it did or why not. None of this writes or reaches an environment. The
 same package also exports what dtui does not use: functions that change the
 file, discovery, which runs queries, and a rendering for the Live Debugger.
 
-dtctl's package is experimental and may still change. This record therefore
+dtctl's package is experimental and may still change. Its design document is
+`docs/dev/REPO_SCOPE_DESIGN.md` in the dtctl repository; what this record
+quotes from dtctl was read there and in the code at commit `e4d4ec1b` of the
+branch that adds the feature, before any release. This record therefore
 states the rules dtui follows and names a dtctl function or field only where a
 rule needs one. Where a detail here and dtctl later differ, what dtctl does
 with the same file in the same directory is the reference.
@@ -139,9 +142,9 @@ nothing about the format.
   the user's segments only, the picker shows the entry's as locked rows, and
   the switch for the scope switches them with the filter. While `alt+s` pauses the user's segments, a segment both name is sent as the
   entry's, with the entry's variables, and with the user's again when the
-  pause ends. Before a scoped
-  query is sent dtui checks, once per context and not per view or per query,
-  that the environment returns each of the entry's segments to this user. If one is missing or not
+  pause ends. Before a scoped query is sent dtui checks, once per context and
+  not per view or per query, that the environment returns each of the entry's
+  segments to this user. If one is missing or not
   readable, the whole entry is not applied, filter included: half a scope
   shows rows that look scoped. If the check itself fails, the entry is not
   applied either, the header says the check failed, and a refresh tries again.
@@ -261,10 +264,10 @@ header. A view that carries neither shows no scope.
 - dtui scopes by default where dtctl, under a stability floor that hides the
   experimental flags, does not. The header says what dtui sent, and the echo's
   prefix makes the pasted command send the same request in the same context.
-- The entry's filter narrows rows, not the scan. A filter after `fetch` does
-  not keep a wide timeframe under Grail's scan limit (dtctl's design document
-  records a scoped 15-minute log count that still scanned 341 GB), so a scoped
-  view meets the limit as an unscoped one does, and the existing
+- The entry's filter narrows the rows and helps the scan, but it cannot by
+  itself keep a wide timeframe under Grail's scan limit (dtctl's design
+  document records a scoped 15-minute log count that still scanned 341 GB), so
+  a scoped view can meet the limit as an unscoped one does, and the existing
   partial-result notice says so.
 - Presets (`W`, `send --save`), the last filter and history record facets and
   searches, as they do today with segments active. They do not record the repo
