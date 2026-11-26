@@ -95,6 +95,41 @@ func TestInjectStagesNoTailAppends(t *testing.T) {
 	}
 }
 
+// A projection after the sort/limit suffix is part of the tail: a narrowing
+// stage must see the whole record, and must apply before the cap.
+func TestInjectStagesBeforeAProjectedTail(t *testing.T) {
+	dql := "fetch spans, from:now() - 2h\n| filter x == 1\n| sort start_time desc\n| limit 1000\n| fields start_time, span.events"
+	got := InjectStages(dql, []string{`| filter k8s.namespace.name == "shop"`})
+	want := "fetch spans, from:now() - 2h\n| filter x == 1\n| filter k8s.namespace.name == \"shop\"\n| sort start_time desc\n| limit 1000\n| fields start_time, span.events"
+	if got != want {
+		t.Errorf("InjectStages =\n%s\nwant\n%s", got, want)
+	}
+	// The explored field's values come from the records before the cap and
+	// the projection.
+	summary := FieldsSummaryQuery(dql, Facet{Field: "k8s.namespace.name"}, nil, nil)
+	if strings.Contains(summary, "| fields ") || strings.Contains(summary, "| limit 1000") {
+		t.Errorf("the summary query kept the tail:\n%s", summary)
+	}
+}
+
+// A projection that follows no sort or limit is a transform like any other:
+// stages append after it, and a second projection line is not skipped.
+func TestTailStartKeepsAnUncappedProjection(t *testing.T) {
+	for dql, want := range map[string]int{
+		"fetch logs\n| fields a, b":                          2,
+		"fetch logs\n| limit 5\n| fields a\n| fields b":      4,
+		"fetch logs\n| fields a\n| sort a\n| limit 5":        2,
+		"fetch logs\n| sort a\n| limit 5\n| fields a":        1,
+		"fetch logs\n| sort a\n| limit 5\n| fieldsAdd b = 1": 4,
+		"| fields a": 1,
+	} {
+		lines := strings.Split(dql, "\n")
+		if got := tailStart(lines); got != want {
+			t.Errorf("tailStart(%q) = %d, want %d", dql, got, want)
+		}
+	}
+}
+
 // Search stages must land directly after the source command — DQL rejects
 // them after transforming commands like parse/expand/summarize (validated
 // live: SEARCH_COMMAND_NOT_ALLOWED_AFTER on the pods pipeline). Multiple
@@ -140,9 +175,7 @@ func TestInjectionOnEveryCatalogQuery(t *testing.T) {
 			t.Errorf("%s: first line is not a source command:\n%s", spec.Name, dql)
 		}
 		got := InjectStages(dql, []string{`| filter x == "y"`})
-		gl := strings.Split(got, "\n")
-		last := strings.TrimSpace(gl[len(gl)-1])
-		if !strings.HasPrefix(last, "| limit") && !strings.HasPrefix(last, "| sort") {
+		if gl := strings.Split(got, "\n"); tailStart(gl) == len(gl) {
 			t.Errorf("%s: query does not end with a sort/limit tail:\n%s", spec.Name, dql)
 		}
 		idx := strings.Index(got, `| filter x == "y"`)

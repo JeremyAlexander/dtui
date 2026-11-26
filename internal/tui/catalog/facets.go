@@ -244,16 +244,25 @@ func EscapeField(name string) string { return escapeField(name) }
 // `| sort` / `| limit` suffix (len(lines) when there is none). Every catalog
 // query ends with that suffix by convention, and narrowing stages must go
 // before it so the filter applies before the cap truncates.
+//
+// One `| fields` line may follow the suffix: a query that projects the
+// records it kept (the exceptions view's sample). It belongs to the tail, so
+// a narrowing stage still sees the whole record and still lands before the
+// cap. A `| fields` line with no sort or limit above it is not a tail.
 func tailStart(lines []string) int {
 	cut := len(lines)
-	for cut > 0 {
-		t := strings.TrimSpace(lines[cut-1])
-		if !strings.HasPrefix(t, "| sort") && !strings.HasPrefix(t, "| limit") {
-			break
-		}
+	if cut > 1 && strings.HasPrefix(strings.TrimSpace(lines[cut-1]), "| fields ") && sortOrLimit(lines[cut-2]) {
+		cut--
+	}
+	for cut > 0 && sortOrLimit(lines[cut-1]) {
 		cut--
 	}
 	return cut
+}
+
+func sortOrLimit(line string) bool {
+	t := strings.TrimSpace(line)
+	return strings.HasPrefix(t, "| sort") || strings.HasPrefix(t, "| limit")
 }
 
 // InjectStages inserts pipeline stages before a query's sort/limit tail.
