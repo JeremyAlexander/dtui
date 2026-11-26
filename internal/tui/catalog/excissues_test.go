@@ -404,3 +404,21 @@ func TestExceptionsViewLeavesEventsItsPrefixes(t *testing.T) {
 		}
 	}
 }
+
+// The preview pane names a row the way its EXCEPTION cell does: an event
+// with a message and no type is an "exception", and the row of spans whose
+// events recorded nothing says so instead of posing as an exception type.
+func TestPreviewTitleOfRowsWithoutAType(t *testing.T) {
+	rows := GroupExceptionIssues([]map[string]any{
+		issueSpan(1, "2026-07-15T11:59:58Z", "cart", "", "disk full", ""),
+		issueSpan(2, "2026-07-15T11:59:57Z", "cart", "", "", ""),
+	})
+	for i, want := range []string{"exception", "(nothing recorded)"} {
+		if got := PreviewTitle(rows[i]); got != want {
+			t.Errorf("row %d: title = %q, want %q", i, got, want)
+		}
+		if got := exceptionsSpec.Columns[2].Text(rows[i]); got != want {
+			t.Errorf("row %d: EXCEPTION cell = %q, want %q", i, got, want)
+		}
+	}
+}

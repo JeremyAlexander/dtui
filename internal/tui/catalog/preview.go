@@ -49,7 +49,7 @@ func PreviewTitle(rec map[string]any) string {
 
 func previewTitle(rec map[string]any) string {
 	if issue, ok := IssueOf(rec); ok {
-		return firstNonEmpty(issue.Type, "exception")
+		return issue.name()
 	}
 	switch {
 	case Str(rec, "event.kind") == "DAVIS_PROBLEM":

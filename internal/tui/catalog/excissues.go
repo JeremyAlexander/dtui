@@ -78,13 +78,7 @@ var exceptionsSpec = &Spec{
 			Value: func(rec map[string]any) string { return FormatTime(issueOf(rec).Newest) },
 			Sort:  func(rec map[string]any) any { return issueOf(rec).Newest }},
 		{Title: "EXCEPTION", Width: 22, Min: 12, Class: func(string) string { return "error" },
-			Value: func(rec map[string]any) string {
-				issue := issueOf(rec)
-				if issue.Key == "" {
-					return "(nothing recorded)"
-				}
-				return ExceptionTypeShort(firstNonEmpty(issue.Type, "exception"))
-			}},
+			Value: func(rec map[string]any) string { return ExceptionTypeShort(issueOf(rec).name()) }},
 		{Title: "MESSAGE", Value: func(rec map[string]any) string {
 			issue := issueOf(rec)
 			if issue.Message == "" && len(issue.Frames) > 0 {
@@ -146,6 +140,15 @@ type ExceptionIssue struct {
 	// Newest and Oldest are the start times of the group's newest and
 	// oldest span in the sample, as the records spelled them.
 	Newest, Oldest string
+}
+
+// name is what a row is called where its type would stand: the type, or a
+// stand-in when the event recorded none, or nothing at all.
+func (issue ExceptionIssue) name() string {
+	if issue.Key == "" {
+		return "(nothing recorded)"
+	}
+	return firstNonEmpty(issue.Type, "exception")
 }
 
 // exceptionIssueKey holds a row's ExceptionIssue. The "__" prefix keeps it
