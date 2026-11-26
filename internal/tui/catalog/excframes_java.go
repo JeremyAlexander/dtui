@@ -4,6 +4,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode"
 )
 
 // Java traces: "at pkg.Class.method(File.java:1)" frames under a
@@ -11,11 +12,7 @@ import (
 // after it.
 
 var (
-	// The source location in a frame's parentheses. It is what tells a
-	// frame from prose and from a .NET frame, whose parentheses hold
-	// parameters.
-	javaLocationRe = regexp.MustCompile(`^(?:[\w$-]+\.\w+(?::\d+)?|Native Method|Unknown Source|<generated>)\)`)
-	javaMoreRe     = regexp.MustCompile(`^\.\.\. (\d+) (?:more|common frames omitted)`)
+	javaMoreRe = regexp.MustCompile(`^\.\.\. (\d+) (?:more|common frames omitted)`)
 	// The type a "Caused by:" line names, before its message.
 	javaCauseRe = regexp.MustCompile(`^Caused by: ([\w.$]+)`)
 
@@ -50,42 +47,114 @@ var javaVendorPrefixes = []string{
 // calls.
 var javaPassThrough = []string{"doFilter", "doFilterInternal", "intercept", "invoke", "proceed"}
 
+// javaNoSource are the JVM's words for code without a source file, and
+// what CGLIB writes for a class it generated. javaUnknownSource is the one
+// that may carry a line all the same ("Unknown Source:12", after
+// obfuscation).
+var javaNoSource = []string{"Native Method", javaUnknownSource, "Compiled Code", "<generated>"}
+
+const (
+	javaUnknownSource = "Unknown Source"
+	// javaNotInFile are the bytes no source file name holds: white space,
+	// parentheses, a path separator, a second colon.
+	javaNotInFile = " \t\f():/\\"
+)
+
+// javaLogArchives start what a logger appends to a frame: the archive the
+// class was loaded from (" ~[shop.jar:1.4]").
+var javaLogArchives = []string{" [", " ~["}
+
+// javaLocation reads the source location in a frame's parentheses, s being
+// the text behind the opening one: a file with its line ("Cart.java:42"), a
+// file alone, or one of javaNoSource. The file is whatever the compiler
+// recorded: "SourceFile" after obfuscation, "cart.scala.html", a name beyond
+// ASCII; a line may be negative. The frame ends with the closing
+// parenthesis, or goes on with one of javaLogArchives. The location is what
+// tells a frame from prose and from a .NET frame, whose parentheses hold
+// parameters. It is read by hand because it is read for every line of
+// every trace.
+func javaLocation(s string) (location string, ok bool) {
+	end := strings.IndexByte(s, ')')
+	if end <= 0 || end+1 < len(s) && !hasAnyPrefix(s[end+1:], javaLogArchives) {
+		return "", false
+	}
+	location = s[:end]
+	for _, word := range javaNoSource {
+		if location == word {
+			return location, true
+		}
+	}
+	file, line, hasLine := strings.Cut(location, ":")
+	if !hasLine {
+		// A file alone has an extension, and is no list of parameters.
+		dot := strings.IndexByte(location[1:], '.') + 1
+		return location, dot > 0 && dot < len(location)-1 && !strings.ContainsAny(location, javaNotInFile+",")
+	}
+	line = strings.TrimPrefix(line, "-")
+	if line == "" || strings.Trim(line, "0123456789") != "" {
+		return "", false
+	}
+	return location, file == javaUnknownSource || file != "" && !strings.ContainsAny(file, javaNotInFile)
+}
+
 // javaFrameName returns the qualified method name of a frame line:
 // "pkg.Class.method" before a source location in parentheses, with or
 // without "at" in front (OneAgent call stacks and some log formats leave it
-// out) and a space between. It is read by hand because it is read for every
-// line of every trace.
+// out) and a space between. It is read by hand, like the location.
 func javaFrameName(line string) (string, bool) {
+	name, _, ok := javaFrameParts(line)
+	return name, ok
+}
+
+// javaFrameParts is javaFrameName plus the source location.
+func javaFrameParts(line string) (name, location string, ok bool) {
 	line = strings.TrimPrefix(line, "at ")
 	paren := strings.IndexByte(line, '(')
-	if paren < 0 || !javaLocationRe.MatchString(line[paren+1:]) {
-		return "", false
+	if paren < 0 {
+		return "", "", false
 	}
-	name := strings.TrimSuffix(line[:paren], " ")
+	if location, ok = javaLocation(line[paren+1:]); !ok {
+		return "", "", false
+	}
+	name = strings.TrimSuffix(line[:paren], " ")
 	dot := strings.LastIndexByte(name, '.')
 	if dot <= 0 || dot == len(name)-1 {
-		return "", false
+		return "", "", false
 	}
-	for i := 0; i < len(name); i++ {
-		switch c := name[i]; {
-		case isWordByte(c), c == '$', c == '<', c == '>':
-		case i <= dot && (c == '.' || c == '/' || c == '@' || c == '-'):
+	for i, r := range name {
+		switch {
+		case r == '_', r == '$', r == '<', r == '>', unicode.IsLetter(r), unicode.IsDigit(r):
+		// The separators of a class path, and the hyphen Kotlin puts into
+		// the mangled name of a method ("plus-LRDsOJo").
+		case r == '-', i <= dot && (r == '.' || r == '/' || r == '@'):
 		default:
-			return "", false
+			return "", "", false
 		}
 	}
-	return name, true
+	return name, location, true
 }
+
+// javaOwns: a frame whose location has a line or is one of the JVM's words.
+// A file alone ("(Cart.java)") reads the same as a .NET parameter
+// ("(System.String)") and as an argument in a line of source text.
+func javaOwns(line string) bool {
+	_, location, ok := javaFrameParts(line)
+	return ok && (strings.Contains(location, ":") || !strings.Contains(location, "."))
+}
+
+// javaSyntheticClass marks the class the JVM generates for a lambda
+// ("Cart$$Lambda$14/0x0800.accept"), and is the module of its frame. Such a
+// frame is plumbing between two real ones: it shows that the trace is Java's
+// and is in no root cause.
+const javaSyntheticClass = "$$Lambda"
 
 func javaFrame(line string) (StackFrame, bool) {
 	name, ok := javaFrameName(line)
 	if !ok {
 		return StackFrame{}, false
 	}
-	// A lambda's synthetic class ("Cart$$Lambda$14/0x0800.accept") is
-	// plumbing between two real frames.
-	if strings.Contains(name, "$$Lambda") {
-		return StackFrame{}, false
+	if strings.Contains(name, javaSyntheticClass) {
+		return StackFrame{Module: javaSyntheticClass, Function: name[strings.LastIndexByte(name, '.')+1:], Syntax: StackJava}, true
 	}
 	// Module and class-loader prefixes: "java.base/", "app//".
 	name = name[strings.LastIndexByte(name, '/')+1:]
@@ -157,7 +226,7 @@ func javaRootCause(lines []string) (root []StackFrame, typ string) {
 				if m := javaMoreRe.FindStringSubmatch(line); m != nil {
 					cur.more, _ = strconv.Atoi(m[1])
 				}
-			} else if f, ok := javaFrame(line); ok {
+			} else if f, ok := javaFrame(line); ok && f.Module != javaSyntheticClass {
 				cur.frames = append(cur.frames, f)
 			}
 		}

@@ -217,7 +217,7 @@ func TestExceptionKeyInputsCoverTheTables(t *testing.T) {
 		"ExceptionKeyVersion", "FingerprintFrames", "fingerprintKeyLen", "RungAppFrames", "customClassifierField",
 		"messageRules", "msgNumberRe", "exceptionMessageInput", "ExceptionMessageMax",
 		"stackNotations", "StackJava", "deployRoots", "sourceReleaseRe",
-		"javaVendorPrefixes", "javaPassThrough", "javaLocationRe", "dotnetVendorPrefixes", "dotnetPassThrough",
+		"javaVendorPrefixes", "javaPassThrough", "javaNoSource", "javaLogArchives", "dotnetVendorPrefixes", "dotnetPassThrough",
 		"jsPassThrough", "jsDependencyDir", "pythonPackageDirs", "pythonPassThrough",
 		"goStdlib", "goVendorPrefixes", "goPassThrough", "goDependencyRe",
 	} {

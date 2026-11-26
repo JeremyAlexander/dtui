@@ -11,11 +11,13 @@ import (
 // parameters: "at Ns.Type.Method (System.String arg) [0x0001a] in <…>:0".
 
 var (
-	// The method name, the space Mono puts after it, and the parameters.
-	dotnetFrameRe = regexp.MustCompile("^at ([\\w.<>|$`\\[\\],+]+)( ?)\\(([^()]*)\\)")
-	// Mono's notation is close to prose ("at checkout (final step)"), so
-	// there the name must be qualified and every parameter must start with
-	// a type name.
+	// The method name, the space Mono puts after it, the parameters, and
+	// what follows them.
+	dotnetFrameRe = regexp.MustCompile("^at ([\\p{L}\\p{N}_.<>|$`\\[\\],+]+)( ?)\\(([^()]*)\\)(.*)$")
+	// Mono's notation is close to prose ("at checkout (final step)") and to
+	// V8's "at fn (location)". So there the name must be qualified, and
+	// either the offset Mono prints after the parameters follows
+	// (dotnetMonoOffset) or every parameter starts with a type name.
 	dotnetMonoParamsRe = regexp.MustCompile("^(?:[A-Z][\\w.`\\[\\]<>&*+]*(?: \\w+)?(?:, |$))*$")
 	dotnetTypeArgsRe   = regexp.MustCompile(`\[[^\]]*\]`)
 	// An inner exception's type, after the arrow that introduces it.
@@ -44,13 +46,36 @@ var dotnetPassThrough = []string{"Invoke", "InvokeAsync"}
 
 const dotnetInnerEnd = "--- End of inner exception stack trace"
 
-func dotnetFrame(line string) (StackFrame, bool) {
+// dotnetMonoOffset starts what Mono prints after a frame's parameters: the
+// IL offset, "[0x0001a] in <module>:0".
+const dotnetMonoOffset = " [0x"
+
+// dotnetFrameParts reads a frame line as its method name and parameters.
+func dotnetFrameParts(line string) (name, params string, ok bool) {
+	if !strings.HasPrefix(line, "at ") {
+		return "", "", false
+	}
 	m := dotnetFrameRe.FindStringSubmatch(line)
 	if m == nil {
-		return StackFrame{}, false
+		return "", "", false
 	}
-	name := m[1]
-	if m[2] != "" && (!strings.Contains(name, ".") || !dotnetMonoParamsRe.MatchString(m[3])) {
+	if m[2] != "" && (!strings.Contains(m[1], ".") ||
+		!strings.HasPrefix(m[4], dotnetMonoOffset) && !dotnetMonoParamsRe.MatchString(m[3])) {
+		return "", "", false
+	}
+	return m[1], m[3], true
+}
+
+// dotnetOwns: a frame that is not Java's. Every Java frame with "at" in
+// front reads as a .NET frame whose parameters are its source location.
+func dotnetOwns(line string) bool {
+	_, _, ok := dotnetFrameParts(line)
+	return ok && !javaOwns(line)
+}
+
+func dotnetFrame(line string) (StackFrame, bool) {
+	name, _, ok := dotnetFrameParts(line)
+	if !ok {
 		return StackFrame{}, false
 	}
 	name = dotnetTypeArgsRe.ReplaceAllString(name, "")

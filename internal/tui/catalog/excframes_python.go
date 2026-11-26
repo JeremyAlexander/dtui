@@ -33,17 +33,28 @@ const pythonStdlibDir = "lib/python/"
 var pythonPassThrough = []string{"__call__", "dispatch", "wrapper", "wrapped", "inner"}
 
 const (
-	pythonTraceback = "Traceback (most recent call last)"
+	// pythonFramePrefix is what pythonFrameRe starts with.
+	pythonFramePrefix = `File "`
+	pythonTraceback   = "Traceback (most recent call last)"
 	// pythonGutter is what an exception group puts before each line.
 	pythonGutter = "|+ "
 )
 
 func pythonFrame(line string) (StackFrame, bool) {
-	m := pythonFrameRe.FindStringSubmatch(strings.TrimLeft(line, pythonGutter))
+	line = strings.TrimLeft(line, pythonGutter)
+	if !strings.HasPrefix(line, pythonFramePrefix) {
+		return StackFrame{}, false
+	}
+	m := pythonFrameRe.FindStringSubmatch(line)
 	if m == nil {
 		return StackFrame{}, false
 	}
 	return StackFrame{Module: pythonModule(m[1]), Function: firstNonEmpty(m[2], "<module>"), Syntax: StackPython}, true
+}
+
+func pythonOwns(line string) bool {
+	_, ok := pythonFrame(line)
+	return ok
 }
 
 // pythonModule reduces a file to the module it names: an installed package

@@ -15,9 +15,11 @@ import (
 // StackSyntax is the notation a frame was written in.
 type StackSyntax int
 
+// The zero StackSyntax names no notation, so a frame built without one
+// follows no notation's rules.
 const (
 	// StackJava is "at pkg.Class.method(File.java:1)", with or without "at".
-	StackJava StackSyntax = iota
+	StackJava StackSyntax = iota + 1
 	// StackDotNet is "at Ns.Type.Method(String arg) in File.cs:line 1".
 	StackDotNet
 	// StackJS is "at fn (/path/file.js:1:2)" or "fn@https://host/file.js:1:2".
@@ -54,6 +56,10 @@ const FrameAnonymous = "<anonymous>"
 type stackNotation struct {
 	// frame reads one line, already trimmed, as a frame.
 	frame func(line string) (StackFrame, bool)
+	// owns reports whether a line, already trimmed, is one that only this
+	// notation writes. Those lines decide which notation a trace is in;
+	// frame may read more, once it is known to be this one.
+	owns func(line string) bool
 	// rootCause reads a trace written in this notation and returns the
 	// frames of its root cause, throw site first, and that exception's type
 	// where the trace is a chain and names it; a trace of one exception
@@ -68,15 +74,21 @@ type stackNotation struct {
 	passThrough []string
 }
 
-// stackNotations is indexed by StackSyntax. A trace is read in the first
-// notation, in this order, that recognises one of its lines, so the order
-// runs from the strictest notation to the loosest.
+// stackNotations is indexed by StackSyntax. A trace is read in the notation
+// that owns most of its lines (stackNotationOf); the order, from the
+// strictest notation to the loosest, decides only between two that own as
+// many and start on the same line.
 var stackNotations = [...]stackNotation{
-	StackJava:   {frame: javaFrame, rootCause: javaRootCause, inApp: javaInApp, passThrough: javaPassThrough},
-	StackDotNet: {frame: dotnetFrame, rootCause: dotnetRootCause, inApp: dotnetInApp, passThrough: dotnetPassThrough},
-	StackJS:     {frame: jsFrame, rootCause: jsRootCause, inApp: jsInApp, passThrough: jsPassThrough},
-	StackPython: {frame: pythonFrame, rootCause: pythonRootCause, inApp: pythonInApp, passThrough: pythonPassThrough},
-	StackGo:     {frame: goFrame, rootCause: goRootCause, inApp: goInApp, passThrough: goPassThrough},
+	StackJava: {frame: javaFrame, owns: javaOwns, rootCause: javaRootCause, inApp: javaInApp,
+		passThrough: javaPassThrough},
+	StackDotNet: {frame: dotnetFrame, owns: dotnetOwns, rootCause: dotnetRootCause, inApp: dotnetInApp,
+		passThrough: dotnetPassThrough},
+	StackJS: {frame: jsFrame, owns: jsOwns, rootCause: jsRootCause, inApp: jsInApp,
+		passThrough: jsPassThrough},
+	StackPython: {frame: pythonFrame, owns: pythonOwns, rootCause: pythonRootCause, inApp: pythonInApp,
+		passThrough: pythonPassThrough},
+	StackGo: {frame: goFrame, owns: goOwns, rootCause: goRootCause, inApp: goInApp,
+		passThrough: goPassThrough},
 }
 
 // ParseStackFrames extracts the normalised frames of a stack trace, throw
@@ -94,17 +106,60 @@ func ParseStackFrames(stack string) []StackFrame {
 // trace is a chain of exceptions and names it.
 func parseStack(stack string) (frames []StackFrame, typ string) {
 	lines := stackLines(stack)
-	for _, line := range lines {
+	notation := stackNotationOf(lines)
+	if notation == nil {
+		return nil, ""
+	}
+	frames, typ = notation.rootCause(lines)
+	return collapseFrames(frames), typ
+}
+
+// stackNotationOf picks the notation a trace is written in: the one with
+// the most lines that only it writes. Of two with as many, the one whose
+// first such line comes first, then the one listed first. The first line
+// that some notation recognises does not decide alone. A line of the
+// message above the frames may read like a call ("cart.validate()"), and a
+// frame of one notation like another's: a .NET parameter list like a Java
+// source location ("(System.String)"), a Java frame like a .NET one. nil
+// when no notation finds a line of its own.
+func stackNotationOf(lines []string) *stackNotation {
+	var count, first [len(stackNotations)]int
+	for at, line := range lines {
 		line = strings.TrimSpace(line)
-		for i := range stackNotations {
-			if _, ok := stackNotations[i].frame(line); ok {
-				frames, typ = stackNotations[i].rootCause(lines)
-				return collapseFrames(frames), typ
+		if line == "" {
+			continue
+		}
+		for i := StackJava; int(i) < len(stackNotations); i++ {
+			if stackNotations[i].owns(line) {
+				if count[i] == 0 {
+					first[i] = at
+				}
+				count[i]++
+				// A line two notations own is the stricter one's.
+				break
 			}
 		}
 	}
-	return nil, ""
+	best := StackJava
+	for i := range count {
+		if count[i] > count[best] || count[i] == count[best] && first[i] < first[best] {
+			best = StackSyntax(i)
+		}
+	}
+	if count[best] == 0 {
+		return nil
+	}
+	return &stackNotations[best]
 }
+
+const (
+	// stackTextMax caps how much of a trace is read, far above what a
+	// runtime prints: the text is cut at the last line that ends inside it.
+	stackTextMax = 1 << 20
+	// stackLineMax is the longest line that can be a frame. A longer one is
+	// read as an empty line.
+	stackLineMax = 4096
+)
 
 var (
 	stackLineBreaks = strings.NewReplacer("\r\n", "\n", "\r", "\n")
@@ -124,7 +179,16 @@ func stackLines(stack string) []string {
 	if strings.Contains(stack, "\r") {
 		stack = stackLineBreaks.Replace(stack)
 	}
-	return strings.Split(stack, "\n")
+	if len(stack) > stackTextMax {
+		stack = stack[:strings.LastIndexByte(stack[:stackTextMax], '\n')+1]
+	}
+	lines := strings.Split(stack, "\n")
+	for i, line := range lines {
+		if len(line) > stackLineMax {
+			lines[i] = ""
+		}
+	}
+	return lines
 }
 
 // framesOf reads every line that is a frame.
@@ -207,6 +271,9 @@ func sourceModule(path string) string {
 // collapseFrames drops a frame equal to the one before it, so a recursion
 // counts once however deep it went.
 func collapseFrames(frames []StackFrame) []StackFrame {
+	if len(frames) == 0 {
+		return nil
+	}
 	out := make([]StackFrame, 0, len(frames))
 	for _, f := range frames {
 		if len(out) == 0 || out[len(out)-1] != f {
@@ -235,7 +302,7 @@ type FrameClassifier interface {
 // builtinInApp treats the known runtime and framework modules of each
 // notation as not in-app, and everything else as the application's.
 func builtinInApp(f StackFrame) bool {
-	if f.Syntax < 0 || int(f.Syntax) >= len(stackNotations) {
+	if f.Syntax < StackJava || int(f.Syntax) >= len(stackNotations) {
 		return false
 	}
 	return stackNotations[f.Syntax].inApp(f)
@@ -245,7 +312,7 @@ func builtinInApp(f StackFrame) bool {
 // is compared without the type it is a method of ("Auth.ServeHTTP"), unless
 // the notation lists it with one ("Generator.next").
 func isPassThrough(f StackFrame) bool {
-	if f.Syntax < 0 || int(f.Syntax) >= len(stackNotations) {
+	if f.Syntax < StackJava || int(f.Syntax) >= len(stackNotations) {
 		return false
 	}
 	method := f.Function[strings.LastIndexByte(f.Function, '.')+1:]

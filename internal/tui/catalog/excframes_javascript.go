@@ -14,14 +14,17 @@ var (
 	// constructor and "[as alias]" after a renamed method. Prose after "at"
 	// ("at least 3 items (max 5)") has more words. The closing parenthesis
 	// may be cut off.
-	jsCallRe = regexp.MustCompile(`^at (?:async )?((?:new )?[\w$.<>#]+(?: \[as [^\]]+\])?) \((.*?)\)?$`)
+	jsCallRe = regexp.MustCompile(`^at (?:async )?((?:new )?[\p{L}\p{N}_$.<>#]+(?: \[as [^\]]+\])?) \((.*?)\)?$`)
 	// "at location": no function name.
 	jsBareRe = regexp.MustCompile(`^at (?:async )?(\S+)$`)
 	// A location is a file with its line, or one of V8's words for code
 	// that has no file. No file starts with a digit; a clock time does.
 	jsLocationRe = regexp.MustCompile(`^(?:[^\d\s].*:\d+|<anonymous>|native|index \d+)$`)
 	// "fn@location:line:column". Firefox marks an async caller "async*fn".
-	jsAtSignRe = regexp.MustCompile(`^(?:[\w ]+\*)?([\w$.<>/\[\]]*)@(\S+:\d+:\d+)$`)
+	jsAtSignRe = regexp.MustCompile(`^(?:[\w ]+\*)?([\p{L}\p{N}_$.<>/\[\]]*)@(\S+:\d+:\d+)$`)
+
+	// A location in a file JavaScript runs, before its line and column.
+	jsSourceFileRe = regexp.MustCompile(`\.(?:[cm]?js|jsx|[cm]?ts|tsx)(?:\?[^:]*)?(?::\d+)+$`)
 
 	jsAliasRe = regexp.MustCompile(` \[as [^\]]*\]$`)
 	jsIndexRe = regexp.MustCompile(`^index \d+$`)
@@ -49,19 +52,43 @@ var jsPassThrough = []string{
 	"next", "_next", "step", "fulfilled", "rejected", "__awaiter", "asyncGeneratorStep", "new Promise",
 }
 
-func jsFrame(line string) (StackFrame, bool) {
-	function, loc := "", ""
-	if m := jsCallRe.FindStringSubmatch(line); m != nil {
-		function, loc = m[1], m[2]
+// jsFrameParts reads a frame line as its function and location. named is
+// false for "at location", which has no function.
+func jsFrameParts(line string) (function, loc string, named, ok bool) {
+	// Every form starts with "at " or holds an "@"; most lines of most
+	// traces that are not JavaScript's do neither.
+	if at := strings.HasPrefix(line, "at "); !at && !strings.Contains(line, "@") {
+		return "", "", false, false
+	} else if !at {
+		if m := jsAtSignRe.FindStringSubmatch(line); m != nil {
+			function, loc, named = m[1], m[2], true
+		}
+	} else if m := jsCallRe.FindStringSubmatch(line); m != nil {
+		function, loc, named = m[1], m[2], true
 	} else if m := jsBareRe.FindStringSubmatch(line); m != nil {
 		loc = m[1]
-	} else if m := jsAtSignRe.FindStringSubmatch(line); m != nil {
-		function, loc = m[1], m[2]
 	}
-	if !jsLocationRe.MatchString(loc) {
+	// Mono writes "at Ns.Type.Method (Type arg) [0x0001a] in <module>:0".
+	if !jsLocationRe.MatchString(loc) || strings.Contains(loc, ")"+dotnetMonoOffset) {
+		return "", "", false, false
+	}
+	return function, loc, named, true
+}
+
+func jsFrame(line string) (StackFrame, bool) {
+	function, loc, _, ok := jsFrameParts(line)
+	if !ok {
 		return StackFrame{}, false
 	}
 	return StackFrame{Module: jsModule(loc), Function: jsFunction(function), Syntax: StackJS}, true
+}
+
+// jsOwns: a frame with a function, or one whose location is Node's own
+// or a file JavaScript runs. "at location" alone is also the file line of a
+// Rust or Swift frame, and prose ("at redis.internal:6379").
+func jsOwns(line string) bool {
+	_, loc, named, ok := jsFrameParts(line)
+	return ok && (named || strings.HasPrefix(loc, jsRuntimeScheme) || jsSourceFileRe.MatchString(loc))
 }
 
 // jsFunction drops a "[as alias]" suffix; "Object.<anonymous>" is

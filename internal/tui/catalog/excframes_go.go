@@ -27,7 +27,7 @@ import (
 
 var (
 	goGoroutineRe = regexp.MustCompile(`^goroutine \d+ \[`)
-	goNameRe      = regexp.MustCompile(`^[\w./~%·*()\[\],-]+$`)
+	goNameRe      = regexp.MustCompile(`^[\p{L}\p{N}_./~%·*()\[\],-]+$`)
 	// Arguments are printed as hex words ("0x1f", "0xc000012345?"), in
 	// braces where they are the fields of one value, "..." when elided.
 	goArgsRe     = regexp.MustCompile(`^(?:0x[0-9a-f]+\??|\.\.\.|[{},\s])*$`)
@@ -102,6 +102,20 @@ func goFrame(line string) (StackFrame, bool) {
 		module, vendored = module[i+len(goVendorDir):], true
 	}
 	return StackFrame{Module: module, Function: function, Syntax: StackGo, Dependency: vendored}, true
+}
+
+// goOwns: a goroutine header, the file line under a frame, a "created by"
+// line, or a frame that prints arguments. A frame without any
+// ("main.main()") reads the same as a call in a line of source text or of
+// a message.
+func goOwns(line string) bool {
+	if strings.HasSuffix(line, "()") {
+		return false
+	}
+	if _, ok := goFrame(line); ok {
+		return true
+	}
+	return goGoroutineRe.MatchString(line) || goFileRe.MatchString(line)
 }
 
 // goRootCause returns the frames of the first goroutine, the one that

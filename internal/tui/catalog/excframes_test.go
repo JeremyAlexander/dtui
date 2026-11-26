@@ -383,7 +383,7 @@ created by github.com/example/shop/api.Serve in goroutine 1
 				{Module: "github.com/example/tax", Function: "Rate", Syntax: StackGo, Dependency: true},
 				{Module: "github.com/example/shop/api", Function: "Post", Syntax: StackGo},
 				{Module: "github.com/example/shop/api", Function: "Serve", Syntax: StackGo}}},
-		{"a name that starts with a dot", ".run()\nshop/.run()",
+		{"a name that starts with a dot", ".run(0x1)\nshop/.run()",
 			frames(StackGo, "", "run", "shop/", "run")},
 		{"a one-letter name", "f(0x1)", frames(StackGo, "", "f")},
 		{"lines that are not frames", "exit status 2\nmain.run(context deadline exceeded)\n(0x1)\ncreated by \nfoo bar()\nmain.run(0x1) tail", nil},
@@ -546,13 +546,18 @@ func TestStackNotationsMatchTheirSyntax(t *testing.T) {
 		StackPython: `File "/app/shop/cart.py", line 42, in add_item`,
 		StackGo:     "github.com/acme/shop/cart.(*Service).AddItem(0xc000010000)",
 	}
-	if len(samples) != len(stackNotations) {
-		t.Fatalf("%d notations, %d samples", len(stackNotations), len(samples))
+	if len(samples) != len(stackNotations)-1 {
+		t.Fatalf("%d notations, %d samples", len(stackNotations)-1, len(samples))
 	}
 	for syntax, line := range samples {
 		f, ok := stackNotations[syntax].frame(line)
-		if !ok || f.Syntax != syntax {
+		if !ok || f.Syntax != syntax || !stackNotations[syntax].owns(line) {
 			t.Errorf("notation %d read %q as %+v, %v", syntax, line, f, ok)
+		}
+		for other := range stackNotations {
+			if other != int(syntax) && other >= int(StackJava) && stackNotations[other].owns(line) {
+				t.Errorf("notation %d owns %q, a line of notation %d", other, line, syntax)
+			}
 		}
 		// The trace as a whole is read in the same notation.
 		if got := ParseStackFrames(line); len(got) != 1 || got[0] != f {
@@ -753,6 +758,168 @@ func TestBuiltinInApp(t *testing.T) {
 	}
 }
 
+// A trace is read in the notation most of its lines are written in, not in
+// the first one that recognises a line of it: a .NET parameter list can read
+// like a Java source location, and a Java frame without one like a .NET
+// frame.
+func TestParseStackPicksTheNotationOfMostLines(t *testing.T) {
+	javaChain := func(first string) string {
+		return "com.example.shop.CheckoutException: failed\n\tat " + first +
+			"\n\tat org.springframework.web.Dispatcher.dispatch(Dispatcher.java:9)\n" +
+			"Caused by: java.lang.IllegalStateException: Cart 7 is locked\n" +
+			"\tat com.example.shop.Cart.add(Cart.java:12)\n\tat com.example.shop.Checkout.run(Checkout.java:30)\n"
+	}
+	javaWant := frames(StackJava, "com.example.shop.Cart", "add", "com.example.shop.Checkout", "run")
+	cases := []struct {
+		name, stack string
+		want        []StackFrame
+		typ         string
+	}{
+		{"dotnet: parameters that read like a Java location", `Example.Shop.CheckoutException: failed
+ ---> System.InvalidOperationException: Cart 7 is locked
+   at Example.Shop.Util.Check(System.String)
+   at Example.Shop.Cart.Save(String sku)
+   --- End of inner exception stack trace ---
+   at Example.Shop.Checkout.Run()`,
+			frames(StackDotNet, "Example.Shop.Util", "Check", "Example.Shop.Cart", "Save"), "System.InvalidOperationException"},
+		{"java: an obfuscated source file", javaChain("com.example.shop.Checkout.run(SourceFile:12)"), javaWant, "java.lang.IllegalStateException"},
+		{"java: an unknown source with a line", javaChain("com.example.shop.Checkout.run(Unknown Source:0)"), javaWant, "java.lang.IllegalStateException"},
+		{"java: a negative line", javaChain("com.example.shop.Checkout.run(Checkout.java:-1)"), javaWant, "java.lang.IllegalStateException"},
+		{"java: compiled code", javaChain("com.example.shop.Checkout.run(Compiled Code)"), javaWant, "java.lang.IllegalStateException"},
+		{"java: a template file", javaChain("views.html.cart$.apply(cart.scala.html:42)"), javaWant, "java.lang.IllegalStateException"},
+		{"java: a file name beyond ASCII", javaChain("com.example.shop.Größe.berechne(Größe.java:7)"), javaWant, "java.lang.IllegalStateException"},
+		{"java: a lambda's synthetic class on top",
+			javaChain("com.example.shop.Checkout$$Lambda$14/0x0000000800c03000.accept(Unknown Source)"), javaWant, "java.lang.IllegalStateException"},
+		{"python: prose that reads like a .NET frame", `at step(1)
+Traceback (most recent call last):
+  File "/app/shop/api.py", line 17, in post
+    cart.add_item(sku)
+  File "/app/shop/cart.py", line 42, in add_item
+    raise ValueError("locked")`,
+			frames(StackPython, "shop/cart.py", "add_item", "shop/api.py", "post"), ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, typ := parseStack(tc.stack)
+			if !reflect.DeepEqual(got, tc.want) || typ != tc.typ {
+				t.Errorf("frames %+v type %q\nwant %+v %q", got, typ, tc.want, tc.typ)
+			}
+		})
+	}
+	// A line of a message that reads like a call does not take the trace
+	// under it.
+	trace := "\tat com.example.shop.Cart.add(Cart.java:12)\n\tat com.example.shop.Checkout.run(Checkout.java:30)\n"
+	for _, prose := range []string{
+		"cart.validate()", "at redis.internal:6379", "config.load(app.yaml) failed", "at step(1)", "at ./src/lib.rs:12:5",
+	} {
+		assertFrames(t, prose+"\n"+trace, javaWant)
+	}
+}
+
+// "at location" alone is how V8 writes a frame without a function, and how
+// Rust, Swift and others write the file line under a frame of their own. It
+// makes a trace JavaScript only next to something only JavaScript writes.
+func TestBareLocationsAloneAreNotJavaScript(t *testing.T) {
+	rust := func(fn string) string {
+		return "   0: shop::" + fn + "\n             at ./src/lib.rs:12:5\n   1: shop::main\n             at ./src/main.rs:4:5\n"
+	}
+	read := mustFingerprint(t, SpanException{Type: "shop::Error", Message: "cannot read the cart", StackTrace: rust("read")})
+	write := mustFingerprint(t, SpanException{Type: "shop::Error", Message: "cannot write the cart", StackTrace: rust("write")})
+	if read.Rung != RungMessage || write.Rung != RungMessage || read.Key == write.Key {
+		t.Errorf("rungs %v and %v, keys %s and %s; want two keys on the message rung", read.Rung, write.Rung, read.Key, write.Key)
+	}
+	for _, stack := range []string{
+		"at ./src/lib.rs:12:5", "at /app/Sources/Shop/Cart.swift:42", "at redis.internal:6379\nat 10.0.0.7:5432",
+	} {
+		if got := ParseStackFrames(stack); got != nil {
+			t.Errorf("ParseStackFrames(%q) = %+v, want nil", stack, got)
+		}
+	}
+	// A file JavaScript runs, Node's own scheme, or a named frame next to it.
+	assertFrames(t, "at /app/src/cart/service.js:30:71", frames(StackJS, "src/cart/service.js", FrameAnonymous))
+	assertFrames(t, "at /app/src/cart/service.ts:30:71\nat /app/src/main.mjs:5:1",
+		frames(StackJS, "src/cart/service.ts", FrameAnonymous, "src/main.mjs", FrameAnonymous))
+	assertFrames(t, "at node:internal/main/run_main_module:28:49", frames(StackJS, "node:internal/main/run_main_module", FrameAnonymous))
+	assertFrames(t, "at addItem (/app/bundle:1:2000)\nat /app/bundle:1:3000",
+		frames(StackJS, "bundle", "addItem", "bundle", FrameAnonymous))
+}
+
+// Mono's parameter list is close to prose, and next to V8's "at fn
+// (location)". The offset and the file after the list show which it is.
+func TestMonoFramesWithAnyParameters(t *testing.T) {
+	assertFrames(t, "  at Example.Shop.CartService.Count (System.Collections.Generic.Dictionary`2[System.String,System.Int32] map) "+
+		"[0x0001a] in <3f2b8c1e9d4a4b7c8e210a1b2c3d4e5f>:0\n"+
+		"  at Example.Shop.Api.Get (shop.Request request) [0x00007] in <3f2b8c1e9d4a4b7c8e210a1b2c3d4e5f>:0\n"+
+		"  at Example.Shop.Program.Main () [0x00000] in <3f2b8c1e9d4a4b7c8e210a1b2c3d4e5f>:0",
+		frames(StackDotNet, "Example.Shop.CartService", "Count", "Example.Shop.Api", "Get", "Example.Shop.Program", "Main"))
+	if got := ParseStackFrames("at Example.Shop.CartService.Count (shop.Request request) [0x0001a] in <3f2b8c1e>:0"); len(got) != 1 ||
+		got[0].Syntax != StackDotNet {
+		t.Errorf("a single Mono frame was read as %+v", got)
+	}
+}
+
+// Names are not ASCII everywhere, and Kotlin mangles a method that takes a
+// value class with a hyphen.
+func TestFrameNamesBeyondASCII(t *testing.T) {
+	assertFrames(t, "\tat com.example.Größe.berechne(Größe.java:7)\n\tat com.example.shop.Money.plus-LRDsOJo(Money.kt:1)\n"+
+		"\tat com.example.shop.Api.get(Api.java:3)",
+		frames(StackJava, "com.example.Größe", "berechne", "com.example.shop.Money", "plus-LRDsOJo", "com.example.shop.Api", "get"))
+	assertFrames(t, "   at Beispiel.Größe.Berechne(String wert)\n   at Beispiel.Api.Get()",
+		frames(StackDotNet, "Beispiel.Größe", "Berechne", "Beispiel.Api", "Get"))
+	assertFrames(t, "    at Größe.berechne (/app/src/größe.js:4:2)\ngröße@https://shop.example.invalid/static/app.js:1:2",
+		frames(StackJS, "src/größe.js", "Größe.berechne", "/static/app.js", "größe"))
+	assertFrames(t, "shop/größe.(*Maß).Berechne(0xc000010000)\nmain.main()",
+		frames(StackGo, "shop/größe", "Maß.Berechne", "main", "main"))
+}
+
+// Text that no trace is made of is not read: a line longer than any frame,
+// and everything past the size no real trace reaches.
+func TestParseStackBoundsItsInput(t *testing.T) {
+	frame := "\tat com.example.shop.Cart.add(Cart.java:12)\n"
+	long := "\tat com.example.shop." + strings.Repeat("a", stackLineMax) + ".run(Cart.java:1)\n"
+	assertFrames(t, long+frame, frames(StackJava, "com.example.shop.Cart", "add"))
+	atLimit := "at com.example.shop." + strings.Repeat("a", stackLineMax-len("at com.example.shop..run(C.java:1)")) + ".run(C.java:1)"
+	if got := ParseStackFrames(atLimit); len(atLimit) != stackLineMax || len(got) != 1 {
+		t.Errorf("a line of exactly %d bytes (%d) gave %d frames, want one", stackLineMax, len(atLimit), len(got))
+	}
+	if got := ParseStackFrames(strings.Repeat("at ", stackTextMax)); got != nil {
+		t.Errorf("one line of %d bytes gave %d frames", 3*stackTextMax, len(got))
+	}
+	// The text is read up to the last whole line inside the limit.
+	head := frame + strings.Repeat("x", stackLineMax-1) + "\n"
+	filler := strings.Repeat(strings.Repeat("x", stackLineMax-1)+"\n", (stackTextMax-len(head))/stackLineMax)
+	late := "\tat com.example.shop.Late.run(Late.java:1)\n"
+	pad := strings.Repeat("y", stackTextMax-len(head)-len(filler)-len(late)-1) + "\n"
+	if got := ParseStackFrames(head + filler + pad + late); len(got) != 2 {
+		t.Errorf("a frame that ends at byte %d was not read: %+v", stackTextMax, got)
+	}
+	if got := ParseStackFrames(head + filler + "y" + pad + late); len(got) != 1 {
+		t.Errorf("a frame that ends past byte %d was read: %+v", stackTextMax, got)
+	}
+}
+
+func TestParseStackFramesIsNilWithoutFrames(t *testing.T) {
+	// Every frame of the text belongs to a suppressed exception.
+	stack := "\tSuppressed: c.D: y\n\t\tat c.D.d(D.java:2)"
+	if got := ParseStackFrames(stack); got != nil {
+		t.Errorf("ParseStackFrames(%q) = %#v, want nil", stack, got)
+	}
+}
+
+// A frame built without a notation belongs to none: it is neither in-app
+// nor pass-through by some notation's rules.
+func TestFramesWithoutASyntaxFollowNoNotation(t *testing.T) {
+	if builtinInApp(StackFrame{}) || builtinInApp(StackFrame{Module: "com.example.shop.Cart", Function: "add"}) {
+		t.Error("a frame without a syntax counts as application code")
+	}
+	if isPassThrough(StackFrame{Module: "shop/web.py", Function: "doFilter"}) {
+		t.Error("a frame without a syntax is pass-through by Java's list")
+	}
+	if StackJava == 0 || stackNotations[0].frame != nil {
+		t.Error("the zero StackSyntax must name no notation")
+	}
+}
+
 // Every entry of a vendor table takes its frames out of the application's,
 // the last as much as the first, and a library frame between two of the
 // application's does not count toward a key.
@@ -846,13 +1013,20 @@ func TestJavaFrameName(t *testing.T) {
 		{"a.b (C.java)", "a.b", true},
 		{"at a.b(Native Method)", "a.b", true},
 		{"at a.b(Unknown Source) ~[x.jar:1]", "a.b", true},
-		{"at a.b(<generated>)x", "a.b", true},
 		{"at a..b(C.java:1)", "a..b", true},
 		{"at java.base/a.B.<init>(B.java:1)", "java.base/a.B.<init>", true},
 		{"at a@1.b(B.java:1)", "a@1.b", true},
 		{"ata.b(C.java:1)", "ata.b", true},
-		{"at a.b(C.kt:12)(D.java:1)", "a.b", true},
 		{"at a.b(C-1.java:1)", "a.b", true},
+		{"at a.b(SourceFile:12)", "a.b", true},
+		{"at a.b(Unknown Source:0)", "a.b", true},
+		{"at a.b(C.java:-1)", "a.b", true},
+		{"at a.b(Compiled Code)", "a.b", true},
+		{"at a.b(c.scala.html:42)", "a.b", true},
+		{"at a.b(C.java:1) [x.jar:1]", "a.b", true},
+		// Names beyond ASCII, and the hyphen of a Kotlin mangled name.
+		{"at a.é(É.java:1)", "a.é", true},
+		{"at app//a.B$1.c-d(B.java:1)", "app//a.B$1.c-d", true},
 		// No frame: nothing in the parentheses, no class, no method, more
 		// than one space before the location, a second "at".
 		{"", "", false},
@@ -865,11 +1039,27 @@ func TestJavaFrameName(t *testing.T) {
 		{"at a.(C.java:1)", "", false},
 		{"at b(C.java:1)", "", false},
 		// A method name holds no separator of the class path.
-		{"at app//a.B$1.c-d(B.java:1)", "", false},
 		{"at a.b/c(B.java:1)", "", false},
 		{"at a.b@1(B.java:1)", "", false},
-		{"at a.é(B.java:1)", "", false},
-		// The parentheses hold a source location, not parameters.
+		{"at a.b c(B.java:1)", "", false},
+		// The parentheses hold a source location, not parameters, and the
+		// line ends behind them or goes on with a logger's archive.
+		{"at a.b(<generated>)x", "", false},
+		{"at a.b(C.kt:12)(D.java:1)", "", false},
+		{"a.b(c.yaml) failed", "", false},
+		{"at a.b(/app/c.js:1:2)", "", false},
+		{"at a.b(C.java:1:2)", "", false},
+		{"at a.b()", "", false},
+		{"at a.b(C.)", "", false},
+		{"at a.b(.C)", "", false},
+		{"at a.b(C.java:)", "", false},
+		{"at a.b(C.java:-)", "", false},
+		{"at a.b(C.java:1x)", "", false},
+		{"at a.b(:1)", "", false},
+		{"at a.b(c, d.e)", "", false},
+		{"at a.b(Some Source:1)", "", false},
+		{"at a.b(Native Method:1)", "", false},
+		{"at a.b(C.java:1) failed", "", false},
 		{"at a.b(String s)", "", false},
 		{"at a.b(B.java:x)", "", false},
 		{"at a.b((B.java:1)", "", false},
