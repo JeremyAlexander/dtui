@@ -36,7 +36,16 @@ func tuiSources(c *session.Client) map[string]tui.Source {
 		"log-patterns":      logPatternSource(analyzer.NewHandler(c)),
 		"dashboards":        dashboardSource(document.NewHandler(c), c.CurrentUserID),
 		"resolve-users":     userSource(iam.NewHandler(c)),
+		"hotspots":          profilingUnavailable,
 	}
+}
+
+// profilingUnavailable answers the profiling view in the browser host, which
+// does not run analyses yet: the sources and their dtctl adapter live in the
+// native main package (profiling.go, profiling_dtctl.go). The view says so
+// instead of failing as an unwired source.
+func profilingUnavailable(context.Context, catalog.Scope, string) ([]map[string]any, error) {
+	return nil, fmt.Errorf("code-level profiling is not available in the browser build yet — the dtui binary has it (dtui hotspots PROCESS-…)")
 }
 
 type sloAPI interface {

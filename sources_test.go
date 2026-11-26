@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -14,6 +16,7 @@ import (
 	"github.com/Dynatrace/dtctl/pkg/resources/iam"
 	"github.com/Dynatrace/dtctl/pkg/resources/segment"
 	"github.com/Dynatrace/dtctl/pkg/resources/slo"
+	"github.com/Dynatrace/dtctl/sdk/session"
 	"github.com/dynatrace-oss/dtui/internal/tui/catalog"
 )
 
@@ -408,5 +411,38 @@ func TestLogPatternSourceComposesAndSorts(t *testing.T) {
 	api.result = &analyzer.ExecuteResult{Result: &analyzer.AnalyzerResult{ExecutionStatus: "FAILED"}}
 	if _, err := logPatternSource(api)(context.Background(), scope, "fetch logs"); err == nil || !strings.Contains(err.Error(), "failed") {
 		t.Fatalf("non-completed execution must error, got %v", err)
+	}
+}
+
+// The browser host keeps its own copy of the source wiring (cmd/web builds
+// for js/wasm only). A view it offers must have a source there too, or it
+// opens on "data source is not wired".
+func TestWebHostWiresEveryAPIView(t *testing.T) {
+	src, err := os.ReadFile("cmd/web/sources.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wiring := string(src)
+	start := strings.Index(wiring, "func tuiSources(")
+	if start < 0 {
+		t.Fatal("cmd/web/sources.go has no tuiSources")
+	}
+	wiring = wiring[start:]
+	wiring = wiring[:strings.Index(wiring, "\n}\n")]
+	c, err := session.NewClient("https://env.example.invalid", "token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	native := tuiSources(c)
+	for _, spec := range catalog.All() {
+		if spec.API == "" {
+			continue
+		}
+		if _, ok := native[spec.API]; !ok {
+			t.Errorf("the native host wires no %q source for :%s", spec.API, spec.Name)
+		}
+		if !strings.Contains(wiring, fmt.Sprintf("%q:", spec.API)) {
+			t.Errorf("cmd/web wires no %q source for :%s", spec.API, spec.Name)
+		}
 	}
 }
