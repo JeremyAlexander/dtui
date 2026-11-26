@@ -73,10 +73,10 @@ type focusRow struct {
 type allocationRow struct {
 	Site    string
 	Callers []string // innermost caller first
-	// SurvivedBytes and SurvivedCount are summed per GC survived: not a
-	// size, and they can exceed the allocated figures.
+	// SurvivedBytes is summed per GC survived: not a size, and it can
+	// exceed the allocated bytes.
 	AllocBytes, SurvivedBytes int64
-	AllocCount, SurvivedCount int64
+	AllocCount                int64
 }
 
 // profileReason names why an analysis could not be shown.
@@ -460,9 +460,21 @@ func hotspotsSource(p profiler, runs *profileRuns, fixture string) tui.Source {
 				return nil, err
 			}
 			records := []map[string]any{summary}
+			// Callers come first and a function can have hundreds, so each
+			// direction keeps its first rows, which are its largest.
+			callers, callees := 0, 0
 			for _, row := range rows {
-				if row.Relation == catalog.ProfRelTotal {
+				switch row.Relation {
+				case catalog.ProfRelTotal:
 					summary[catalog.ProfSumSamples] = float64(row.Samples)
+				case catalog.ProfRelCaller:
+					if callers++; callers > catalog.ProfileFocusCap {
+						continue
+					}
+				case catalog.ProfRelCallee:
+					if callees++; callees > catalog.ProfileFocusCap {
+						continue
+					}
 				}
 				records = append(records, stampProcess(map[string]any{
 					catalog.ProfRelation: row.Relation,
@@ -471,6 +483,7 @@ func hotspotsSource(p profiler, runs *profileRuns, fixture string) tui.Source {
 					catalog.ProfShare:    row.Share,
 				}, entity))
 			}
+			summary[catalog.ProfSumCallers], summary[catalog.ProfSumCallees] = float64(callers), float64(callees)
 			if len(rows) == 0 {
 				summary[catalog.ProfSumEmpty] = empty
 			}
@@ -544,7 +557,6 @@ func allocationsSource(p profiler, runs *profileRuns, fixture string) tui.Source
 				catalog.ProfAllocBytes:    float64(row.AllocBytes),
 				catalog.ProfSurvivedBytes: float64(row.SurvivedBytes),
 				catalog.ProfAllocCount:    float64(row.AllocCount),
-				catalog.ProfSurvivedCount: float64(row.SurvivedCount),
 			}, entity))
 		}
 		return records, nil

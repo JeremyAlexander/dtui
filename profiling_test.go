@@ -1138,3 +1138,44 @@ func TestAnalysisObserverForwardsCloseIdleConnections(t *testing.T) {
 	// A transport without the method is left alone.
 	(&http.Client{Transport: analysisObserver{next: roundTrip(nil)}}).CloseIdleConnections()
 }
+
+// A function with many callers lists the first of them and then its callees:
+// each direction is cut on its own, and the summary says how many there were.
+func TestProfilingFocusCapsEachDirection(t *testing.T) {
+	var nodes []string
+	var top []string
+	// 40 callers of Hub.run, each on its own stack; Hub.run calls 3 callees.
+	id := 1
+	for i := range 40 {
+		caller, hub := id+1, id+2
+		id += 2
+		top = append(top, fmt.Sprintf("%q", fmt.Sprint(caller)))
+		nodes = append(nodes,
+			fmt.Sprintf(`{"id":"%d","classPath":"com.example","className":"Caller%02d","methodName":"call","samples":{},"childIds":["%d"]}`, caller, i, hub),
+			fmt.Sprintf(`{"id":"%d","classPath":"com.example","className":"Hub","methodName":"run","samples":{"RUNNING":%d},"childIds":["%d"]}`, hub, 100-i, id+1),
+			fmt.Sprintf(`{"id":"%d","classPath":"com.example","className":"Callee%d","methodName":"work","samples":{"RUNNING":1},"childIds":[]}`, id+1, i%3))
+		id++
+	}
+	tree := fmt.Sprintf(`{"dataRootNodeId":"1","dataNodes":[{"id":"1","classPath":"com.example","className":"Main","methodName":"main","samples":{},"childIds":[%s]},%s]}`,
+		strings.Join(top, ","), strings.Join(nodes, ","))
+	hotspots, _ := sourcesAt(profilerOver(t, answering(200, nil, tree)), "")
+	records, err := hotspots(context.Background(),
+		catalog.Scope{Entity: shopProcess, Timeframe: timeframe(t, "2h"), Arg: "com.example.Hub.run"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	summary, rows := catalog.SplitSummary(records)
+	count := map[string]int{}
+	for _, row := range rows {
+		count[catalog.Str(row, catalog.ProfRelation)]++
+	}
+	if count["caller"] != 25 || count["callee"] != 3 || len(rows) != 30 {
+		t.Errorf("rows by relation %v (%d in all), want 25 callers, 3 callees, total and self", count, len(rows))
+	}
+	if summary[catalog.ProfSumCallers] != 40.0 || summary[catalog.ProfSumCallees] != 3.0 {
+		t.Errorf("summary says %v callers and %v callees, want 40 and 3", summary[catalog.ProfSumCallers], summary[catalog.ProfSumCallees])
+	}
+	if last := rows[len(rows)-1]; catalog.Str(last, catalog.ProfRelation) != "callee" {
+		t.Errorf("the last row is a %s, want a callee", catalog.Str(last, catalog.ProfRelation))
+	}
+}

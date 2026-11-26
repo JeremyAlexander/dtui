@@ -105,8 +105,6 @@ func profilingEmpty(r profiling.EmptyReason) string {
 	switch r {
 	case profiling.EmptyNoSamples:
 		return catalog.ProfEmptyNoSamples
-	case profiling.EmptyAppOnly:
-		return catalog.ProfEmptyAppOnly
 	case profiling.EmptyState:
 		return catalog.ProfEmptyState
 	}
@@ -157,7 +155,7 @@ func (a dtctlAllocations) Paths() ([]allocationRow, int64, int64, string) {
 		rows[i] = allocationRow{
 			Site: frames[0], Callers: frames[1:],
 			AllocBytes: r.AllocBytes, SurvivedBytes: r.SurvivedBytes,
-			AllocCount: r.AllocCount, SurvivedCount: r.SurvivedCount,
+			AllocCount: r.AllocCount,
 		}
 	}
 	return rows, view.AllocatedBytes, view.SurvivedBytes, profilingEmpty(view.Empty)

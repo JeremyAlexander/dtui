@@ -6,6 +6,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/mattn/go-runewidth"
 )
 
 // Code-level profiling of one process: where its threads spend their samples
@@ -26,9 +28,15 @@ import (
 // the last ProfileMaxWindow of the selection and says so (ADR-0007).
 const ProfileMaxWindow = 2 * time.Hour
 
-// ProfileRowCap is how many rows a profiling source returns at most; the
-// summary's ProfSumRows says how many there were.
+// ProfileRowCap is how many rows a profiling source returns at most, the
+// first of its own order (functions by self samples, allocation paths by
+// allocated bytes); the summary's ProfSumRows says how many there were.
 const ProfileRowCap = 300
+
+// ProfileFocusCap is how many callers, and how many callees, a focused
+// function lists at most; ProfSumCallers and ProfSumCallees say how many it
+// has.
+const ProfileFocusCap = 25
 
 // Row keys of the profiling views.
 const (
@@ -48,7 +56,6 @@ const (
 	ProfAllocBytes    = "allocBytes"
 	ProfSurvivedBytes = "survivedBytes"
 	ProfAllocCount    = "allocCount"
-	ProfSurvivedCount = "survivedCount"
 
 	// ProfEntityID / ProfEntityName name the analysed process on every row, so
 	// a row can hand its process to the sibling view, the pin and the web UI.
@@ -63,6 +70,8 @@ const (
 	ProfSumTo       = "to"      // RFC3339: its end
 	ProfSumSamples  = "samples" // hotspots: samples counted (the base of the percentages)
 	ProfSumRows     = "rows"    // rows before ProfileRowCap
+	ProfSumCallers  = "callers" // focus: callers before ProfileFocusCap
+	ProfSumCallees  = "callees" // focus: callees before ProfileFocusCap
 	ProfSumEmpty    = "empty"   // one of the ProfEmpty* reasons
 	ProfSumFixture  = "fixture" // set when the rows come from a recorded analysis
 	ProfSumAlloc    = "allocBytes"
@@ -72,20 +81,18 @@ const (
 // Why a profiling result has no rows.
 const (
 	ProfEmptyNoSamples = "no_samples"       // the window holds no samples at all
-	ProfEmptyAppOnly   = "app_only"         // the app-only filter removed every frame
 	ProfEmptyState     = "no_state_samples" // no samples in the lens' thread state
 )
 
-// Relations of a focus row.
+// Relations of a focus row that the views tell apart; "self" is the fourth.
 const (
 	ProfRelTotal  = "total"
-	ProfRelSelf   = "self"
 	ProfRelCaller = "caller"
 	ProfRelCallee = "callee"
 )
 
-// ProfRootCaller is the caller of a function nothing above it called.
-const ProfRootCaller = "(root)"
+// profRootCaller is the caller of a function nothing above it called.
+const profRootCaller = "(root)"
 
 // HotspotLenses are the thread states the hotspots view counts, one at a
 // time. Name is also the value of dtctl's --state flag. The source reads the
@@ -208,8 +215,6 @@ func profileEmpty(s Scope, summary map[string]any) string {
 	switch Str(summary, ProfSumEmpty) {
 	case ProfEmptyNoSamples:
 		return "no samples in this window — the process may have been idle or restarted"
-	case ProfEmptyAppOnly:
-		return "the app-only filter hid every frame — the profiler classified none as application code"
 	case ProfEmptyState:
 		where := "in this window"
 		if s.Arg != "" {
@@ -295,11 +300,16 @@ var hotspotsSpec = &Spec{
 		if s.Arg != "" {
 			segs = append(segs, fmt.Sprintf("%s %s samples with the function on the stack",
 				groupInt(int64(samples)), state))
+			for _, dir := range [][2]string{{ProfSumCallers, "callers"}, {ProfSumCallees, "callees"}} {
+				if n, _ := FloatValue(summary[dir[0]]); n > ProfileFocusCap {
+					segs = append(segs, fmt.Sprintf("top %d of %s %s", ProfileFocusCap, groupInt(int64(n)), dir[1]))
+				}
+			}
 		} else {
 			segs = append(segs, fmt.Sprintf("%s %s samples (stacks seen, not time)",
 				groupInt(int64(samples)), state))
 			if rows > ProfileRowCap {
-				segs = append(segs, fmt.Sprintf("%d of %s functions", ProfileRowCap, groupInt(int64(rows))))
+				segs = append(segs, fmt.Sprintf("top %d of %s functions by self samples", ProfileRowCap, groupInt(int64(rows))))
 			}
 		}
 		segs = append(segs, "all threads, leaf: total")
@@ -314,7 +324,7 @@ var hotspotsSpec = &Spec{
 		}
 		return ""
 	},
-	ArgLabel:      func(arg string) string { return ShortFrame(arg, 32) },
+	ArgLabel:      func(arg string) string { return shortFrame(arg, 32) },
 	Entity:        profileEntity,
 	EntityArg:     true,
 	NoPreview:     true,
@@ -327,15 +337,35 @@ var hotspotsSpec = &Spec{
 // own, unless it is the synthetic root or the function already in focus.
 func FocusTarget(s Scope, rec map[string]any) string {
 	fn := Str(rec, ProfFunction)
-	if fn == ProfRootCaller || fn == s.Arg {
+	if fn == profRootCaller || fn == s.Arg {
 		return ""
 	}
 	return fn
 }
 
-// SurvivedCaveat says what the survived figures of an allocations analysis
+// survivedCaveat says what the survived figures of an allocations analysis
 // are, where a reader would otherwise take them for retained memory.
-const SurvivedCaveat = "* SURVIVED adds an object's bytes once per GC it lived through: not a size, can exceed ALLOC, not live heap"
+const survivedCaveat = "* SURVIVED adds an object's bytes once per GC it lived through: not a size, can exceed ALLOC, not live heap"
+
+var allocationColumns = []Column{
+	// "1023.9 MiB" is the widest a byte count gets.
+	{Title: "ALLOC", Width: 10, Right: true, Field: ProfAllocBytes, Value: bytesCell(ProfAllocBytes)},
+	barColumn("ALLOC ▇", "__rel."+ProfAllocBytes),
+	{Title: "SURVIVED*", Width: 10, Right: true, Field: ProfSurvivedBytes, Value: bytesCell(ProfSurvivedBytes)},
+	{Title: "SURV/ALLOC", Width: 10, Right: true, Value: survivedRatio, Sort: func(rec map[string]any) any {
+		if r, ok := survivedRatioOf(rec); ok {
+			return r
+		}
+		return nil // blank, like its cell
+	}},
+	{Title: "COUNT", Width: 11, Right: true, Field: ProfAllocCount, Value: countCell(ProfAllocCount)},
+	// The cell is drawn to its width; the filter and the sort read the
+	// whole path.
+	{
+		Title: "SITE ← CALLERS", Value: allocationPathText, ValueW: allocationPath,
+		Sort: func(rec map[string]any) any { return allocationPathText(rec) },
+	},
+}
 
 var allocationsSpec = &Spec{
 	Name:    "allocations",
@@ -343,17 +373,7 @@ var allocationsSpec = &Spec{
 	Kind:    KindSignal,
 	Desc:    "Allocation pressure of a process, per allocation site and call path",
 	API:     "allocations",
-	Columns: []Column{
-		{Title: "ALLOC", Width: 9, Right: true, Field: ProfAllocBytes, Value: bytesCell(ProfAllocBytes)},
-		barColumn("ALLOC ▇", "__rel."+ProfAllocBytes),
-		{Title: "SURVIVED*", Width: 9, Right: true, Field: ProfSurvivedBytes, Value: bytesCell(ProfSurvivedBytes)},
-		{Title: "SURV/ALLOC", Width: 10, Right: true, Value: survivedRatio, Sort: func(rec map[string]any) any {
-			r, _ := survivedRatioOf(rec)
-			return r
-		}},
-		{Title: "COUNT", Width: 11, Right: true, Field: ProfAllocCount, Value: countCell(ProfAllocCount)},
-		{Title: "SITE ← CALLERS", ValueW: allocationPath},
-	},
+	Columns: allocationColumns,
 	Decode: func(records []map[string]any) []map[string]any {
 		stampRelative(records, ProfAllocBytes)
 		return records
@@ -378,7 +398,7 @@ var allocationsSpec = &Spec{
 	},
 	Empty:         profileEmpty,
 	Loading:       profileLoading("the allocations"),
-	Footnote:      func(Scope, map[string]any, map[string]any) string { return SurvivedCaveat },
+	Footnote:      func(Scope, map[string]any, map[string]any) string { return survivedCaveat },
 	Entity:        profileEntity,
 	EntityArg:     true,
 	NoPreview:     true,
@@ -424,7 +444,7 @@ func barColumn(title, key string) Column {
 		Title: title, Width: 8, Min: 4,
 		ValueW: func(rec map[string]any, width int) string {
 			f, _ := FloatValue(rec[key])
-			return ShareBar(f, width)
+			return shareBar(f, width)
 		},
 		Sort: func(rec map[string]any) any {
 			f, _ := FloatValue(rec[key])
@@ -437,7 +457,7 @@ func barColumn(title, key string) Column {
 func frameColumn(title, key string) Column {
 	return Column{
 		Title: title, Field: key,
-		ValueW: func(rec map[string]any, width int) string { return ShortFrame(Str(rec, key), width) },
+		ValueW: func(rec map[string]any, width int) string { return shortFrame(Str(rec, key), width) },
 	}
 }
 
@@ -479,17 +499,27 @@ func survivedRatio(rec map[string]any) string {
 	return strconv.FormatFloat(r, 'f', 2, 64) + "×"
 }
 
-// allocationPath reads an allocation row as its site and who called it.
+// allocationPathText is an allocation row's site and who called it, in full.
+func allocationPathText(rec map[string]any) string {
+	parts := []string{Str(rec, ProfSite)}
+	callers, _ := rec[ProfCallers].([]any)
+	for _, c := range callers {
+		parts = append(parts, FormatValue(c))
+	}
+	return strings.Join(parts, " ← ")
+}
+
+// allocationPath draws an allocation row's path into width cells.
 func allocationPath(rec map[string]any, width int) string {
 	site := Str(rec, ProfSite)
 	callers, _ := rec[ProfCallers].([]any)
 	if len(callers) == 0 {
-		return ShortFrame(site, width)
+		return shortFrame(site, width)
 	}
 	// The site is the row's identity: it gets the room it needs, up to
 	// two thirds, and the callers share the rest.
-	siteW := min(utf8.RuneCountInString(site), max(width*2/3, 8))
-	parts := []string{ShortFrame(site, siteW)}
+	siteW := min(runewidth.StringWidth(site), max(width*2/3, 8))
+	parts := []string{shortFrame(site, siteW)}
 	for _, c := range callers {
 		parts = append(parts, tailFrame(FormatValue(c)))
 	}
@@ -498,55 +528,121 @@ func allocationPath(rec map[string]any, width int) string {
 
 // tailFrame is a frame's Class.method, without its package.
 func tailFrame(label string) string {
-	segs := strings.Split(label, ".")
-	if len(segs) <= 2 {
+	head, params := splitParams(label)
+	if strings.ContainsAny(head, "/:") {
 		return label
 	}
-	return strings.Join(segs[len(segs)-2:], ".")
+	if i := lastDots(head, 2); i >= 0 {
+		return head[i+1:] + params
+	}
+	return label
 }
 
-// ShortFrame fits a frame label (package.Class.method) into width cells:
-// package segments shrink to their initial, left to right, then the package
-// goes, and only then is the label cut — from the left, since the method at
-// its end is what tells two frames apart.
-func ShortFrame(label string, width int) string {
-	if width <= 0 || utf8.RuneCountInString(label) <= width {
+// splitParams cuts a frame label before its parameter list, if it has one:
+// the dots inside "(java.lang.String)" separate no package.
+func splitParams(label string) (head, params string) {
+	if i := strings.IndexByte(label, '('); i > 0 {
+		return label[:i], label[i:]
+	}
+	return label, ""
+}
+
+// lastDots is the index of the n-th dot from the end of s, or -1.
+func lastDots(s string, n int) int {
+	i := len(s)
+	for ; n > 0 && i >= 0; n-- {
+		i = strings.LastIndexByte(s[:i], '.')
+	}
+	return i
+}
+
+// shortFrame fits a frame label into width cells. A package.Class.method
+// label has its package segments shrunk to their initial, left to right, then
+// loses the package, then its parameter list; only then is it cut — from the
+// left, since the method at its end is what tells two frames apart. A label
+// of another shape (a script's path/file.js:function) is only cut.
+func shortFrame(label string, width int) string {
+	if width <= 0 || runewidth.StringWidth(label) <= width {
 		return label
 	}
-	segs := strings.Split(label, ".")
-	// The last two segments are Class.method; what precedes is the package.
-	for i := 0; i < len(segs)-2; i++ {
-		if r, size := utf8.DecodeRuneInString(segs[i]); size > 0 && size < len(segs[i]) {
-			segs[i] = string(r)
+	head, params := splitParams(label)
+	if cut := lastDots(head, 2); cut >= 0 && !strings.ContainsAny(head, "/:") {
+		// head[:cut] is the package, head[cut:] is ".Class.method".
+		pkg, tail := head[:cut], head[cut:]+params
+		over := runewidth.StringWidth(label) - width
+		// How many leading segments must shrink to their initial for the
+		// label to fit: one pass, nothing built until it is known.
+		segs, at := 0, 0
+		for over > 0 && at < len(pkg) {
+			end := strings.IndexByte(pkg[at:], '.')
+			if end < 0 {
+				end = len(pkg) - at
+			}
+			seg := pkg[at : at+end]
+			_, size := utf8.DecodeRuneInString(seg)
+			over -= runewidth.StringWidth(seg[size:])
+			segs++
+			at += end + 1
 		}
-		if short := strings.Join(segs, "."); utf8.RuneCountInString(short) <= width {
-			return short
+		if over <= 0 {
+			var b strings.Builder
+			b.Grow(len(label))
+			rest := pkg
+			for ; segs > 0; segs-- {
+				seg, after, _ := strings.Cut(rest, ".")
+				_, size := utf8.DecodeRuneInString(seg)
+				b.WriteString(seg[:size])
+				b.WriteByte('.')
+				rest = after
+			}
+			if rest != "" {
+				b.WriteString(rest)
+				b.WriteByte('.')
+			}
+			b.WriteString(tail[1:])
+			return b.String()
 		}
-	}
-	if len(segs) > 2 {
-		label = strings.Join(segs[len(segs)-2:], ".")
-		if utf8.RuneCountInString(label) <= width {
+		label = tail[1:]
+		if runewidth.StringWidth(label) <= width {
 			return label
 		}
 	}
-	runes := []rune(label)
-	if width == 1 {
-		return "…"
+	if params != "" && params != "(…)" {
+		label = strings.TrimSuffix(label, params) + "(…)"
+		if runewidth.StringWidth(label) <= width {
+			return label
+		}
 	}
-	return "…" + string(runes[len(runes)-width+1:])
+	return cutLeft(label, width)
 }
 
-// ShareBar draws a 0..1 fraction as a bar of width cells, in eighths.
-func ShareBar(frac float64, width int) string {
-	if width <= 0 {
+// cutLeft keeps the last width cells of s, the first of them an ellipsis.
+func cutLeft(s string, width int) string {
+	if width <= 1 {
+		return "…"
+	}
+	i, room := len(s), width-1
+	for i > 0 {
+		r, size := utf8.DecodeLastRuneInString(s[:i])
+		if w := runewidth.RuneWidth(r); w > room {
+			break
+		} else {
+			room -= w
+		}
+		i -= size
+	}
+	return "…" + s[i:]
+}
+
+// shareBar draws a 0..1 fraction as a bar of width cells, in eighths.
+// Anything that is not a positive number draws nothing.
+func shareBar(frac float64, width int) string {
+	if width <= 0 || !(frac > 0) {
 		return ""
 	}
-	frac = min(max(frac, 0), 1)
-	eighths := int(frac*float64(width)*8 + 0.5)
-	// Anything measured gets at least a sliver; only zero is blank.
-	if eighths == 0 && frac > 0 {
-		eighths = 1
-	}
+	frac = min(frac, 1)
+	// Anything measured gets at least a sliver.
+	eighths := max(int(frac*float64(width)*8+0.5), 1)
 	var b strings.Builder
 	b.WriteString(strings.Repeat("█", eighths/8))
 	if rest := eighths % 8; rest > 0 {

@@ -564,3 +564,32 @@ func TestRefreshAllViewsReachesParkedOrdinaryViews(t *testing.T) {
 		t.Errorf("parked logs view: seq %d → %d, loading=%v; want one refetch", seq, logs.seq, logs.loading)
 	}
 }
+
+// The allocations path column is found by the filter and ordered by the
+// sort, although its cell is drawn to the width it gets.
+func TestAllocationPathsCanBeFilteredAndSorted(t *testing.T) {
+	sc := loadProfilingScenario(t, "allocations")
+	a, tv := openProfiling(t, sc)
+	sc.answer(tv)
+	all := len(tv.rows)
+	press(a, key("/"))
+	typeText(a, "ProductCache")
+	press(a, key("enter"))
+	if len(tv.rows) == 0 || len(tv.rows) == all {
+		t.Fatalf("filter ProductCache left %d of %d rows", len(tv.rows), all)
+	}
+	for _, row := range tv.rows {
+		if site := catalog.Str(row, catalog.ProfSite); !strings.Contains(fmt.Sprint(site, row[catalog.ProfCallers]), "ProductCache") {
+			t.Errorf("the filter kept %s", site)
+		}
+	}
+	tv.filterInput.SetValue("")
+	tv.applyFilter()
+	tv.sortCol, tv.sortDesc = len(tv.columns())-1, false
+	tv.sortRows()
+	for i := 1; i < len(tv.rows); i++ {
+		if a, b := catalog.Str(tv.rows[i-1], catalog.ProfSite), catalog.Str(tv.rows[i], catalog.ProfSite); strings.ToLower(a) > strings.ToLower(b) {
+			t.Fatalf("sorted by path, %s comes before %s", a, b)
+		}
+	}
+}

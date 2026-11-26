@@ -1,9 +1,9 @@
  ▛▞▟ dtui  ·  context:test  ·  ● readonly                                                                       last 2h
  hotspots (shop-backend) › hotspots (UTF8JsonGenerator.writeString) (shop-backend) ────────────────────────────────────
- 88 rows · 38s
+ 28 rows · 38s
   running    lock    net_io    disk_io    wait
  FIXTURE java-webapp (a recording, not this environment) · last 2h (10:00–12:00 UTC)
- 19,223 running samples with the function on the stack · all threads, leaf: total
+ 19,223 running samples with the function on the stack · top 25 of 85 callers · all threads, leaf: total
  RELATION  SHARE%  SHARE ▇    SAMPLES  FUNCTION
 ▌total      100.0  ████████    19,223  com.fasterxml.jackson.core.json.UTF8JsonGenerator.writeString
  self        69.3  █████▌      13,321  com.fasterxml.jackson.core.json.UTF8JsonGenerator.writeString
@@ -32,9 +32,9 @@
  caller       0.9  ▏              167  com.example.shop.invoice.dto.InvoiceDto.getDetails
  caller       0.9  ▏              167  com.example.shop.invoice.dto.InvoiceDto.getId
  caller       0.9  ▏              167  com.example.shop.invoice.dto.InvoiceDto.getLabel
- caller       0.8  ▏              160  com.example.shop.shipping.dto.ShippingDto.getDetails
- caller       0.8  ▏              160  com.example.shop.shipping.dto.ShippingDto.getId
- caller       0.8  ▏              160  com.example.shop.shipping.dto.ShippingDto.getLabel
+ callee      30.7  ██▌          5,902  com.fasterxml.jackson.core.json.UTF8JsonGenerator._outputEscapedMultiByteChar
+
+
  ▸ com.fasterxml.jackson.core.json.UTF8JsonGenerator.writeString
  tab lens  enter callers/callees  h allocations  / filter  J/K sort  : views  t timeframe  S segments  r refresh  esc b…
  ≡ dtctl exec profiling hotspots PROCESS-000000000000A001 --focus 'com.fasterxml.jackson.core.json.UTF8JsonGenerator.wr…

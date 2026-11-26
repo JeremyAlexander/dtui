@@ -4,7 +4,7 @@
   running    lock    net_io    disk_io    wait
  FIXTURE java-webapp (a recording, not this environment)
  last 2h (10:00–12:00 UTC) · 77,631 running samples (stacks seen, not time)
- 300 of 309 functions · all threads, leaf: total
+ top 300 of 309 functions by self samples · all threads, leaf: total
  SELF%     SELF  SELF ▇    TOTAL%    TOTAL  TOTAL ▇   PATHS  FUNCTION
 ▌ 17.2   13,321  ████████    24.8   19,223  ██           85  …erator.writeString
    7.6    5,902  ███▌         7.6    5,902  ▋            85  …capedMultiByteChar
