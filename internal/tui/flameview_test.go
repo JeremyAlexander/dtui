@@ -799,7 +799,7 @@ func benchFlameView(b *testing.B) *flameView {
 		builder.Add(frames, []int64{int64(1 + s%13), int64(s % 3), 0, int64(s % 2), 1})
 	}
 	spec := catalog.Lookup("hotspots")
-	fv := &flameView{spec: spec, input: newTextInput(), width: 250, height: 56, building: true}
+	fv := &flameView{ds: &dataSource{}, spec: spec, input: newTextInput(), width: 250, height: 56, building: true}
 	fv.built(flameBuiltMsg{view: fv, tree: builder.Tree(), summary: map[string]any{}})
 	if fv.graph.Tree().Len() < 400_000 {
 		b.Fatalf("the profile has %d frames", fv.graph.Tree().Len())
