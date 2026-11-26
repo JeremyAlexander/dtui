@@ -1,40 +1,40 @@
  ▛▞▟ dtui  ·  context:test  ·  ● readonly                                                   last 2h
  hotspots (shop-backend) › flame·running ──────────────────────────────────────────────────────────
-  running   lock   net_io   disk_io   wait                                       zoomed · 27 levels
- last 2h (10:00–12:00 UTC) · 77,631 running samples (stacks seen, not time) · all threads, leaf: to…
-▏all
-▏java.lang.Thread.run
-▏org.apache.tomcat.util.threads.TaskThread$WrappingRunnable.run
-▏java.util.concurrent.ThreadPoolExecutor$Worker.run
-▏org.apache.tomcat.util.net.NioEndpoint$SocketProcessor.doRun
-▏org.apache.coyote.http11.Http11Processor.service
-▏org.apache.catalina.connector.CoyoteAdapter.service
-▌org.apache.catalina.core.StandardWrapperValve.invoke
-▏org.apache.catalina.core.ApplicationFilterChain.doFilter
-▏org.springframework.security.web.FilterChainProxy.doFilter
-▏com.example.shop.web.RequestIdFilter.doFilter                                                ▏…al
-▏com.example.shop.web.TenantFilter.doFilter                                                   ▏…pw
+  running   lock   net_io   disk_io   wait                    zoomed · levels 12 to 23 of 23 ▲ pgup
+ last 2h (10:00–12:00 UTC) · 77,631 running samples (stacks seen, not time) · all threads, leaf:
+ total
+▏com.example.shop.web.TenantFilter.doFilter
 ▏org.springframework.web.servlet.DispatcherServlet.doDispatch
-▏InvocableHandlerMethod.invokeForRequest       ▏▏…esponseBodyMethodProcessor.handleReturnValue
-▏▏….addItem▏…tProducts▏▏…▏▏▏▏▏▏▏…ller.search▏▏▏ ▏…ctJackson2HttpMessageConverter.writeInternal
-▏▏….addItem▏…dProducts▏▏…▏▏▏▏▏▏▏…rvice.query▏▏▏ ▏c.f.jackson.databind.ObjectWriter.writeValue
-▏▏…iceCart·▏▏…toDto▏…y▏▏▏▏▏▏▏▏·▏▏…▏…er.score▏·▏ ▏DefaultSerializerProvider.serializeValue
-▏▏…ly▏▏    ·▏…t▏…  ▏…e ▏   ▏ ▏ ▏▏ ▏…y▏…         ▏CollectionSerializer.serializeContents
-▏▏          ▏      ▏…t ▏   ▏ ▏                  ▏c.f.j.databind.ser.BeanSerializer.serialize
-▏                  ▏…t ▏   ▏ ▏                  ▏BeanPropertyWriter.serializeAsField       ▏
-▏                  ▏▏… ▏   ▏ ▏                  ▏▏▏…▏▏…utes▏…ion▏…▏…e▏▏▏▏▏▏▏▏▏▏▏▏▏▏▏▏▏▏▏▏
-                   ▏   ▏                        ▏▏▏…▏▏…ing ▏▏…g ▏▏▏▏ ▏▏·▏▏▏▏▏▏▏·▏▏▏··▏▏▏·
-                   ▏   ▏                        ··▏ ·▏…     ▏    · · ·· ▏  ···· ···  ·▏▏
-                   ▏   ▏
-                   ▏   ▏
-                   ▏   ▏
-                   ▏   ▏
-
-
-
-
-
- ▸ org.apache.catalina.core.StandardWrapperValve.invoke
-   self 0 · total 72,546 · 93.4% of all · 100.0% of the zoomed frame
- ↑↓←→ move  enter zoom  backspace zoom out  / search  # search this  [ ] thread state  tab function…
+▏o.s.web.servlet.mvc.method.annotation.RequestResponseBodyMethodProcessor.handleReturnValue
+▏org.springframework.http.converter.json.AbstractJackson2HttpMessageConverter.writeInternal
+▏com.fasterxml.jackson.databind.ObjectWriter.writeValue
+▏com.fasterxml.jackson.databind.ser.DefaultSerializerProvider.serializeValue
+▏com.fasterxml.jackson.databind.ser.std.CollectionSerializer.serializeContents
+▏com.fasterxml.jackson.databind.ser.BeanSerializer.serialize
+▏com.fasterxml.jackson.databind.ser.BeanPropertyWriter.serializeAsField
+▏com.example.shop.account.dto.AccountDto.getId
+▏com.fasterxml.jackson.core.json.UTF8JsonGenerator.writeString
+█_outputEscapedMultiByteChar
+ ▸ com.fasterxml.jackson.core.json.UTF8JsonGenerator._outputEscapedMultiByteChar
+   self 23 · total 23 · 0.0% of all · 30.7% of the zoomed frame
+   package    com.fasterxml.jackson.core.json
+   type       UTF8JsonGenerator
+   function   _outputEscapedMultiByteChar
+   self/total running 23/23 · lock 0/0 · net_io 0/0 · disk_io 0/0 · wait 0/0
+   depth      level 22 of 26
+   paths      85 call paths reach this function: total 5,902 (7.6% of all), self 5,902
+   callers    100.0%  com.fasterxml.jackson.core.json.UTF8JsonGenerator.writeString
+   callees    none: the samples are its own
+   stack      java.lang.Thread.run › TaskThread$WrappingRunnable.run ›
+              j.u.c.ThreadPoolExecutor$Worker.run › NioEndpoint$SocketProcessor.doRun ›
+              o.a.c.http11.Http11Processor.service › o.a.c.c.CoyoteAdapter.service ›
+              o.a.c.c.StandardWrapperValve.invoke › ApplicationFilterChain.doFilter ›
+              o.s.s.web.FilterChainProxy.doFilter › c.e.s.web.RequestIdFilter.doFilter ›
+              c.e.shop.web.TenantFilter.doFilter › o.s.w.s.DispatcherServlet.doDispatch ›
+              …dyMethodProcessor.handleReturnValue › …2HttpMessageConverter.writeInternal ›
+              c.f.j.d.ObjectWriter.writeValue › …ltSerializerProvider.serializeValue ›
+              …lectionSerializer.serializeContents › c.f.j.d.ser.BeanSerializer.serialize ›
+              BeanPropertyWriter.serializeAsField › c.e.s.account.dto.AccountDto.getId ›
+              UTF8JsonGenerator.writeString › …nerator._outputEscapedMultiByteChar
+ ↑↓←→ move  enter zoom  tab functions  / search  pgup levels above  backspace zoom out  ? help
  ≡ dtctl exec profiling hotspots PROCESS-000000000000A001 --view stacks --show-waiting --limit 0 --…

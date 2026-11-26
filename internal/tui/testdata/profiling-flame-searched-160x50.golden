@@ -4,47 +4,47 @@
  last 2h (10:00–12:00 UTC) · 77,631 running samples (stacks seen, not time) · all threads, leaf: total
 ▏all
 ▏java.lang.Thread.run
-▏…r.run▏org.apache.tomcat.util.threads.TaskThread$WrappingRunnable.run                                                                                        ▏…
-▏…k.run▏java.util.concurrent.ThreadPoolExecutor$Worker.run                                                                                                    ▏▏
-▏….run▏▏org.apache.tomcat.util.net.NioEndpoint$SocketProcessor.doRun                                                                                          ▏▏
-▏…uild▏▏org.apache.coyote.http11.Http11Processor.service
+▏run   ▏org.apache.tomcat.util.threads.TaskThread$WrappingRunnable.run                                                                                        ▏…
+▏run   ▏java.util.concurrent.ThreadPoolExecutor$Worker.run                                                                                                    ▏▏
+▏run  ▏▏org.apache.tomcat.util.net.NioEndpoint$SocketProcessor.doRun                                                                                          ▏▏
+▏rebu…▏▏org.apache.coyote.http11.Http11Processor.service
 ▏…     ▏org.apache.catalina.connector.CoyoteAdapter.service                                                                                                 ▏…
        ▏org.apache.catalina.core.StandardWrapperValve.invoke
        ▏org.apache.catalina.core.ApplicationFilterChain.doFilter
        ▏org.springframework.security.web.FilterChainProxy.doFilter
-       ▏com.example.shop.web.RequestIdFilter.doFilter                                                                                                ▏…rnal
-       ▏com.example.shop.web.TenantFilter.doFilter                                                                                                   ▏…shpw
+       ▏com.example.shop.web.RequestIdFilter.doFilter                                                                                                ▏doFi…
+       ▏com.example.shop.web.TenantFilter.doFilter                                                                                                   ▏hash…
        ▏org.springframework.web.servlet.DispatcherServlet.doDispatch
        ▏o.s.web.method.support.InvocableHandlerMethod.invokeForRequest        ▏▏o.s.w.s.m.m.a.RequestResponseBodyMethodProcessor.handleReturnValue
-       ▏▏▏…oller.addItem▏…r.listProducts▏…▏…r▏▏▏…▏▏▏▏▏▏▏…ontroller.search▏▏▏▏▏ ▏o.s.h.c.json.AbstractJackson2HttpMessageConverter.writeInternal
-       ▏▏▏…rvice.addItem▏…e.findProducts▏…▏…r▏▏▏…▏▏▏▏▏▏▏…rchService.query▏▏▏▏▏ ▌com.fasterxml.jackson.databind.ObjectWriter.writeValue
-       ▏▏▏…ne.priceCart·▏…▏…er.toDto▏…ry▏·▏▏…·▏▏·▏▏▏▏▏▏▏…se▏Ranker.score ▏▏▏▏▏ █c.f.jackson.databind.ser.DefaultSerializerProvider.serializeValue
-         ▏…pply▏▏…      · ▏…t▏…es   ▏…ke  ▏           ▏▏…  ▏…cy▏…e        ▏  ▏ █c.f.jackson.databind.ser.std.CollectionSerializer.serializeContents
-         ▏…               ▏…        ▏…st              ▏                   ▏  ▏ █com.fasterxml.jackson.databind.ser.BeanSerializer.serialize
-                                    ▏…st              ▏                   ▏  ▏ █c.f.jackson.databind.ser.BeanPropertyWriter.serializeAsField    █…
-                                    ▏▏…t              ▏                   ▏  ▏ ▏▏▏▏▏…▏▏…tributes▏…iption▏…s▏…e▏…e▏…▏▏▏▏▏▏▏▏▏▏▏▏▏▏▏▏…▏▏▏▏▏▏▏▏·
-                                    ▏                                          █████…███…tring  ██…ing  █… █… ██ ███··█·██████·████…█·██··█·
-                                    ▏                                          ····█ █ █…        █      █  █   ·  ·   █ █·█·██ ···█ · ··  █
+       ▏▏▏addItem       ▏listProducts   ▏…▏p…▏▏▏…▏▏▏▏▏▏▏search           ▏▏▏▏▏ ▏o.s.h.c.json.AbstractJackson2HttpMessageConverter.writeInternal
+       ▏▏▏addItem       ▏findProducts   ▏…▏p…▏▏▏…▏▏▏▏▏▏▏query            ▏▏▏▏▏ ▌com.fasterxml.jackson.databind.ObjectWriter.writeValue
+       ▏▏▏priceCart    ·▏…▏toDto    ▏fi…▏·▏▏…·▏▏·▏▏▏▏▏▏▏pa…▏Ranker.score ▏▏▏▏▏ ▌c.f.jackson.databind.ser.DefaultSerializerProvider.serializeValue
+         ▏apply▏▏…      · ▏f…▏ma…   ▏in…  ▏           ▏▏…  ▏te…▏g…        ▏  ▏ ▌c.f.jackson.databind.ser.std.CollectionSerializer.serializeContents
+         ▏…               ▏…        ▏do…              ▏                   ▏  ▏ ▌com.fasterxml.jackson.databind.ser.BeanSerializer.serialize
+                                    ▏li…              ▏                   ▏  ▏ █c.f.jackson.databind.ser.BeanPropertyWriter.serializeAsField    ▌…
+                                    ▏▏n…              ▏                   ▏  ▏ ▏▏▏▏▏…▏▏getAttri…▏getDes…▏g…▏g…▏g…▏…▏▏▏▏▏▏▏▏▏▏▏▏▏▏▏▏…▏▏▏▏▏▏▏▏·
+                                    ▏                                          ▌▌▌▌▌…▌▌▌write…  ▌▌wri…  ▌… ▌… ▌▌ ▌▌▌··▌·▌▌▌▌▌▌·▌▌▌▌…▌·▌▌··▌·
+                                    ▏                                          ····▌ ▌ ▌…        ▌      ▌  ▌   ·  ·   ▌ ▌·▌·▌▌ ···▌ · ··  ▌
                                     ▏
                                     ▏
                                     ▏
                                     ▏
+ search jackson\.  33,221 samples · 42.8% of all
+ ▸ com.fasterxml.jackson.databind.ser.BeanPropertyWriter.serializeAsField
+   self 1,769 · total 31,314 · 40.3% of all · 49 callees too narrow to draw (7,749 samples): enter zooms in
+   package    com.fasterxml.jackson.databind.ser                                                   callers    100.0%  c.f.j.d.ser.BeanSerializer.serialize
+   type       BeanPropertyWriter                                                                   callees     15.0%  c.e.s.catalog.dto.ProductDto.getAttributes
+   function   serializeAsField                                                                                 11.9%  c.e.s.c.dto.ProductDto.getDescription
+   self/total running 1,769/31,314 · lock 0/0 · net_io 0/0 · disk_io 0/0 · wait 0/0                             5.3%  c.e.shop.catalog.dto.ProductDto.getName
+   depth      level 19 of 26                                                                                  and 82 more
+   paths      this is the one call path that reaches this function
+   stack      java.lang.Thread.run › TaskThread$WrappingRunnable.run › j.u.c.ThreadPoolExecutor$Worker.run › NioEndpoint$SocketProcessor.doRun ›
+              o.a.c.http11.Http11Processor.service › o.a.c.c.CoyoteAdapter.service › o.a.c.c.StandardWrapperValve.invoke › ApplicationFilterChain.doFilter ›
+              o.s.s.web.FilterChainProxy.doFilter › c.e.s.web.RequestIdFilter.doFilter › c.e.shop.web.TenantFilter.doFilter ›
+              o.s.w.s.DispatcherServlet.doDispatch › …dyMethodProcessor.handleReturnValue › …2HttpMessageConverter.writeInternal ›
+              c.f.j.d.ObjectWriter.writeValue › …ltSerializerProvider.serializeValue › …lectionSerializer.serializeContents ›
+              c.f.j.d.ser.BeanSerializer.serialize › BeanPropertyWriter.serializeAsField
 
 
-
-
-
-
-
-
-
-
-
-
-
-
- ⌕ jackson\.  33,221 samples · 42.8% of all
- ▸ com.fasterxml.jackson.databind.ObjectWriter.writeValue
-   self 0 · total 33,221 · 42.8% of all
- ↑↓←→ move  enter zoom  / search  n/N match  # search this  [ ] thread state  tab functions  : views  t timeframe  S segments  r refresh  esc back  ? help  q q…
+ ↑↓←→ move  enter zoom  tab functions  / search  n/N match  # search this  [ ] thread state  P details  : views  t timeframe  r refresh  esc back  ? help
  ≡ dtctl exec profiling hotspots PROCESS-000000000000A001 --view stacks --show-waiting --limit 0 --default-timeframe-start 'now()-2h'

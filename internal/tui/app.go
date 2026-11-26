@@ -7,6 +7,7 @@ package tui
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -1348,19 +1349,19 @@ func (a *app) renderFooter() string {
 		// input-mode hints (the complete set for that mode).
 		hints = a.top().Hints()
 	default:
-		hints = append(a.top().Hints(),
-			keyHint{":", "views"}, keyHint{"t", "timeframe"}, keyHint{"S", "segments"}, keyHint{"r", "refresh"})
+		own := a.top().Hints()
+		global := []keyHint{{":", "views"}, {"t", "timeframe"}, {"S", "segments"}, {"r", "refresh"}}
 		// "esc back" at the stack root would advertise a no-op.
 		if len(a.stack) > 1 {
-			hints = append(hints, keyHint{"esc", "back"})
+			global = append(global, keyHint{"esc", "back"})
 		}
-		hints = append(hints, keyHint{"?", "help"}, keyHint{"q", "quit"})
+		global = append(global, keyHint{"?", "help"}, keyHint{"q", "quit"})
+		if f, ok := a.top().(hintFitter); ok && f.FitHints() {
+			own, global = fitHints(own, global, a.width-1)
+		}
+		hints = slices.Concat(own, global)
 	}
-	var parts []string
-	for _, h := range hints {
-		parts = append(parts, theme.KeyHint.Render(h.Key)+" "+theme.KeyDesc.Render(h.Desc))
-	}
-	line1 := ansi.Truncate(" "+strings.Join(parts, "  "), a.width, "…")
+	line1 := ansi.Truncate(" "+hintLine(hints), a.width, "…")
 
 	var line2 string
 	switch {
@@ -1380,6 +1381,43 @@ func (a *app) renderFooter() string {
 		}
 	}
 	return line1 + "\n" + ansi.Truncate(line2, a.width, "…")
+}
+
+// hintFitter is a view whose footer drops whole hints where it would be cut
+// at the terminal's edge. Its Hints are in the order it needs them: the ones
+// a reader cannot do without first.
+type hintFitter interface{ FitHints() bool }
+
+func hintLine(hints []keyHint) string {
+	parts := make([]string, len(hints))
+	for i, h := range hints {
+		parts[i] = theme.KeyHint.Render(h.Key) + " " + theme.KeyDesc.Render(h.Desc)
+	}
+	return strings.Join(parts, "  ")
+}
+
+// hintDropOrder is the order the global hints give way in: the keys that
+// work everywhere and are in the help first, and the help itself never.
+var hintDropOrder = []string{"S", "q", "r", "t", ":", "esc"}
+
+// fitHints drops hints until the line is at most width cells: the global
+// ones in hintDropOrder, then the view's own from the end. The help key
+// stays, since it is where the dropped ones are found.
+func fitHints(own, global []keyHint, width int) (ownFit, globalFit []keyHint) {
+	own, global = slices.Clone(own), slices.Clone(global)
+	fits := func() bool {
+		return lipgloss.Width(hintLine(append(slices.Clone(own), global...))) <= width
+	}
+	for _, key := range hintDropOrder {
+		if fits() {
+			return own, global
+		}
+		global = slices.DeleteFunc(global, func(h keyHint) bool { return h.Key == key })
+	}
+	for len(own) > 0 && !fits() {
+		own = own[:len(own)-1]
+	}
+	return own, global
 }
 
 // activePrimaryTagKeys returns the ordered union of primary_tags.* keys for

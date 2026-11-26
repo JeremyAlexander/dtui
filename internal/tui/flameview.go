@@ -8,12 +8,9 @@ import (
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
-	"github.com/charmbracelet/x/ansi"
 
 	"github.com/dynatrace-oss/dtui/internal/tui/catalog"
 	"github.com/dynatrace-oss/dtui/internal/tui/flame"
-	"github.com/dynatrace-oss/dtui/internal/tui/theme"
 )
 
 // The flame graph of the hotspots analysis (ADR-0023): the second reading of
@@ -31,6 +28,7 @@ var flameHelp = []keyHint{
 	{"enter", "zoom into the selected frame"},
 	{"backspace", "zoom out one step"},
 	{"esc", "clear the search, then the zoom, then return to the functions"},
+	{"P / d", "details of the selected frame on or off / given most of the screen"},
 	{"/", "search by regular expression (enter applies, empty clears)"},
 	{"#", "search for the selected function"},
 	{"n / N", "next / previous match"},
@@ -44,9 +42,6 @@ var flameHelp = []keyHint{
 const (
 	flameMinWidth  = 40
 	flameMinHeight = 6
-	// flameChrome is the body lines that are not levels: the thread states,
-	// the caption, and the two lines about the selected frame.
-	flameChrome = 4
 )
 
 type flameView struct {
@@ -79,8 +74,16 @@ type flameView struct {
 
 	input  textinput.Model
 	typing bool
+	// detailsFirst gives the details of the selected frame most of the
+	// screen (d), where they otherwise have what the graph leaves.
+	detailsFirst bool
+	// fn is what the selected frame's function adds up to, kept while the
+	// selection, the thread state and the analysis stay the same.
+	fn flameFunction
 
 	width, height int
+	// lines is how the body's lines are shared out at this size.
+	lines flameLines
 }
 
 // flameHandOver is what the functions table tells the graph each time tab
@@ -190,7 +193,11 @@ func (v *flameView) applySearchFor() {
 	if v.graph == nil || v.searchFor == "" {
 		return
 	}
-	v.graph.SearchLabel(v.searchFor)
+	// The function was asked about: the cursor starts on its first frame
+	// on screen, unless the reader already put it somewhere.
+	if v.graph.SearchLabel(v.searchFor) && v.graph.Selected() == flame.Root {
+		v.graph.NextMatch(true)
+	}
 	v.searchFor = ""
 }
 
@@ -313,24 +320,34 @@ func (v *flameView) selectedFunction() (string, bool) {
 	return v.graph.Tree().Label(v.graph.Selected()), true
 }
 
+// Hints are the view's keys, the ones a reader needs most first: the footer
+// is one line, and what does not fit is dropped from the end (FitHints).
 func (v *flameView) Hints() []keyHint {
 	if v.typing {
 		return []keyHint{{"type", "regular expression"}, {"enter", "search"}, {"esc", "cancel"}}
 	}
 	if !v.drawable() {
-		return []keyHint{{"[ ]", "thread state"}, {"tab", "functions"}}
+		return []keyHint{{"tab", "functions"}, {"[ ]", "thread state"}}
 	}
-	// The footer is one line: the keys a reader cannot guess come first.
-	hints := []keyHint{{"↑↓←→", "move"}, {"enter", "zoom"}}
-	if v.graph.Zoomed() {
+	g := v.graph
+	hints := []keyHint{{"↑↓←→", "move"}, {"enter", "zoom"}, {"tab", "functions"}, {"/", "search"}}
+	if g.Top()+g.Height() < len(g.Layout().Rows) {
+		hints = append(hints, keyHint{"pgdn", "more levels"})
+	} else if g.Top() > 0 {
+		hints = append(hints, keyHint{"pgup", "levels above"})
+	}
+	if g.Zoomed() {
 		hints = append(hints, keyHint{"backspace", "zoom out"})
 	}
-	hints = append(hints, keyHint{"/", "search"})
-	if v.graph.Searching() {
+	if g.Searching() {
 		hints = append(hints, keyHint{"n/N", "match"})
 	}
-	return append(hints, keyHint{"#", "search this"}, keyHint{"[ ]", "thread state"}, keyHint{"tab", "functions"})
+	return append(hints, keyHint{"#", "search this"}, keyHint{"[ ]", "thread state"}, keyHint{"P", "details"})
 }
+
+// FitHints has the footer drop what does not fit, the least needed first,
+// where it would otherwise cut the line at the terminal's edge.
+func (v *flameView) FitHints() bool { return true }
 
 // drawable reports whether there is a graph on screen to move in.
 func (v *flameView) drawable() bool {
@@ -422,21 +439,21 @@ func (v *flameView) built(msg flameBuiltMsg) {
 	v.applySearchFor()
 }
 
+// resize takes the body's size and shares its lines out again: how many
+// levels there is room for depends on the lines the selected frame needs.
 func (v *flameView) resize(width, height int) {
 	v.width, v.height = width, height
-	if v.graph != nil {
-		v.graph.Resize(width, v.levelsShown())
+	if v.graph == nil {
+		return
 	}
+	v.graph.Resize(v.graphWidth(), v.graph.Height())
+	v.lines = v.share()
+	v.graph.Resize(v.graphWidth(), v.lines.levels)
 }
 
-// levelsShown is the number of body lines left for levels of the graph.
-func (v *flameView) levelsShown() int {
-	n := v.height - flameChrome
-	if v.typing || (v.graph != nil && v.graph.Searching()) {
-		n-- // the search line
-	}
-	return max(n, 0)
-}
+// graphWidth is the number of cells a level of the graph is drawn in: all
+// of them. The root spans the screen, so there is nothing to pan to.
+func (v *flameView) graphWidth() int { return v.width }
 
 func (v *flameView) handleKey(msg tea.KeyMsg) tea.Cmd {
 	key := msg.String()
@@ -479,6 +496,15 @@ func (v *flameView) handleKey(msg tea.KeyMsg) tea.Cmd {
 		g.ScrollBottom()
 	case "enter":
 		g.ZoomIn()
+	case "d":
+		v.detailsFirst = !v.detailsFirst
+		switch {
+		case !v.ds.previewOn():
+			return status("the details are off: P shows them")
+		case v.detailsFirst:
+			return status("the details have the room, the graph keeps a few levels: d gives it back")
+		}
+		return status("the graph has the room again")
 	case "backspace":
 		if !g.ZoomOut() {
 			return status("not zoomed: enter zooms into the selected frame")
@@ -561,290 +587,4 @@ func (v *flameView) stopTyping() {
 	v.typing = false
 	v.input.Blur()
 	v.resize(v.width, v.height)
-}
-
-// --- rendering -----------------------------------------------------------------
-
-func (v *flameView) View(width, height int) string {
-	v.resize(width, height)
-	var b strings.Builder
-	b.WriteString(pad(v.stateStrip(), width))
-	b.WriteString("\n")
-	switch {
-	case v.err != nil:
-		// It may repeat tenant data: one safe line, wrapped under itself.
-		text := strings.ReplaceAll(wrap(oneLine(v.err.Error()), width-2), "\n", "\n  ")
-		b.WriteString("\n" + theme.Error.Render("✗ "+text))
-	case v.graph == nil:
-		for _, line := range v.waitLines() {
-			b.WriteString("\n" + placeNote(line, width))
-		}
-	case v.tooSmall():
-		b.WriteString("\n" + placeNote(fmt.Sprintf("the flame graph needs %d columns and %d rows: tab returns to the functions",
-			flameMinWidth, flameMinHeight+4), width))
-	default:
-		v.renderGraph(&b, width)
-	}
-	return b.String()
-}
-
-// stateStrip is the thread states with the one drawn marked, and at its
-// right which levels are in view when not all of them are.
-func (v *flameView) stateStrip() string {
-	var b strings.Builder
-	if v.Busy() {
-		b.WriteString(" " + theme.Spinner.Render(theme.Spin()))
-	}
-	for i, state := range catalog.HotspotStates() {
-		style := theme.TabInactive
-		if i == v.scope.Lens {
-			style = theme.TabActive
-		}
-		b.WriteString(" " + style.Render(state))
-	}
-	if !v.drawable() {
-		return b.String()
-	}
-	levels, top, shown := len(v.graph.Layout().Rows), v.graph.Top(), v.graph.Height()
-	last := min(top+shown, levels)
-	var where string
-	switch {
-	case top == 0 && last == levels:
-		where = fmt.Sprintf("%d levels", levels)
-	case last < levels:
-		where = fmt.Sprintf("levels %d to %d of %d ▼", top+1, last, levels)
-	default:
-		where = fmt.Sprintf("levels %d to %d of %d", top+1, last, levels)
-	}
-	if v.graph.Zoomed() {
-		where = "zoomed · " + where
-	}
-	gap := v.width - lipgloss.Width(b.String()) - lipgloss.Width(where) - 1
-	if gap < 2 {
-		return b.String()
-	}
-	return b.String() + strings.Repeat(" ", gap) + theme.Dim.Render(where)
-}
-
-// waitLines words the time without a graph: the wait for the analysis as
-// the table words it, or the moment its tree takes.
-func (v *flameView) waitLines() []string {
-	switch {
-	case v.building:
-		return []string{"laying out the call stacks"}
-	case !v.loading:
-		return nil
-	}
-	text := "reading the call stacks"
-	if v.spec.Loading != nil {
-		if own := oneLine(v.spec.Loading(v.scope)); own != "" {
-			text = own
-		}
-	}
-	if !v.started.IsZero() {
-		text += ", waited " + catalog.FormatDuration(catalog.Now().Sub(v.started).Truncate(time.Second))
-	}
-	lines := []string{text}
-	if p := v.progress.get(); p != "" {
-		lines = append(lines, oneLine(p))
-	}
-	return lines
-}
-
-// caption says which window and which samples the graph is of, in the
-// table's words, with the samples of the thread state drawn.
-func (v *flameView) caption() string {
-	if v.loading {
-		// A refresh over a graph: the wait is said where the window was.
-		return strings.Join(v.waitLines(), " · ")
-	}
-	if v.spec.Caption == nil {
-		return ""
-	}
-	summary := map[string]any{catalog.ProfSumSamples: float64(v.graph.Tree().Total(flame.Root, v.scope.Lens))}
-	for _, key := range []string{catalog.ProfSumFrom, catalog.ProfSumTo, catalog.ProfSumClamped} {
-		if val, ok := v.summary[key]; ok {
-			summary[key] = val
-		}
-	}
-	return strings.Join(v.spec.Caption(v.scope, summary), " · ")
-}
-
-func (v *flameView) renderGraph(b *strings.Builder, width int) {
-	b.WriteString(" " + theme.Dim.Render(pad(oneLine(v.caption()), width-1)) + "\n")
-	g := v.graph
-	if g.Empty() {
-		empty := "no " + catalog.HotspotState(v.scope) + " samples"
-		if v.spec.Empty != nil {
-			reason := catalog.ProfEmptyState
-			if g.Tree().Len() == 1 {
-				reason = catalog.Str(v.summary, catalog.ProfSumEmpty)
-			}
-			if own := v.spec.Empty(v.scope, map[string]any{catalog.ProfSumEmpty: reason}); own != "" {
-				empty = own
-			}
-		}
-		b.WriteString("\n" + placeNote("∅ "+catalog.SafeText(empty), width))
-		return
-	}
-
-	paint := newFlamePaint(g)
-	rows := g.Layout().Rows
-	for level := g.Top(); level < g.Top()+g.Height(); level++ {
-		if level < len(rows) {
-			paint.row(b, rows[level], level)
-		}
-		b.WriteString("\n")
-	}
-	if v.typing {
-		b.WriteString(pad(" "+v.input.View(), width) + "\n")
-	} else if g.Searching() {
-		b.WriteString(pad(" "+v.matchLine(), width) + "\n")
-	}
-	title, numbers := v.selectedLines(width)
-	b.WriteString(pad(title, width) + "\n" + pad(numbers, width))
-}
-
-// matchLine says what is searched for, a pattern or a function, and how much
-// of the graph it matches, counting each stack once.
-func (v *flameView) matchLine() string {
-	g := v.graph
-	share, whole := g.Share(), g.Info(flame.Root)
-	text := fmt.Sprintf("%s samples · %s of all", catalog.GroupInt(share.All), percent(share.All, whole.All))
-	if g.Zoomed() {
-		text += fmt.Sprintf(" · %s of the zoomed frame", percent(share.Zoom, whole.Zoom))
-	}
-	if share.All == 0 {
-		text = "no " + catalog.HotspotState(v.scope) + " samples"
-	}
-	// The numbers are what the line is for: what was searched for gets the
-	// room they leave, a function shortened like a frame's label.
-	room := max(v.width-lipgloss.Width(text)-6, 12)
-	what := ansi.Truncate(oneLine(g.Pattern()), room, "…")
-	if fn := g.SearchedFunction(); fn != "" {
-		what = catalog.ShortFrame(oneLine(fn), room)
-	}
-	return theme.Hit.Render("⌕ "+what) + theme.Dim.Render("  "+text)
-}
-
-// selectedLines are the two lines about the selected frame: its function
-// spelled out, and its numbers.
-func (v *flameView) selectedLines(width int) (title, numbers string) {
-	g := v.graph
-	sel := g.Selected()
-	info := g.Info(sel)
-	state := catalog.HotspotState(v.scope)
-	if sel == flame.Root {
-		title = "every " + state + " stack of the process"
-	} else {
-		title = catalog.ShortFrame(oneLine(g.Tree().Label(sel)), max(width-3, 1))
-	}
-	parts := []string{
-		"self " + catalog.GroupInt(info.Self),
-		"total " + catalog.GroupInt(info.Total),
-		percent(info.Total, info.All) + " of all",
-	}
-	if g.Zoomed() {
-		parts = append(parts, percent(info.Total, info.Zoom)+" of the zoomed frame")
-	}
-	if info.Hidden > 0 {
-		parts = append(parts, fmt.Sprintf("%d callees too narrow to draw (%s samples): enter zooms in",
-			info.Hidden, catalog.GroupInt(info.HiddenWeight)))
-	}
-	return " " + theme.Gutter.Render("▸") + " " + title, "   " + theme.Dim.Render(strings.Join(parts, " · "))
-}
-
-// percent is a share of a whole to one decimal; of nothing it is nothing.
-func percent(part, whole int64) string {
-	if whole <= 0 {
-		return "0.0%"
-	}
-	return fmt.Sprintf("%.1f%%", float64(part)/float64(whole)*100)
-}
-
-// The first cell of a frame says what it is even without colour: a frame, the
-// selected frame, a search hit, another call of the selected function, and a
-// marker for callees too narrow to draw.
-const (
-	flameEdge     = "▏"
-	flameEdgeSel  = "▌"
-	flameEdgeHit  = "█"
-	flameEdgeSame = "▍"
-	flameMarker   = "·"
-)
-
-// flameInk is a style as the two strings around the text it colours, so that
-// a screen of frames is written without rendering a style per frame.
-type flameInk struct{ on, off string }
-
-func inkOf(s lipgloss.Style) flameInk {
-	const mark = "\x00"
-	r := s.Render(mark)
-	i := strings.Index(r, mark)
-	if i < 0 {
-		return flameInk{}
-	}
-	return flameInk{on: r[:i], off: r[i+len(mark):]}
-}
-
-// flamePaint draws the cells of one graph in the colours of the terminal as
-// it is now.
-type flamePaint struct {
-	g                                 *flame.Graph
-	zoomLevel                         int
-	ramp                              []flameInk
-	selected, hit, same, caller, more flameInk
-}
-
-func newFlamePaint(g *flame.Graph) *flamePaint {
-	p := &flamePaint{
-		g: g, zoomLevel: g.Tree().Level(g.Zoom()),
-		selected: inkOf(theme.FlameSelected), hit: inkOf(theme.FlameHit), same: inkOf(theme.FlameSame),
-		caller: inkOf(theme.FlameCaller), more: inkOf(theme.FlameMore),
-	}
-	for _, style := range theme.Flame {
-		p.ramp = append(p.ramp, inkOf(style))
-	}
-	return p
-}
-
-// row writes one level: its cells at their columns, with spaces between.
-func (p *flamePaint) row(b *strings.Builder, cells []flame.Cell, level int) {
-	tree, x := p.g.Tree(), 0
-	for _, c := range cells {
-		b.WriteString(strings.Repeat(" ", c.X-x))
-		x = c.X + c.W
-		if c.Hidden > 0 {
-			b.WriteString(p.more.on + flameMarker + p.more.off)
-			continue
-		}
-		label := tree.Label(c.Node)
-		ink, edge := p.ramp[theme.FlameStep(label)], flameEdge
-		switch {
-		case c.Node == p.g.Selected():
-			ink, edge = p.selected, flameEdgeSel
-		case p.g.Matches(c.Node):
-			ink, edge = p.hit, flameEdgeHit
-		case !p.g.Searching() && p.g.SameAsSelected(c.Node):
-			ink, edge = p.same, flameEdgeSame
-		case level < p.zoomLevel:
-			ink = p.caller
-		}
-		text := flame.Label(label, c.W-1)
-		if !isASCII(text) {
-			// The model counts cells as the tables do; a terminal can count
-			// a rare cluster wider. Never let a frame push its level over.
-			text = pad(text, c.W-1)
-		}
-		b.WriteString(ink.on + edge + text + ink.off)
-	}
-}
-
-func isASCII(s string) bool {
-	for i := 0; i < len(s); i++ {
-		if s[i] >= 0x80 {
-			return false
-		}
-	}
-	return true
 }

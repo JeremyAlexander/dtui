@@ -1,40 +1,40 @@
  ▛▞▟ dtui  ·  context:test  ·  ● readonly                                                   last 2h
  hotspots (shop-backend) › flame·running ──────────────────────────────────────────────────────────
-  running   lock   net_io   disk_io   wait                                                27 levels
- last 2h (10:00–12:00 UTC) · 77,631 running samples (stacks seen, not time) · all threads, leaf: to…
-▌all
-▏java.lang.Thread.run
-▏…un▏org.apache.tomcat.util.threads.TaskThread$WrappingRunnable.run                                ▏
-▏…un▏java.util.concurrent.ThreadPoolExecutor$Worker.run                                            ▏
-▏…un▏org.apache.tomcat.util.net.NioEndpoint$SocketProcessor.doRun                                  ▏
-▏…d▏▏org.apache.coyote.http11.Http11Processor.service                                             ▏
-▏  ▏▏org.apache.catalina.connector.CoyoteAdapter.service
-   ▏▏org.apache.catalina.core.StandardWrapperValve.invoke
-   ▏▏org.apache.catalina.core.ApplicationFilterChain.doFilter
-   ▏▏org.springframework.security.web.FilterChainProxy.doFilter
-   ▏▏com.example.shop.web.RequestIdFilter.doFilter                                           ▏…al
-   ▏▏com.example.shop.web.TenantFilter.doFilter                                              ▏…pw
-   ▏▏org.springframework.web.servlet.DispatcherServlet.doDispatch
-   ▏▏InvocableHandlerMethod.invokeForRequest    ▏▏…onseBodyMethodProcessor.handleReturnValue
-   ▏▏▏….addItem▏…Products▏▏…▏▏▏▏▏▏▏…ler.search▏▏ ▏…ackson2HttpMessageConverter.writeInternal
-   ▏▏▏….addItem▏…Products▏▏…▏▏▏▏▏▏▏…vice.query▏▏ ▏c.f.j.databind.ObjectWriter.writeValue
-    ▏▏▏…ceCart·▏▏…toDto▏…▏▏▏▏▏▏▏▏▏▏…e▏…r.score▏▏ ▏DefaultSerializerProvider.serializeValue
-     ▏▏…y▏▏    ·▏…▏…s  ▏…▏  ▏  ▏ ▏▏  ▏…▏…        ▏CollectionSerializer.serializeContents
+  running   lock   net_io   disk_io   wait                      levels 15 to 23 of 27 ▲ ▼ pgup/pgdn
+ last 2h (10:00–12:00 UTC) · 77,631 running samples (stacks seen, not time) · all threads, leaf:
+ total
+   ▏▏▏addItem  ▏listProd…▏▏…▏▏▏▏▏▏▏search     ▏▏ ▏writeInternal
+   ▏▏▏addItem  ▏findProd…▏▏…▏▏▏▏▏▏▏query      ▏▏ ▏c.f.j.databind.ObjectWriter.writeValue
+    ▏▏▏priceC…·▏▏toDto ▏…▏▏▏▏▏▏▏▏▏▏p…▏score   ▏▏ ▏DefaultSerializerProvider.serializeValue
+     ▏▏a…▏▏    ·▏…▏m…  ▏…▏  ▏  ▏ ▏▏  ▏…▏…        ▏CollectionSerializer.serializeContents
      ▏▏         ▏      ▏…▏  ▏  ▏ ▏               ▏c.f.j.d.ser.BeanSerializer.serialize
      ▏                 ▏…▏  ▏  ▏ ▏               ▏BeanPropertyWriter.serializeAsField     ▏
-     ▏                 ▏…▏  ▏  ▏ ▏               ▏▏▏▏▏▏…utes▏…ion▏…▏…▏▏▏▏▏▏▏▏▏▏▏▏▏▏▏▏▏▏·
-     ▏                      ▏  ▏                 ▏▏·▏▏▏…ng  ▏…g  ▏ ▏ ▏▏·▏··▏▏·▏▏▏▏▏▏▏▏▏
+     ▏                 ▏…▏  ▏  ▏ ▏               ▏▏▏▏▏▏getA…▏get…▏…▏…▏▏▏▏▏▏▏▏▏▏▏▏▏▏▏▏▏▏·
+     ▏                      ▏  ▏                 █▍·▍▍▍wr…  ▍w…  ▍ ▍ ▍▍·▍··▍▍·▍▍▍▍▍▍▍▍▍
      ▏                      ▏  ▏                 ·· ··▏…    ▏    · · ·· ·  ·· ▏··▏·····
-     ▏                      ▏  ▏
-     ▏                      ▏  ▏
-     ▏                      ▏  ▏
-     ▏                      ▏  ▏
-
-
-
-
-
- ▸ every running stack of the process
-   self 0 · total 77,631 · 100.0% of all
- ↑↓←→ move  enter zoom  / search  # search this  [ ] thread state  tab functions  : views  t timefr…
+ ▸ com.fasterxml.jackson.core.json.UTF8JsonGenerator.writeString
+   self 52 · total 75 · 0.1% of all · 1 callee too narrow to draw (23 samples): enter zooms in
+   package    com.fasterxml.jackson.core.json
+   type       UTF8JsonGenerator
+   function   writeString
+   self/total running 52/75 · lock 0/0 · net_io 0/0 · disk_io 0/0 · wait 0/0
+   depth      level 21 of 26
+   paths      85 call paths reach this function: total 19,223 (24.8% of all), self 13,321
+   callers     15.9%  com.example.shop.catalog.dto.ProductDto.getAttributes
+               12.6%  com.example.shop.catalog.dto.ProductDto.getDescription
+                5.6%  com.example.shop.catalog.dto.ProductDto.getName
+              and 82 more
+   callees     30.7%  com.fasterxml.jackson.core.json.UTF8JsonGenerator._outputEscapedMultiByteChar
+   stack      java.lang.Thread.run › TaskThread$WrappingRunnable.run ›
+              j.u.c.ThreadPoolExecutor$Worker.run › NioEndpoint$SocketProcessor.doRun ›
+              o.a.c.http11.Http11Processor.service › o.a.c.c.CoyoteAdapter.service ›
+              o.a.c.c.StandardWrapperValve.invoke › ApplicationFilterChain.doFilter ›
+              o.s.s.web.FilterChainProxy.doFilter › c.e.s.web.RequestIdFilter.doFilter ›
+              c.e.shop.web.TenantFilter.doFilter › o.s.w.s.DispatcherServlet.doDispatch ›
+              …dyMethodProcessor.handleReturnValue › …2HttpMessageConverter.writeInternal ›
+              c.f.j.d.ObjectWriter.writeValue › …ltSerializerProvider.serializeValue ›
+              …lectionSerializer.serializeContents › c.f.j.d.ser.BeanSerializer.serialize ›
+              BeanPropertyWriter.serializeAsField › c.e.s.account.dto.AccountDto.getId ›
+              UTF8JsonGenerator.writeString
+ ↑↓←→ move  enter zoom  tab functions  / search  pgdn more levels  # search this  ? help
  ≡ dtctl exec profiling hotspots PROCESS-000000000000A001 --view stacks --show-waiting --limit 0 --…

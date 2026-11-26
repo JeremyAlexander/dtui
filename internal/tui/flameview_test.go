@@ -221,9 +221,10 @@ func TestFlameGraphScrolls(t *testing.T) {
 		deep = append(deep, strings.TrimSuffix(strings.Repeat("f;", i+1), ";")+" 5,0")
 	}
 	answerFlame(a, fv, stackRecords("2026-07-15T12:00:00Z", deep...), nil)
+	a.ds.previewOff = true // the details have a test of their own
 	a.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	out := screen(a)
-	if !strings.Contains(out, "levels 1 to 16 of 31 ▼") {
+	if !strings.Contains(out, "levels 1 to 15 of 31 ▼ pgdn") || !strings.Contains(out, "pgdn more levels") {
 		t.Fatalf("the strip does not say what is in view:\n%s", out)
 	}
 	for _, step := range []struct {
@@ -231,9 +232,10 @@ func TestFlameGraphScrolls(t *testing.T) {
 		top  int
 		says string
 	}{
-		{"pgdown", 15, "levels 16 to 31 of 31"},
-		{"pgup", 0, "levels 1 to 16 of 31 ▼"},
-		{"space", 15, ""}, {"ctrl+b", 0, ""}, {"ctrl+f", 15, ""}, {"home", 0, ""}, {"end", 15, ""}, {"g", 0, ""}, {"G", 15, ""},
+		{"pgdown", 15, "levels 16 to 30 of 31 ▲ ▼"},
+		{"pgup", 0, "levels 1 to 15 of 31 ▼ pgdn"},
+		{"space", 15, ""}, {"ctrl+b", 0, ""}, {"ctrl+f", 15, ""}, {"home", 0, ""}, {"end", 16, ""}, {"g", 0, ""},
+		{"G", 16, "levels 17 to 31 of 31 ▲ pgup"},
 	} {
 		press(a, flameKey(step.key))
 		if fv.graph.Top() != step.top {
@@ -278,7 +280,7 @@ func TestFlameGraphSearchLine(t *testing.T) {
 		t.Fatalf("enter searched for %q", fv.graph.Pattern())
 	}
 	out := screen(a)
-	for _, want := range []string{"⌕ ^[ab]$", "190 samples · 95.0% of all", "n/N match"} {
+	for _, want := range []string{"search ^[ab]$", "190 samples · 95.0% of all", "n/N match"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the screen does not say %q:\n%s", want, out)
 		}
@@ -302,7 +304,7 @@ func TestFlameGraphSearchLine(t *testing.T) {
 	typeText("^b$")
 	press(a, key("enter"))
 	press(a, key("]"))
-	if out := screen(a); !strings.Contains(out, "⌕ ^b$  no lock samples") {
+	if out := screen(a); !strings.Contains(out, "search ^b$  no lock samples") {
 		t.Errorf("a search without samples in this thread state:\n%s", out)
 	}
 	press(a, key("["))
@@ -328,15 +330,20 @@ func TestFlameGraphTakesWhatTheTableHandsOver(t *testing.T) {
 	if got, want := fv.graph.Pattern(), "^"+strings.NewReplacer(".", `\.`).Replace(first)+"$"; got != want {
 		t.Fatalf("the selected function is searched as %q, want %q", got, want)
 	}
-	if fv.graph.Selected() != flame.Root {
-		t.Error("the hand-over moved the cursor")
+	// The function was asked about: the cursor is on its frame, and the
+	// lines about the selected frame are about it.
+	if got := place(fv); !strings.HasPrefix(got, "sel=main;"+first+" ") {
+		t.Errorf("the cursor is not on the function handed over: %s", got)
+	}
+	if out := screen(a); !strings.Contains(out, "▸ "+first) || !strings.Contains(out, "self 5 · total 5 · 50.0% of all") {
+		t.Errorf("the lines about the selected frame are not about the function handed over:\n%s", out)
 	}
 	// A function searched for is named, not spelled as its pattern.
-	if out := screen(a); !strings.Contains(out, "⌕ "+first+"  5 samples · 50.0% of all") {
+	if out := screen(a); !strings.Contains(out, "search "+first+"  5 samples · 50.0% of all") {
 		t.Errorf("the search line does not name the function and its share:\n%s", out)
 	}
 	a.Update(tea.WindowSizeMsg{Width: 60, Height: 24})
-	if out := screen(a); !strings.Contains(out, "⌕ UTF8JsonGenerator.writeString  5 samples · 50.0% of all") {
+	if out := screen(a); !strings.Contains(out, "search …onGenerator.writeString  5 samples · 50.0% of all") {
 		t.Errorf("a narrow search line does not shorten the function and keep the numbers:\n%s", out)
 	}
 	a.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
@@ -453,7 +460,7 @@ func TestFlameGraphRefusesToOpen(t *testing.T) {
 		t.Error("a key moved in a graph that is not drawn")
 	}
 	a.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
-	if out := screen(a); !strings.Contains(out, "▌all") {
+	if out := screen(a); !strings.Contains(out, "█all") {
 		t.Errorf("the graph did not come back:\n%s", out)
 	}
 }
@@ -496,7 +503,7 @@ func TestFlameGraphStatesSayWhatHappened(t *testing.T) {
 	if out := screen(a); !strings.Contains(out, "∅ no net_io samples in this window") || !strings.Contains(out, "0 net_io samples") {
 		t.Errorf("an empty thread state:\n%s", out)
 	}
-	if got := fmt.Sprint(fv.Hints()); got != "[{[ ] thread state} {tab functions}]" {
+	if got := fmt.Sprint(fv.Hints()); got != "[{tab functions} {[ ] thread state}]" {
 		t.Errorf("hints without a graph: %s", got)
 	}
 }
@@ -516,7 +523,7 @@ func TestFlameGraphRefresh(t *testing.T) {
 	if calls[catalog.HotspotStacksFreshAPI] != 1 || !fv.Busy() {
 		t.Fatalf("r: calls %v, busy %v", calls, fv.Busy())
 	}
-	if out := screen(a); !strings.Contains(out, "analysing the hotspots of shop-backend") || !strings.Contains(out, "▌a") {
+	if out := screen(a); !strings.Contains(out, "analysing the hotspots of shop-backend") || !strings.Contains(out, "█a") {
 		t.Errorf("a refresh over a graph does not show both the wait and the graph:\n%s", out)
 	}
 	answerFlame(a, fv, stackRecords("2026-07-15T12:00:00Z", flameWalk...), nil)
@@ -676,11 +683,11 @@ func TestFlameGraphMarksFrames(t *testing.T) {
 	}
 	level := func(out string, n int) string { return strings.Split(out, "\n")[4+n] }
 	out := screen(a)
-	if got := level(out, 2); !strings.HasPrefix(got, "▌a") || !strings.Contains(got, "▏b") || !strings.Contains(got, "▍a") {
+	if got := level(out, 2); !strings.HasPrefix(got, "█a") || !strings.Contains(got, "▏b") || !strings.Contains(got, "▍a") {
 		t.Errorf("the selected frame, a frame and another call of the selected function:\n%s", got)
 	}
 	press(a, key("#"))
-	if got := level(screen(a), 2); !strings.HasPrefix(got, "▌a") || !strings.Contains(got, "█a") || strings.Contains(got, "▍") {
+	if got := level(screen(a), 2); !strings.HasPrefix(got, "█a") || !strings.Contains(got, "▌a") || strings.Contains(got, "▍") {
 		t.Errorf("a search hit:\n%s", got)
 	}
 	// Callees narrower than a cell share a marker, and their caller says

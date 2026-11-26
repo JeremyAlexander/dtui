@@ -156,11 +156,16 @@ var (
 		return styles
 	}()
 
-	// FlameSelected is the frame the cursor is on: the loudest surface there
-	// is, with the gutter bar of a selected table row as its first cell.
-	FlameSelected = lipgloss.NewStyle().Bold(true).Foreground(Ink).Background(Text)
-	// FlameHit is a frame a search matched.
-	FlameHit = lipgloss.NewStyle().Bold(true).Foreground(Ink).Background(Accent)
+	// FlameSelected is the frame the cursor is on: the one surface in black
+	// on white (white on black on a light terminal), which no colour of the
+	// ramp and no mark comes near. It stays so on a search hit.
+	FlameSelected = lipgloss.NewStyle().Bold(true).
+			Foreground(dual("#000000", "16", "0", "#ffffff", "231", "15")).
+			Background(dual("#ffffff", "231", "15", "#000000", "16", "0"))
+	// FlameHit is a frame a search matched: a cool colour among the warm
+	// ones, and quieter than the cursor.
+	FlameHit = lipgloss.NewStyle().Foreground(Text).
+			Background(dual("#2e4f8f", "25", "4", "#b4c9f5", "153", "12"))
 	// FlameSame is another call of the function the cursor is on: quieter
 	// than a search hit, so the two can be told apart.
 	FlameSame = lipgloss.NewStyle().Foreground(Text).Background(SelBg)
