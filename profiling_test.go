@@ -28,7 +28,7 @@ import (
 var updateScenarios = flag.Bool("update", false, "rewrite internal/tui/testdata/profiling/*.json with the sources' current output")
 
 // profilingFixture is the synthetic recording of a Java web application the
-// profiling views are rendered from: a hot JSON serialisation path, a
+// profiling view is rendered from: a hot JSON serialisation path, a
 // connection pool its request threads queue for, JDBC and HTTP-client network
 // waits, and a cache whose entries survive GC after GC.
 const profilingFixture = "testdata/profiling/java-webapp"

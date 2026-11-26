@@ -98,7 +98,7 @@ More flows (Kubernetes crashloop, slow frontend) are in the
 |---|---|
 | **Triage** | Problems, home overview, events, costs |
 | **Services and apps** | Services, databases |
-| **Infrastructure** | Hosts, processes, containers and extensions |
+| **Infrastructure** | Hosts, processes with code-level hotspots (prototype), containers and extensions |
 | **Clouds** | AWS, Azure, GCP |
 | **Kubernetes** | Clusters, nodes, namespaces, workloads, pods |
 | **Distributed Traces** | Traces with span waterfall and logs in context |

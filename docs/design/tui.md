@@ -166,6 +166,7 @@ unbounded). Opened via drill-down they inherit the selection's scope.
 | RUM sessions | `:sessions` | `user.sessions` | per-app user sessions, duration, errors; session detail = action timeline |
 | Live Debugger breakpoints | `:breakpoints`, `:bp` | `application.snapshots` | breakpoints that *fired* in the timeframe, derived from their snapshots (location, function, hits, hosts, last hit); enter → that breakpoint's snapshots. Configuration and rollout status are not shown — the workspace lookup can create a workspace, and breakpoint writes stay in `dtctl` |
 | Live Debugger snapshots | `:snapshots`, `:snap` | `application.snapshots` | newest-first hit stream; payloads decoded with dtctl's decoder — the inspector shows `variables` (the hit frame's locals) and `stacktrace` first; `c` copies `dtctl get snapshots <id> --decode-snapshots`; entity/logs/events/trace drills |
+| Hotspots (prototype) | `:hotspots`, `:hot`, `:cpu`, `:profile` | code-level analysis API, through dtctl | functions of one process by self and total samples, one lens per thread state plus an `allocations` lens; enter focuses a function (callers, callees); slow: a first result takes minutes. See [profiling-prototype.md](profiling-prototype.md) |
 | Costs | `:costs`, `:dps` | `dt.system.events` | DPS consumption by capability/entity, trend |
 
 ### Management views (assets — secondary)
@@ -212,6 +213,7 @@ sense. Learn it once, use it on anything:
 | `v` | events | deployments/events | K8s events | evidence events | — |
 | `x` | related entities | host, callers, callees | workload, node, ns | affected entities | source entity |
 | `u` | RUM sessions (frontend detail) | — | — | — | — |
+| `h` | hotspots (code-level profiling) — on a process row only | — | — | — | — |
 | `d` | describe (YAML pager) | ✓ | ✓ | ✓ | ✓ |
 | `o` | open in browser — "open with" picker when several targets apply | ✓ | ✓ | ✓ | ✓ |
 
@@ -963,7 +965,10 @@ imports): `internal/tui` imports only dtctl's `pkg/exec` (DQL executor) and
 `internal/tui` except the `dtui` main package and `cmd/web`; no HTTP in
 `internal/tui`; every API call is a `tea.Cmd` goroutine, and stale results
 are dropped by `(owner, seq)` rather than by cancellation (see
-[learnings.md](../dev/learnings.md) section 3).
+[learnings.md](../dev/learnings.md) section 3). The one exception is a spec
+that sets `CancelOnLeave` (the profiling view): its call takes minutes, so the
+view cancels the call's context when it leaves the breadcrumb trail, and
+auto-refresh skips it.
 
 ### Refresh & data handling
 

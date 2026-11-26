@@ -38,7 +38,7 @@ const ProfileRowCap = 300
 // has.
 const ProfileFocusCap = 25
 
-// Row keys of the profiling views.
+// Row keys of the profiling view.
 const (
 	ProfFunction = "function" // frame label: package.Class.method
 	ProfSelf     = "self"     // samples with the function on top of the stack
@@ -64,7 +64,7 @@ const (
 	ProfEntityName = "__process.name"
 )
 
-// Summary keys of the profiling views.
+// Summary keys of the profiling view.
 const (
 	ProfSumFrom     = "from"    // RFC3339: start of the window analysed
 	ProfSumTo       = "to"      // RFC3339: its end
