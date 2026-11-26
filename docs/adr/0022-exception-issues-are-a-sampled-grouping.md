@@ -23,17 +23,30 @@ dtui derives an **issue key** for each exception-bearing span itself, in Go,
 over a bounded sample.
 
 - **The key is versioned.** `e1:` plus the first 12 hex characters of a
-  SHA-256 over a canonical string. It depends on no locale and no map order.
-  Any change to the algorithm that can move an exception to another group
-  ships as `e2`; a golden file of `e1` keys makes that a conscious step.
+  SHA-256 over a canonical string of length-prefixed fields (rung,
+  classifier, type, evidence), so no two inputs can run together. It depends
+  on no locale and no map order. Any change to the algorithm that can move
+  an exception to another group ships as `e2`. Two golden files make that a
+  conscious step: one of `e1` keys over a corpus, and one digest of the
+  tables, expressions and limits the key is computed from.
 - **A fallback ladder picks what is hashed.** From a span's exception events
-  take the root of the cause chain (the flagged event, or the end of a chain
-  linked by ids), else the last. The id-linked step is unverified; see
-  "Observed so far". Then: type + top five in-app frames (module and
-  function, never line numbers, recursion collapsed); else type + top five
-  of all frames; else type + parameterised message; else the type
+  take the root of the cause chain: the last flagged event, else the last
+  end of a chain linked by ids, else the last event. The id-linked step is
+  unverified; see "Observed so far". The type is the root cause's, read from
+  the chain text when one event carries a whole `Caused by` chain, so type
+  and frames belong to the same exception. Then: type + the throw-site frame
+  + the top five in-app frames that are not pass-through (module and
+  function, never line numbers, recursion collapsed); else type + throw site
+  + top five of all frames; else type + parameterised message; else the type
   alone. Every row shows the rung that produced it, so a coarse group is
   visibly coarse.
+- **The throw site is always in a frame key, and pass-through frames never
+  count.** Filter chains, middleware `next`, reflection and dispatch frames
+  are shared by every error that passes through them; keyed on those alone,
+  unrelated errors of one type merge (see "Observed so far").
+- **The built-in in-app rules are part of the key version.** Any other
+  classifier contributes its identity to the key, so its keys are visibly a
+  different family: keys match across users only with the built-in rules.
 - **One primary query, grouped through `Spec` + `Decode`.** The view fetches
   the newest 1000 exception-bearing spans in scope and groups them in
   `Decode` ([ADR-0003](0003-declarative-view-catalog.md)); it is a catalog
@@ -62,13 +75,11 @@ over a bounded sample.
 
 Open, to be settled before this is accepted:
 
-- The in-app frame rule: a built-in list of runtime and framework prefixes,
-  or a `.dtui.yaml` setting. The classifier sits behind an interface so
-  either can supply it.
-- Whether the throw-site frame is always part of the key, whatever the
-  classifier says about it. It is the candidate remedy for the pass-through
-  frames in "Observed so far"; it changes keys, so it must be settled before
-  `e1` is pinned.
+- Whether a `.dtui.yaml` setting may replace the built-in in-app rules at
+  all, given that keys then stop matching between users.
+- Which frames count as pass-through. The list is matched by method name per
+  notation and is short on purpose; it changes keys, so it must be settled
+  before `e1` is pinned.
 - Whether this view fits the traces noun's depth cap
   ([ADR-0014](0014-breadth-not-depth.md)). A noun is done at list, detail,
   drills and exits, and beyond that the answer is an exit. A grouped list is
@@ -126,13 +137,14 @@ facts about that environment, not about every tenant kind.
   on real data; only the root flag and the last-event fallback have inputs
   there.
 - OneAgent-captured Java stacks use the notation
-  `pkg.Class.method (File.java:123)`, with no `at ` prefix. A parser that
-  keys on the prefix reads no frames from them, and those exceptions fall to
-  the message rung.
+  `pkg.Class.method (File.java:123)`, with no `at ` prefix. The Java parser
+  reads that form as well as the JVM's own.
 - Pass-through frames are a known weakness of "top N in-app frames". For an
   error sent with a servlet `sendError`, the top in-app frames were two
   filter `doFilter` frames, not the throw site. Every error that passes
   through the same filters would share those frames, so unrelated errors
-  of one type would merge into one issue.
-- A status code in a message (`HTTP 404 …`) is parameterised away, so on
-  the message rung two messages that differ only in the code share a key.
+  of one type would merge into one issue. This is why the throw site is in
+  the key and pass-through frames are skipped.
+- A status code in a message (`HTTP 404 …`) carries meaning. The message
+  rule keeps a code that follows HTTP, status, SQLSTATE or errno wording, so
+  a 404 and a 500 stay apart on the message rung.
