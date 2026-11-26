@@ -71,8 +71,7 @@ func jsFrameParts(line string) (function, loc string, named, ok bool) {
 	} else if m := jsBareRe.FindStringSubmatch(line); m != nil {
 		loc = m[1]
 	}
-	// Mono writes "at Ns.Type.Method (Type arg) [0x0001a] in <module>:0".
-	if !jsLocationRe.MatchString(loc) || strings.Contains(loc, ")"+dotnetMonoOffset) {
+	if !jsLocationRe.MatchString(loc) {
 		return "", "", false, false
 	}
 	return function, loc, named, true
