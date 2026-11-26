@@ -32,7 +32,9 @@ mkdir -p "$out"
 
 # GOWORK=off here, in mod_dir and in copy_mod: under an inherited GOWORK that
 # names the workspace written below, a module resolves to its copy in wasm/.deps.
-gover="$(cd "$repo" && GOWORK=off go list -m -f '{{.GoVersion}}' 2>/dev/null || echo 1.26)"
+# No fallback for the Go version: go refuses a workspace that names an older
+# one than go.mod, so a guess would only replace the real error by that one.
+gover="$(cd "$repo" && GOWORK=off go list -m -f '{{.GoVersion}}')"
 
 # The physical path of wasm/.deps, which need not exist yet.
 deps_real="$(cd "$here" && pwd -P)/.deps"
