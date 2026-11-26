@@ -88,6 +88,9 @@ copy_mod github.com/Dynatrace/dtctl/sdk dtctl-sdk
 
 echo "==> copying patched module sources into $deps"
 for i in "${!copy_srcs[@]}"; do
+  # A run interrupted before the chmod below leaves the module cache's
+  # read-only directories behind, which rm cannot empty.
+  [ ! -e "${copy_dests[$i]}" ] || chmod -R u+w "${copy_dests[$i]}"
   rm -rf "${copy_dests[$i]}"
   mkdir -p "${copy_dests[$i]}"
   cp -R "${copy_srcs[$i]}/." "${copy_dests[$i]}/"
