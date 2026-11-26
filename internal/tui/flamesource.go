@@ -100,7 +100,9 @@ type sourceFoundMsg struct {
 	label   string
 	index   *source.Index
 	matches []source.Match
-	err     error
+	// unread is how many files that could hold the frame were not read.
+	unread int
+	err    error
 }
 
 // sourceWarmMsg says the directory has been walked: the footer can now tell
@@ -138,7 +140,8 @@ func (a *app) findSource(view viewModel, label string) tea.Cmd {
 		if err != nil {
 			return sourceFoundMsg{view: view, label: label, err: err}
 		}
-		return sourceFoundMsg{view: view, label: label, index: ix, matches: ix.Resolve(context.Background(), f)}
+		matches, unread := ix.Resolve(context.Background(), f)
+		return sourceFoundMsg{view: view, label: label, index: ix, matches: matches, unread: unread}
 	})
 }
 
@@ -160,9 +163,12 @@ func (a *app) foundSource(msg sourceFoundMsg) tea.Cmd {
 		if msg.index.Partial != "" {
 			text += " · the directory was not read to its end: " + msg.index.Partial
 		}
+		if msg.unread > 0 {
+			text += fmt.Sprintf(" · %s files that could hold it were not read", catalog.GroupInt(int64(msg.unread)))
+		}
 		return statusErr(text)
 	case len(msg.matches) == 1:
-		return a.openSource(msg.index, source.Parse(msg.label), msg.matches[0])
+		return a.openSource(msg.index, source.Parse(msg.label), msg.matches[0], msg.unread)
 	}
 	a.overlay = &sourcePicker{app: a, index: msg.index, frame: source.Parse(msg.label), label: short, list: msg.matches}
 	return nil
@@ -192,13 +198,17 @@ func sourceHow(f source.Frame, m source.Match) string {
 
 // openSource opens one match in the editor, or copies its place when no
 // editor is known. The path is the index's own, checked again to be inside
-// the source directory.
-func (a *app) openSource(ix *source.Index, f source.Frame, m source.Match) tea.Cmd {
+// the source directory. unread is how many files that could hold the frame
+// were not read: the match is then the first found, and the reader is told.
+func (a *app) openSource(ix *source.Index, f source.Frame, m source.Match, unread int) tea.Cmd {
 	abs, err := ix.Abs(m.Path)
 	if err != nil {
 		return statusErr(oneLine(err.Error()))
 	}
 	how := sourceHow(f, m)
+	if unread > 0 {
+		how += fmt.Sprintf("; the first found, %s files that could hold it were not read", catalog.GroupInt(int64(unread)))
+	}
 	editor := a.ds.source.editor
 	if editor.ID == "" {
 		yank(sourceWhere(abs, m))
@@ -259,14 +269,14 @@ func (p *sourcePicker) HandleKey(msg tea.KeyMsg) tea.Cmd {
 		return status("copied " + oneLine(sourceWhere(m.Path, m)))
 	case "enter":
 		a.overlay = nil
-		return a.openSource(p.index, p.frame, p.list[p.sel])
+		return a.openSource(p.index, p.frame, p.list[p.sel], 0)
 	}
 	if moveSel(key, &p.sel, len(p.list)) {
 		return nil
 	}
 	if idx, ok := digitIndex(key, len(p.list)); ok {
 		a.overlay = nil
-		return a.openSource(p.index, p.frame, p.list[idx])
+		return a.openSource(p.index, p.frame, p.list[idx], 0)
 	}
 	return nil
 }

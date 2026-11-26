@@ -55,13 +55,14 @@ func (ix *Index) Likely(f Frame) bool {
 
 // Resolve finds the files a frame may have been compiled from, the best
 // first. A runtime's frame has none. It reads the candidate files, up to a
-// bound, to find the line the function is declared on.
-func (ix *Index) Resolve(ctx context.Context, f Frame) []Match {
+// bound, to find the line the function is declared on; unread is how many
+// files that could hold the frame were beyond that bound, so that one match
+// is not taken for the only one.
+func (ix *Index) Resolve(ctx context.Context, f Frame) (matches []Match, unread int) {
 	files, need := ix.candidates(f)
 	if len(files) > maxCandidates {
-		files = files[:maxCandidates]
+		files, unread = files[:maxCandidates], len(files)-maxCandidates
 	}
-	var matches []Match
 	for _, rel := range files {
 		if ctx.Err() != nil {
 			break
@@ -76,7 +77,7 @@ func (ix *Index) Resolve(ctx context.Context, f Frame) []Match {
 	if len(matches) > maxMatches {
 		matches = matches[:maxMatches]
 	}
-	return matches
+	return matches, unread
 }
 
 // needs is what a candidate file must hold to count, where its name and

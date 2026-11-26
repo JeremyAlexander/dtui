@@ -171,9 +171,9 @@ func TestResolve(t *testing.T) {
 
 		{"", nil}, {"main", nil}, {"...", nil},
 	} {
-		got := ix.Resolve(context.Background(), Parse(tc.label))
-		if !reflect.DeepEqual(got, tc.want) {
-			t.Errorf("%s\n got  %+v\n want %+v", tc.label, got, tc.want)
+		got, unread := ix.Resolve(context.Background(), Parse(tc.label))
+		if !reflect.DeepEqual(got, tc.want) || unread != 0 {
+			t.Errorf("%s\n got  %+v (%d unread)\n want %+v", tc.label, got, unread, tc.want)
 		}
 		if likely := ix.Likely(Parse(tc.label)); !likely && len(tc.want) > 0 {
 			t.Errorf("%s: resolves, but Likely says no", tc.label)
@@ -219,7 +219,8 @@ func TestResolveIsConfinedToTheRoot(t *testing.T) {
 		strings.Repeat("a.", 5000) + "B.c",
 		strings.Repeat("../", 2000) + "passwd.py:root",
 	} {
-		for _, m := range ix.Resolve(context.Background(), Parse(label)) {
+		matches, _ := ix.Resolve(context.Background(), Parse(label))
+		for _, m := range matches {
 			abs, err := ix.Abs(m.Path)
 			if err != nil || !strings.HasPrefix(abs, ix.Root()+string(filepath.Separator)) || strings.Contains(abs, "Secret") || strings.Contains(abs, "passwd") {
 				t.Errorf("%q matched %q (%q, %v)", label, m.Path, abs, err)
@@ -246,8 +247,28 @@ func TestResolveIsConfinedToTheRoot(t *testing.T) {
 	if abs, err := ix.Abs("api/cmd/api/main.go"); err == nil {
 		t.Errorf("a file that now links outside the root is handed out as %q", abs)
 	}
-	if got := ix.Resolve(context.Background(), Parse("main.main")); len(got) != 0 {
+	if got, _ := ix.Resolve(context.Background(), Parse("main.main")); len(got) != 0 {
 		t.Errorf("a file that now links outside the root is matched: %+v", got)
+	}
+}
+
+// Only so many files are read for one frame. When more than that could hold
+// it, the answer says how many were left unread: one match among them is
+// then not known to be the only one.
+func TestResolveSaysWhatItDidNotRead(t *testing.T) {
+	files := map[string]string{}
+	for i := range maxCandidates + 50 {
+		files[fmt.Sprintf("cmd/tool%03d/run.go", i)] = "package main\n\nfunc run() {}\n"
+	}
+	files["cmd/tool007/run.go"] = "package main\n\nfunc main() {}\n"
+	files[fmt.Sprintf("cmd/tool%03d/run.go", maxCandidates+20)] = "package main\n\nfunc main() {}\n"
+	ix := scan(t, tree(t, files))
+	got, unread := ix.Resolve(context.Background(), Parse("main.main"))
+	if len(got) != 1 || got[0].Path != "cmd/tool007/run.go" || unread != 50 {
+		t.Errorf("got %+v, %d unread; want the one main among the files read and 50 unread", got, unread)
+	}
+	if got, unread := ix.Resolve(context.Background(), Parse("main.absent")); len(got) != 0 || unread != 50 {
+		t.Errorf("a miss: %+v, %d unread", got, unread)
 	}
 }
 

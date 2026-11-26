@@ -191,6 +191,34 @@ func TestOpenSourceIsDroppedOnceTheGraphIsLeft(t *testing.T) {
 	}
 }
 
+// Where more files could hold a frame than are read for one, a single match
+// is the first found and not known to be the only one: the status line says
+// so, and a miss says it too.
+func TestOpenSourceSaysWhatWasNotRead(t *testing.T) {
+	a, fv, _, opened := sourceApp(t, "vscode")
+	onFrame(t, a, fv, "com.example.shop.CartService.total")
+	ix, err := a.ds.source.get(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	one := []source.Match{{Path: "src/main/java/com/example/shop/CartService.java", Line: 6, How: source.Declaration}}
+	a.Update(sourceFoundMsg{view: fv, label: "com.example.shop.CartService.total", index: ix, matches: one, unread: 1250})
+	want := "opened src/main/java/com/example/shop/CartService.java:6 in VS Code (the declaration of total; the first found, 1,250 files that could hold it were not read)"
+	if len(*opened) != 1 {
+		t.Errorf("opened %v", *opened)
+	}
+	_, cmd := a.Update(sourceFoundMsg{view: fv, label: "com.example.shop.CartService.total", index: ix, matches: one, unread: 1250})
+	deliver(a, cmd)
+	if a.status != want {
+		t.Errorf("status %q\n want  %q", a.status, want)
+	}
+	_, cmd = a.Update(sourceFoundMsg{view: fv, label: "main.main", index: ix, unread: 50})
+	deliver(a, cmd)
+	if !a.statusErr || !strings.HasSuffix(a.status, "· 50 files that could hold it were not read") {
+		t.Errorf("a miss: status %q", a.status)
+	}
+}
+
 // Without an editor the place is copied and said; without a directory to
 // look in the key says so and the footer does not offer it; an opener that
 // fails is reported.
