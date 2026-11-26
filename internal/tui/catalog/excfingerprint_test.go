@@ -25,7 +25,7 @@ const cartStack = `java.lang.IllegalStateException: Cart 7 is locked
 
 func mustFingerprint(t *testing.T, excs ...SpanException) ExceptionFingerprint {
 	t.Helper()
-	fp, ok := FingerprintExceptions(excs, nil)
+	fp, ok := FingerprintExceptions(excs)
 	if !ok {
 		t.Fatal("no fingerprint")
 	}
@@ -81,7 +81,7 @@ func TestFingerprintExceptionsLadder(t *testing.T) {
 		}
 	})
 	t.Run("no events", func(t *testing.T) {
-		if fp, ok := FingerprintExceptions(nil, nil); ok || !reflect.DeepEqual(fp, ExceptionFingerprint{}) {
+		if fp, ok := FingerprintExceptions(nil); ok || !reflect.DeepEqual(fp, ExceptionFingerprint{}) {
 			t.Errorf("got %+v, %v", fp, ok)
 		}
 	})
@@ -92,26 +92,26 @@ func TestFingerprintKeyShape(t *testing.T) {
 	if !exceptionKeyRe.MatchString(fp.Key) {
 		t.Errorf("key = %q, want %s: and 12 hex characters", fp.Key, ExceptionKeyVersion)
 	}
-	// The hash input: rung number, classifier (none for the built-in one),
-	// type, then module and function per frame, each field behind its length.
-	sum := sha256.Sum256([]byte("1:1" + "0:" + "31:java.lang.IllegalStateException" +
+	// The hash input: rung number, type, then module and function per
+	// frame, each field behind its length.
+	sum := sha256.Sum256([]byte("1:1" + "31:java.lang.IllegalStateException" +
 		"25:com.acme.shop.CartService" + "7:addItem" + "28:com.acme.shop.CartController" + "4:post"))
 	if want := ExceptionKeyVersion + ":" + hex.EncodeToString(sum[:])[:12]; fp.Key != want {
 		t.Errorf("key = %s, want %s", fp.Key, want)
 	}
 	// Evidence is positional and ordered.
-	a := fingerprintKey(RungMessage, "", "a", []string{"b"})
+	a := fingerprintKey(RungMessage, "a", []string{"b"})
 	for name, other := range map[string]string{
-		"type and message swapped": fingerprintKey(RungMessage, "", "b", []string{"a"}),
-		"another rung":             fingerprintKey(RungType, "", "a", []string{"b"}),
-		"evidence split in two":    fingerprintKey(RungMessage, "", "a", []string{"", "b"}),
-		"more evidence":            fingerprintKey(RungMessage, "", "a", []string{"b", "c"}),
+		"type and message swapped": fingerprintKey(RungMessage, "b", []string{"a"}),
+		"another rung":             fingerprintKey(RungType, "a", []string{"b"}),
+		"evidence split in two":    fingerprintKey(RungMessage, "a", []string{"", "b"}),
+		"more evidence":            fingerprintKey(RungMessage, "a", []string{"b", "c"}),
 	} {
 		if other == a {
 			t.Errorf("%s: same key %s", name, a)
 		}
 	}
-	if fingerprintKey(RungFrames, "", "a", []string{"b", "c"}) == fingerprintKey(RungFrames, "", "a", []string{"c", "b"}) {
+	if fingerprintKey(RungFrames, "a", []string{"b", "c"}) == fingerprintKey(RungFrames, "a", []string{"c", "b"}) {
 		t.Error("frame order must matter")
 	}
 }
@@ -132,13 +132,13 @@ func TestFingerprintKeyFieldsCannotRunTogether(t *testing.T) {
 		{"ab", "c"}, {"a", "bc"}, {"abc"}, {"abc", ""}, {"", "abc"}, {"a", "b", "c"},
 		{"1:a"}, {"a", "1:b"}, {"a1:b"}, {"a\x00b"}, {"a", "\x00b"}, {"2:ab", "c"}, {"12:ab"},
 	} {
-		key := fingerprintKey(RungFrames, "", "T", fields)
+		key := fingerprintKey(RungFrames, "T", fields)
 		if other, dup := keys[key]; dup {
 			t.Errorf("%q and %q share key %s", fields, other, key)
 		}
 		keys[key] = fields
 	}
-	if fingerprintKey(RungFrames, "", "T1", []string{"a"}) == fingerprintKey(RungFrames, "", "T", []string{"1a"}) {
+	if fingerprintKey(RungFrames, "T1", []string{"a"}) == fingerprintKey(RungFrames, "T", []string{"1a"}) {
 		t.Error("the type runs into the evidence")
 	}
 }
@@ -559,66 +559,6 @@ func TestFingerprintKeepsPassThroughFramesOnTheAllFramesRung(t *testing.T) {
 	}
 }
 
-// onlyModule treats one module as the application.
-type onlyModule string
-
-func (m onlyModule) InApp(f StackFrame) bool { return f.Module == string(m) }
-func (m onlyModule) ID() string              { return "only:" + string(m) }
-
-func TestFingerprintUsesTheGivenClassifier(t *testing.T) {
-	ex := SpanException{Type: "T", StackTrace: cartStack}
-	fp, _ := FingerprintExceptions([]SpanException{ex}, onlyModule("org.springframework.web.Dispatcher"))
-	want := frames(StackJava, "com.acme.shop.CartService", "addItem", "org.springframework.web.Dispatcher", "dispatch")
-	if fp.Rung != RungAppFrames || !reflect.DeepEqual(fp.Frames, want) {
-		t.Errorf("rung %v frames %+v", fp.Rung, fp.Frames)
-	}
-	fp, _ = FingerprintExceptions([]SpanException{ex}, onlyModule("nothing"))
-	if fp.Rung != RungFrames || len(fp.Frames) != 3 {
-		t.Errorf("rung %v frames %+v", fp.Rung, fp.Frames)
-	}
-}
-
-// namedBuiltin decides exactly as the built-in classifier does, under a name.
-type namedBuiltin string
-
-func (namedBuiltin) InApp(f StackFrame) bool { return builtinInApp(f) }
-func (n namedBuiltin) ID() string            { return string(n) }
-
-// A classifier other than the built-in one is not part of the key version,
-// so its keys must be a family of their own: never equal to a built-in key
-// or to the key of a classifier with another id, on any rung, even where it
-// picks the same frames.
-func TestFingerprintKeysCarryTheClassifier(t *testing.T) {
-	for rung, ex := range map[FingerprintRung]SpanException{
-		RungAppFrames: {Type: "T", Message: "Cart 7 is locked", StackTrace: cartStack},
-		RungFrames:    {Type: "T", StackTrace: javaStack("java.util.ArrayList.get")},
-		RungMessage:   {Type: "T", Message: "Cart 7 is locked"},
-		RungType:      {Type: "T"},
-	} {
-		builtin := mustFingerprint(t, ex)
-		keys := map[string]string{builtin.Key: "the built-in classifier"}
-		for _, id := range []string{"", "team-a", "team-b"} {
-			fp, _ := FingerprintExceptions([]SpanException{ex}, namedBuiltin(id))
-			if fp.Rung != rung || !reflect.DeepEqual(fp.Frames, builtin.Frames) {
-				t.Fatalf("%v: classifier %q chose rung %v frames %+v", rung, id, fp.Rung, fp.Frames)
-			}
-			if other, dup := keys[fp.Key]; dup {
-				t.Errorf("%v: classifier %q shares key %s with %s", rung, id, fp.Key, other)
-			}
-			keys[fp.Key] = "classifier " + id
-			if again, _ := FingerprintExceptions([]SpanException{ex}, namedBuiltin(id)); again.Key != fp.Key {
-				t.Errorf("%v: classifier %q is not stable: %s, %s", rung, id, fp.Key, again.Key)
-			}
-		}
-	}
-	// The id is a field of its own: it cannot run into the type.
-	a, _ := FingerprintExceptions([]SpanException{{Type: "bT"}}, namedBuiltin("a"))
-	b, _ := FingerprintExceptions([]SpanException{{Type: "T"}}, namedBuiltin("ab"))
-	if a.Key == b.Key {
-		t.Error("the classifier id runs into the type")
-	}
-}
-
 // A name an application gives its own entry point is not plumbing by that
 // name alone: a command's invoke, a state machine's step, a view's dispatch
 // and a callable's __call__ are where the work is done as often as where it
@@ -737,7 +677,7 @@ func TestFingerprintSkipsEventsThatSayNothing(t *testing.T) {
 		"an empty event flagged as root":  {real, {CauseRoot: true}},
 		"an empty event before and after": {{}, real, {}},
 	} {
-		if got, ok := FingerprintExceptions(excs, nil); !ok || got.Key != want.Key || got.Type != want.Type {
+		if got, ok := FingerprintExceptions(excs); !ok || got.Key != want.Key || got.Type != want.Type {
 			t.Errorf("%s: key %s (%s) %v, want %s", name, got.Key, got.Type, ok, want.Key)
 		}
 	}
@@ -746,13 +686,13 @@ func TestFingerprintSkipsEventsThatSayNothing(t *testing.T) {
 		"only empty events": {{}, {CauseRoot: true}, {Type: "  "}},
 		"only a location":   {{Location: "Cart.java:42"}},
 	} {
-		if got, ok := FingerprintExceptions(excs, nil); ok {
+		if got, ok := FingerprintExceptions(excs); ok {
 			t.Errorf("%s: got the key %s on rung %s", name, got.Key, got.Rung)
 		}
 	}
 	// One of the three is enough.
 	for _, ex := range []SpanException{{Type: "A"}, {Message: "locked"}, {StackTrace: "no frames in here"}} {
-		if _, ok := FingerprintExceptions([]SpanException{ex, {}}, nil); !ok {
+		if _, ok := FingerprintExceptions([]SpanException{ex, {}}); !ok {
 			t.Errorf("%+v has no key", ex)
 		}
 	}
@@ -1002,11 +942,11 @@ func FuzzFingerprintExceptions(f *testing.F) {
 			{Type: typ, Message: msg, StackTrace: stack, ID: id, CausedByID: causedBy, CauseRoot: root},
 			{Type: typ, StackTrace: stack, ID: id},
 		}
-		fp, ok := FingerprintExceptions(excs, nil)
+		fp, ok := FingerprintExceptions(excs)
 		if !ok {
 			t.Fatal("no fingerprint for three events")
 		}
-		if again, _ := FingerprintExceptions(excs, nil); !reflect.DeepEqual(fp, again) {
+		if again, _ := FingerprintExceptions(excs); !reflect.DeepEqual(fp, again) {
 			t.Fatalf("not deterministic: %+v then %+v", fp, again)
 		}
 		if !exceptionKeyRe.MatchString(fp.Key) {
@@ -1019,9 +959,6 @@ func FuzzFingerprintExceptions(f *testing.F) {
 		}
 		if len(fp.Frames) > FingerprintFrames+1 {
 			t.Fatalf("%d frames in a key", len(fp.Frames))
-		}
-		if custom, _ := FingerprintExceptions(excs, onlyModule("")); custom.Key == fp.Key {
-			t.Fatalf("a custom classifier shares key %s with the built-in rules", fp.Key)
 		}
 	})
 }

@@ -92,17 +92,10 @@ type ExceptionFingerprint struct {
 // of one span. The event is the root of the cause chain, the last one where
 // no chain is marked (rootException); false when no event says anything
 // about an exception.
-// classify decides which frames are application code; nil means the built-in
-// rules, the only ones whose keys are the same for everybody (see
-// FrameClassifier).
-func FingerprintExceptions(excs []SpanException, classify FrameClassifier) (ExceptionFingerprint, bool) {
+func FingerprintExceptions(excs []SpanException) (ExceptionFingerprint, bool) {
 	root, ok := rootException(excs)
 	if !ok {
 		return ExceptionFingerprint{}, false
-	}
-	inApp, classifier := builtinInApp, ""
-	if classify != nil {
-		inApp, classifier = classify.InApp, customClassifierField+classify.ID()
 	}
 	fp := ExceptionFingerprint{
 		Rung:      RungType,
@@ -122,7 +115,7 @@ func FingerprintExceptions(excs []SpanException, classify FrameClassifier) (Exce
 		fp.Type = rootType
 	}
 	var evidence []string
-	if app := topFrames(all, inApp, isPassThrough); len(app) > 0 {
+	if app := topFrames(all, frameInApp, isPassThrough); len(app) > 0 {
 		fp.Rung, fp.Frames = RungAppFrames, app
 	} else if len(all) > 0 {
 		fp.Rung, fp.Frames = RungFrames, topFrames(all, anyFrame, noFrame)
@@ -132,14 +125,9 @@ func FingerprintExceptions(excs []SpanException, classify FrameClassifier) (Exce
 	for _, f := range fp.Frames {
 		evidence = append(evidence, f.Module, f.Function)
 	}
-	fp.Key = fingerprintKey(fp.Rung, classifier, fp.Type, evidence)
+	fp.Key = fingerprintKey(fp.Rung, fp.Type, evidence)
 	return fp, true
 }
-
-// customClassifierField starts the classifier field of a key computed with
-// a FrameClassifier; the field is empty for the built-in rules, so that even
-// a classifier without an ID has keys of its own.
-const customClassifierField = "custom:"
 
 // anyFrame and noFrame are the two answers that do not depend on the frame.
 func anyFrame(StackFrame) bool { return true }
@@ -181,13 +169,12 @@ func topFrames(all []StackFrame, counts, handsOn func(StackFrame) bool) []StackF
 }
 
 // fingerprintKey hashes the canonical form of a fingerprint: the rung's
-// number, the classifier field, the type and the evidence fields in order (a
+// number, the type and the evidence fields in order (a
 // message, or a module and a function per frame). Each field is written
 // behind its length in bytes ("7:addItem"), so no field can run into the
 // next whatever it holds.
-func fingerprintKey(rung FingerprintRung, classifier, typ string, evidence []string) string {
+func fingerprintKey(rung FingerprintRung, typ string, evidence []string) string {
 	canonical := appendKeyField(nil, strconv.Itoa(int(rung)))
-	canonical = appendKeyField(canonical, classifier)
 	canonical = appendKeyField(canonical, typ)
 	for _, field := range evidence {
 		canonical = appendKeyField(canonical, field)

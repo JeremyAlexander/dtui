@@ -218,7 +218,7 @@ func TestExceptionKeyInputsCoverTheTables(t *testing.T) {
 		}
 	}
 	for _, name := range []string{
-		"ExceptionKeyVersion", "FingerprintFrames", "fingerprintKeyLen", "RungAppFrames", "customClassifierField",
+		"ExceptionKeyVersion", "FingerprintFrames", "fingerprintKeyLen", "RungAppFrames",
 		"messageRules", "msgNumberRe", "exceptionMessageInput", "ExceptionMessageMax",
 		"stackNotations", "StackJava", "deployRoots", "sourceReleaseRe",
 		"javaVendorPrefixes", "javaPassThrough", "javaNoSource", "javaLogArchives", "dotnetVendorPrefixes", "dotnetPassThrough",

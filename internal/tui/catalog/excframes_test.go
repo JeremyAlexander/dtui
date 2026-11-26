@@ -566,8 +566,8 @@ func TestStackNotationsMatchTheirSyntax(t *testing.T) {
 			t.Errorf("ParseStackFrames(%q) = %+v, want %+v", line, got, f)
 		}
 	}
-	if builtinInApp(StackFrame{Module: "com.acme.shop.Cart", Syntax: StackSyntax(len(stackNotations))}) ||
-		builtinInApp(StackFrame{Module: "com.acme.shop.Cart", Syntax: -1}) {
+	if frameInApp(StackFrame{Module: "com.acme.shop.Cart", Syntax: StackSyntax(len(stackNotations))}) ||
+		frameInApp(StackFrame{Module: "com.acme.shop.Cart", Syntax: -1}) {
 		t.Error("a frame of an unknown notation must not be in-app")
 	}
 }
@@ -755,7 +755,7 @@ func TestBuiltinInApp(t *testing.T) {
 		{StackFrame{Module: "<frozen importlib._bootstrap>", Syntax: StackPython}, false},
 	}
 	for _, tc := range cases {
-		if got := builtinInApp(tc.frame); got != tc.inApp {
+		if got := frameInApp(tc.frame); got != tc.inApp {
 			t.Errorf("InApp(%+v) = %v, want %v", tc.frame, got, tc.inApp)
 		}
 	}
@@ -927,7 +927,7 @@ func TestParseStackFramesIsNilWithoutFrames(t *testing.T) {
 // A frame built without a notation belongs to none: it is neither in-app
 // nor pass-through by some notation's rules.
 func TestFramesWithoutASyntaxFollowNoNotation(t *testing.T) {
-	if builtinInApp(StackFrame{}) || builtinInApp(StackFrame{Module: "com.example.shop.Cart", Function: "add"}) {
+	if frameInApp(StackFrame{}) || frameInApp(StackFrame{Module: "com.example.shop.Cart", Function: "add"}) {
 		t.Error("a frame without a syntax counts as application code")
 	}
 	if isPassThrough(StackFrame{Module: "shop/web.py", Function: "doFilter"}) {
@@ -951,13 +951,13 @@ func TestVendorTablesApplyWhole(t *testing.T) {
 	}
 	for _, table := range tables {
 		for _, prefix := range table.prefixes {
-			if f := (StackFrame{Module: prefix + "x", Function: "f", Syntax: table.syntax}); builtinInApp(f) {
+			if f := (StackFrame{Module: prefix + "x", Function: "f", Syntax: table.syntax}); frameInApp(f) {
 				t.Errorf("%+v counts as application code", f)
 			}
 		}
 	}
 	for _, name := range goStdlib {
-		if f := (StackFrame{Module: name + "/x", Function: "f", Syntax: StackGo}); builtinInApp(f) {
+		if f := (StackFrame{Module: name + "/x", Function: "f", Syntax: StackGo}); frameInApp(f) {
 			t.Errorf("%+v counts as application code", f)
 		}
 	}
@@ -1016,7 +1016,7 @@ func FuzzParseStackFrames(f *testing.F) {
 			if strings.ContainsAny(fr.Module+fr.Function, "\n") {
 				t.Fatalf("line break in frame %d for %q", i, in)
 			}
-			builtinInApp(fr)
+			frameInApp(fr)
 		}
 	})
 }
@@ -1507,7 +1507,7 @@ func TestSourceModulesKeepDirectoriesOfTheCode(t *testing.T) {
 		js("src/cart.js"): true, js("events.js"): false, js("/app/custom_node_modules/pkg/index.js"): true,
 		py("/app/mysite-packages/pkg/mod.py"): true, py("/app/.venv/lib/python3.12/site-packages/pkg/mod.py"): false,
 	} {
-		if got := ParseStackFrames(line); len(got) != 1 || builtinInApp(got[0]) != inApp {
+		if got := ParseStackFrames(line); len(got) != 1 || frameInApp(got[0]) != inApp {
 			t.Errorf("%s: in-app is not %v: %+v", line, inApp, got)
 		}
 	}

@@ -43,7 +43,7 @@ func BenchmarkFingerprintExceptions(b *testing.B) {
 	}
 	b.ReportAllocs()
 	for b.Loop() {
-		if _, ok := FingerprintExceptions(excs, nil); !ok {
+		if _, ok := FingerprintExceptions(excs); !ok {
 			b.Fatal("no fingerprint")
 		}
 	}

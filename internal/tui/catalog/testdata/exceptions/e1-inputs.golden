@@ -4,7 +4,6 @@ db5f196278c8cf9a	const FrameAnonymous
 75cfd5b9c40bb981	const FrameAuto
 2a7ba457616466ad	const RungAppFrames, RungFrames, RungMessage, RungType
 0d33f626634bf732	const StackJava, StackDotNet, StackJS, StackPython, StackGo
-a8d17c595d4d967b	const customClassifierField
 91060a6753d16f13	const dotnetInnerEnd
 1dbd793c56756a76	const dotnetMonoOffset
 ee2ec91e3d4628e8	const dotnetNested, dotnetGenerated
