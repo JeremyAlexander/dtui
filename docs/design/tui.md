@@ -166,7 +166,7 @@ unbounded). Opened via drill-down they inherit the selection's scope.
 | RUM sessions | `:sessions` | `user.sessions` | per-app user sessions, duration, errors; session detail = action timeline |
 | Live Debugger breakpoints | `:breakpoints`, `:bp` | `application.snapshots` | breakpoints that *fired* in the timeframe, derived from their snapshots (location, function, hits, hosts, last hit); enter → that breakpoint's snapshots. Configuration and rollout status are not shown — the workspace lookup can create a workspace, and breakpoint writes stay in `dtctl` |
 | Live Debugger snapshots | `:snapshots`, `:snap` | `application.snapshots` | newest-first hit stream; payloads decoded with dtctl's decoder — the inspector shows `variables` (the hit frame's locals) and `stacktrace` first; `c` copies `dtctl get snapshots <id> --decode-snapshots`; entity/logs/events/trace drills |
-| Hotspots (prototype) | `:hotspots`, `:hot`, `:cpu`, `:profile` | code-level analysis API, through dtctl | functions of one process by self and total samples, one lens per thread state plus an `allocations` lens; enter focuses a function (callers, callees); slow: a first result takes minutes. See [profiling-prototype.md](profiling-prototype.md) |
+| Hotspots (prototype) | `:hotspots`, `:hot`, `:cpu`, `:profile` | code-level analysis API, through dtctl | functions of one process by self and total samples, one lens per thread state plus an `allocations` lens; enter focuses a function (callers, callees); `tab` draws the thread states as a flame graph ([profiling-flamegraph.md](profiling-flamegraph.md)); slow: a first result takes minutes. See [profiling-prototype.md](profiling-prototype.md) |
 | Costs | `:costs`, `:dps` | `dt.system.events` | DPS consumption by capability/entity, trend |
 
 ### Management views (assets — secondary)
@@ -295,6 +295,12 @@ pod → workload → namespace → the sibling workload that's actually broken.
 | `ctrl-q` | **reveal query** — open the current view's generated DQL in the query escape hatch |
 | `c` | copy the equivalent dtctl command for the current view |
 | `?` | help overlay (all bindings, per-view) |
+
+On `:hotspots`, `tab` switches between the functions table and the flame
+graph of the same analysis, and the brackets keep the lens strip. The graph's
+own keys (movement along callers and callees, zoom, search) are listed in
+[profiling-flamegraph.md](profiling-flamegraph.md) and at the top of `?` when
+it is opened there.
 
 **Breadcrumbs** render in the header:
 `problems ▸ P-2407 ▸ logs (checkout-svc, 14:02–14:31)` — every element of the
@@ -951,6 +957,8 @@ internal/tui/
   detail.go              # tabbed entity detail page driven by DetailSpec
   problem.go, vulnerability.go   # bespoke tabbed pages
   waterfall.go, timeline.go      # trace waterfall, RUM session timeline
+  flame/, flameview.go           # flame graph of the hotspots analysis: the model
+                                 #   (no terminal framework) and its screen (ADR-0021)
   inspector.go, render.go        # record inspector + typed value rendering
   navigator.go           # smartscape navigator (overview / browser / walk)
   home.go, query.go, metrics.go, relations.go, segments.go, links.go

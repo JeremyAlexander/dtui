@@ -12,6 +12,7 @@ open; it becomes an ADR, or goes away, with the branch.
 | `:hotspots PROCESS-…` (`:hot`, `:cpu`, `:profile`) | `h` on a `:processes` row, or a pinned process | functions by self samples, one lens per thread state (running, lock, net_io, disk_io, wait) |
 | the same, focused | `enter` on a function | the function's total and self, its 25 largest callers and callees; `enter` walks on, `esc` walks back |
 | the `allocations` lens | `[` / `]` | allocation sites with their caller path, allocated and survived bytes; `enter` inspects a row |
+| the flame graph | `tab` on a thread state, `tab` again to return | the call tree of the same analysis, one line per level; see [profiling-flamegraph.md](profiling-flamegraph.md) |
 
 It is one view. `h` exists on a process row only; allocations are a lens, so
 switching to them keeps the place on the trail and the way back to the thread
@@ -78,7 +79,8 @@ dtctl exec profiling allocations PROCESS-… --raw -o json > allocations.json
    than its cells and the footnote, which spells the selected function out;
    the pane would only narrow the table. dtctl's app-only filter has no key.
 8. **Seams added to `catalog.Spec`:** `EntityArg`, `ArgLabel`, `NoPreview`,
-   `CancelOnLeave`, `Caption`, `Empty`, `Loading`, `Footnote`, and a leading
+   `CancelOnLeave`, `Caption`, `Empty`, `Loading`, `Footnote`, `TabTarget`
+   (the flame graph, ADR-0021), and a leading
    `__summary` record that a source may return and that is read only for a
    spec that sets one of the last four. `CanScope` takes a pin for a view
    without a query when its `Scopable` says so.
@@ -94,5 +96,5 @@ dtctl exec profiling allocations PROCESS-… --raw -o json > allocations.json
 - A deep link can carry facets or searches, which the source ignores while
   the breadcrumb shows them.
 
-Left out: flame graphs, the call tree, profiling without an entity, and the
+Left out: a flame graph of allocations, profiling without an entity, and the
 browser build, where the view says it is not available.

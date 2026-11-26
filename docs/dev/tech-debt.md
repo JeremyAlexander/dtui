@@ -74,3 +74,41 @@ While a table loads, is empty or has failed, its footer still lists
 `:processes` footer no longer fits `q quit` since `h hotspots` joined it.
 Fix: derive the hint list from whether the view has rows, and drop the
 lowest-value hint first when the line overflows.
+
+## Flame graph: built from folded stacks
+
+The flame graph splits dtctl's `StackRow.Stack` at `;` to get the frames back
+(`flameTree` in `internal/tui/flameview.go`), so a frame whose label contains
+`;` becomes two frames (`TestAStackLabelWithTheSeparatorSplits` pins it), and
+every stack is joined in dtctl and split again in dtui. Fix: have dtctl export
+the call tree, or the frames of a stack as a list, and build from that.
+
+## Flame graph: a new analysis resets the place in it
+
+After `r` or `t` brings another analysis, the graph starts at its root; only
+the thread state and the search pattern are kept (`flameView.built`). Fix:
+find the zoomed and the selected frame again by their path in the new tree,
+and fall back to the root when they are gone.
+
+## Flame graph: not at parity with flamelens
+
+The rows marked partial and missing in
+[profiling-flamegraph.md](../design/profiling-flamegraph.md): the matched
+part of a label is not highlighted, callees are ordered by name only, there
+is no single reset key and no `h` / `l`, the functions table filters by plain
+text and does not show the graph's search, and the two readings are a pushed
+view, not one page with a strip. Fix: one at a time, each with the row in
+that table changed.
+
+## Flame graph: two measures of a label's width
+
+The model counts cells with go-runewidth, as `catalog.ShortFrame` does; the
+app counts with lipgloss. They disagree on a few emoji sequences, so the view
+fits a label that is not ASCII a second time (`flamePaint.row`). Fix: one
+measure for both, in the catalog.
+
+## Flame graph: its recorded stacks are a large test file
+
+`internal/tui/testdata/profiling/stacks.json` is 600 KB for 518 stacks,
+because every stack repeats its callers. Fix: record the stacks once dtctl
+exports a tree, or keep a smaller synthetic analysis for the graph alone.
