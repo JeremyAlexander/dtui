@@ -11,6 +11,10 @@
 set -euo pipefail
 # Same ordering locally and in CI, so the committed output can be diffed.
 export LC_ALL=C
+# Release binaries are never built in workspace mode. Under an inherited
+# workspace `go list -m` prints one line per workspace module, and the
+# inventory would describe that workspace instead of go.mod.
+export GOWORK=off
 
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 out="$repo/third_party"
