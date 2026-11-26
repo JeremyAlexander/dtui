@@ -3,7 +3,9 @@ package source
 import (
 	"bufio"
 	"context"
+	"errors"
 	"io"
+	"io/fs"
 	"os"
 	"path"
 	"regexp"
@@ -61,10 +63,19 @@ func (ix *Index) Likely(f Frame) bool {
 // bound, to find the line the function is declared on; unread is how many
 // files that could hold the frame were beyond that bound, so that one match
 // is not taken for the only one. Reading stops after ResolveTime as well, or
-// when ctx ends: the files not reached are unread too, and late says so.
+// when ctx ends, also in the middle of a file: the files not read to their
+// end are unread too, and late says so. A candidate that cannot be read (it
+// is no longer a regular file, it now leads out of the root, it may not be
+// opened) is unread as well and is not a match; one that is gone is neither.
 func (ix *Index) Resolve(ctx context.Context, f Frame) (matches []Match, unread int, late bool) {
 	ctx, cancel := context.WithTimeout(ctx, maxResolveTime)
 	defer cancel()
+	return ix.resolve(ctx, f, ix.locate)
+}
+
+// resolve is Resolve within the time ctx leaves, reading each file with
+// locate.
+func (ix *Index) resolve(ctx context.Context, f Frame, locate func(context.Context, string, Frame, string) (Match, holds, reading)) (matches []Match, unread int, late bool) {
 	files, need := ix.candidates(f)
 	if len(files) > maxCandidates {
 		files, unread = files[:maxCandidates], len(files)-maxCandidates
@@ -74,8 +85,15 @@ func (ix *Index) Resolve(ctx context.Context, f Frame) (matches []Match, unread 
 			unread, late = unread+len(files)-i, true
 			break
 		}
-		m, has := ix.locate(rel, f, need.pkg)
-		if (need.function && !has.function) || (need.pkg != "" && !has.pkg) {
+		m, has, how := locate(ctx, rel, f, need.pkg)
+		if how == cut {
+			unread, late = unread+len(files)-i, true
+			break
+		}
+		if how == refused {
+			unread++
+		}
+		if how != read || (need.function && !has.function) || (need.pkg != "" && !has.pkg) {
 			continue
 		}
 		matches = append(matches, m)
@@ -217,29 +235,59 @@ func dedupe(files []string) []string {
 // holds is what a file was found to declare.
 type holds struct{ function, pkg bool }
 
+// reading says how far the reading of one file got.
+type reading int
+
+const (
+	// read is a file read to its end, or to the byte bound.
+	read reading = iota
+	// gone is a file that is no longer there.
+	gone
+	// refused is a file that is there and was not read.
+	refused
+	// cut is a file the time ran out on.
+	cut
+)
+
 // locate finds the frame's line in one file, and says whether the file
-// declares the function by name and the package pkg.
-func (ix *Index) locate(rel string, f Frame, pkg string) (Match, holds) {
+// declares the function by name and the package pkg. Only a file that was
+// read has an answer.
+func (ix *Index) locate(ctx context.Context, rel string, f Frame, pkg string) (Match, holds, reading) {
 	m := Match{Path: rel}
-	abs, err := ix.Abs(rel)
+	file, err := ix.open(rel)
 	if err != nil {
-		return m, holds{}
-	}
-	file, err := os.Open(abs)
-	if err != nil {
-		return m, holds{}
+		if errors.Is(err, fs.ErrNotExist) {
+			return m, holds{}, gone
+		}
+		return m, holds{}, refused
 	}
 	defer file.Close()
+	return scanFile(ctx, file, m, f, pkg)
+}
+
+// open opens a file of the index for reading, under what Abs and
+// openRegular refuse.
+func (ix *Index) open(rel string) (*os.File, error) {
+	abs, err := ix.Abs(rel)
+	if err != nil {
+		return nil, err
+	}
+	return openRegular(abs)
+}
+
+// scanFile is locate for the content of the file m names. It reads up to
+// maxFileBytes of it and stops when ctx ends.
+func scanFile(ctx context.Context, content io.Reader, m Match, f Frame, pkg string) (Match, holds, reading) {
 	var inPackage *regexp.Regexp
 	if pkg != "" {
 		inPackage = compile(`^\s*(?:package|namespace|Namespace)\s+` + regexp.QuoteMeta(pkg) + `\s*[;{]?\s*(?://.*)?$`)
 	}
 	pkgSeen := false
 
-	ext := strings.ToLower(path.Ext(rel))
+	ext := strings.ToLower(path.Ext(m.Path))
 	function, typ := declaration(ext, f), typeDeclaration(ext, f)
 	found, typeLine := 0, 0
-	scan := bufio.NewScanner(io.LimitReader(file, maxFileBytes))
+	scan := bufio.NewScanner(&bounded{ctx: ctx, r: content, left: maxFileBytes})
 	scan.Buffer(make([]byte, 64<<10), 1<<20)
 	for n := 1; scan.Scan(); n++ {
 		line := scan.Bytes()
@@ -253,6 +301,15 @@ func (ix *Index) locate(rel string, f Frame, pkg string) (Match, holds) {
 		}
 		pkgSeen = pkgSeen || (inPackage != nil && inPackage.Match(line))
 	}
+	// A line longer than the scanner takes ends the reading where a byte
+	// bound would: what was found before it stands. Any other failure
+	// leaves a file whose content is not known.
+	if err := scan.Err(); err != nil && !errors.Is(err, bufio.ErrTooLong) {
+		if ctx.Err() != nil {
+			return Match{Path: m.Path}, holds{}, cut
+		}
+		return Match{Path: m.Path}, holds{}, refused
+	}
 	switch {
 	case found == 1:
 		m.How = Declaration
@@ -261,7 +318,7 @@ func (ix *Index) locate(rel string, f Frame, pkg string) (Match, holds) {
 	case typeLine > 0:
 		m.Line, m.How = typeLine, TypeOnly
 	}
-	return m, holds{function: found > 0, pkg: pkgSeen}
+	return m, holds{function: found > 0, pkg: pkgSeen}, read
 }
 
 var callWord = regexp.MustCompile(`^\s*(?:return|new|throw|else|case|await|yield|if|while|for|switch)\b`)

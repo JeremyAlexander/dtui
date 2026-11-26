@@ -169,6 +169,15 @@ func TestFlameIsFrameworkFree(t *testing.T) {
 	}
 }
 
+// sourceOpenFlags is the one file of internal/source that may import
+// syscall, and nonBlockingOpen the one name it may take from it: the flag
+// that keeps the open of a named pipe from waiting. The package holds
+// Exec and Kill too, so the import is not allowed anywhere else.
+const (
+	sourceOpenFlags = "internal/source/open_unix.go"
+	nonBlockingOpen = "O_NONBLOCK"
+)
+
 // TestSourceLookupRunsNothing pins what opening a frame's source may do
 // (ADR-0023): internal/source reads files and words a link. It starts no
 // program, speaks to no network and knows neither Dynatrace nor a terminal
@@ -179,6 +188,14 @@ func TestSourceLookupRunsNothing(t *testing.T) {
 	for file, imports := range importsByFile(t, "internal/source") {
 		seen++
 		for _, imp := range imports {
+			if imp == "syscall" && filepath.ToSlash(file) == sourceOpenFlags {
+				for _, name := range namesTakenFrom(t, file, "syscall") {
+					if name != nonBlockingOpen {
+						t.Errorf("%s uses syscall.%s: of syscall, internal/source may name %s only", file, name, nonBlockingOpen)
+					}
+				}
+				continue
+			}
 			if imp == "os/exec" || imp == "syscall" || imp == "plugin" || imp == "net" || strings.HasPrefix(imp, "net/http") ||
 				isDtctlImport(imp) || strings.HasPrefix(imp, "github.com/charmbracelet/") || strings.HasPrefix(imp, modulePath+"/") {
 				t.Errorf("%s imports %s: internal/source only reads files under one directory and words a link", file, imp)
@@ -188,6 +205,32 @@ func TestSourceLookupRunsNothing(t *testing.T) {
 	if seen == 0 {
 		t.Error("no file under internal/source: the guard checks nothing")
 	}
+}
+
+// namesTakenFrom are the names a file selects from the package it imports as
+// pkg. A file that imports it under another name, or into its own scope, is
+// an error: its uses could not be told.
+func namesTakenFrom(t *testing.T, file, pkg string) []string {
+	t.Helper()
+	f, err := parser.ParseFile(token.NewFileSet(), file, nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, imp := range f.Imports {
+		if strings.Trim(imp.Path.Value, `"`) == pkg && imp.Name != nil {
+			t.Errorf("%s imports %s as %s", file, pkg, imp.Name.Name)
+		}
+	}
+	var names []string
+	ast.Inspect(f, func(n ast.Node) bool {
+		if sel, ok := n.(*ast.SelectorExpr); ok {
+			if x, ok := sel.X.(*ast.Ident); ok && x.Name == pkg {
+				names = append(names, sel.Sel.Name)
+			}
+		}
+		return true
+	})
+	return names
 }
 
 // TestWorkspaceHasNoTenantAccess pins the workspace file as display defaults

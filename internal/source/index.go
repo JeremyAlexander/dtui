@@ -138,8 +138,9 @@ func (ix *Index) Root() string { return ix.root }
 func (ix *Index) Len() int { return len(ix.known) }
 
 // Abs is the absolute path of a file of the index. It refuses a path the
-// walk did not see, and one that no longer resolves to a place inside the
-// root: a file can have become a symbolic link since.
+// walk did not see, one that no longer resolves to a place inside the root
+// (a file can have become a symbolic link since) and one that is no longer a
+// regular file: a named pipe or a directory is not handed to an editor.
 func (ix *Index) Abs(rel string) (string, error) {
 	if !ix.known[rel] {
 		return "", fmt.Errorf("%q is not a file of %s", rel, ix.root)
@@ -151,6 +152,11 @@ func (ix *Index) Abs(rel string) (string, error) {
 	}
 	if !strings.HasPrefix(resolved, ix.root+string(filepath.Separator)) {
 		return "", fmt.Errorf("%q leads outside %s", rel, ix.root)
+	}
+	if info, err := os.Lstat(resolved); err != nil {
+		return "", err
+	} else if !info.Mode().IsRegular() {
+		return "", fmt.Errorf("%q is %w", rel, errNotRegular)
 	}
 	return resolved, nil
 }

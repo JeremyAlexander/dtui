@@ -93,7 +93,19 @@ and the browser, so its limits are part of this decision.
 - **The directory is the repository dtui was started in**, and nothing
   outside it is read or opened. The walk does not follow symbolic links, is
   bounded in entries, files and time, and runs off the update loop. Reading
-  the files for one frame is bounded the same way, in files, bytes and time.
+  the files for one frame is bounded the same way, in files, bytes and time,
+  and the time is looked at between the reads of one file as well as between
+  files.
+- **Only a regular file is opened.** A path the walk saw can be a named
+  pipe, a device, a socket or a directory by the time it is read, and
+  opening one of those can wait forever. So the path is looked at without
+  following a link, opened without waiting where the system has a flag for
+  that, and the opened file is checked to be the regular file that was
+  looked at. Anything else is counted as not read and is neither offered
+  nor handed to an editor. One wait is left: a read of a regular file on a
+  file system that does not answer (a dead network mount) is not
+  interrupted, because that would take a second thread of execution that
+  could not be stopped either.
 - **dtui starts no editor.** It hands the system a link in the editor's
   scheme, as `o` hands it a Dynatrace link. A terminal editor in dtui's
   terminal would need the alternate-screen handling dtui chose never to

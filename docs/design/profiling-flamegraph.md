@@ -165,10 +165,14 @@ it must never do, is in ADR-0023; this is how it behaves.
    are offered in a short list: `enter` or a digit opens, `y` copies. None
    says so, and that the frame is a library's or another repository's.
    At most 400 files, 2 MB of each, are read for one frame, for at most
-   2 seconds. Where more could hold it, or the time ran out, the
-   status line says how many were not read and that the search was cut, on a miss and on the one file
-   that opens, which is then the first found and not known to be the only
-   one.
+   2 seconds, looked at between the reads of one file too. Only a regular
+   file is opened: one that has become a named pipe, a device or a
+   directory since the walk, or that now leads out of the directory, is not
+   read, not offered and not handed to an editor. Where more could hold the
+   frame, the time ran out or a file was not read for what it has become,
+   the status line says how many were not read and, when it was, that the
+   search was cut, on a miss and on the one file that opens, which is then
+   the first found and not known to be the only one.
 
 The footer shows `O open source` only on a frame that may have a file: not on
 the root, not on a runtime's frame, and, once the directory has been walked,
