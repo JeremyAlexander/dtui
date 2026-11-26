@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -222,10 +223,12 @@ type dataMsg struct {
 }
 
 // call runs a named API source asynchronously, delivering the same dataMsg
-// shape as query so owner/seq staleness handling applies unchanged. Like
-// queries, calls are never cancelled mid-flight; stale results are dropped
-// via seq.
-func (d *dataSource) call(owner any, seq int, name string, scope catalog.Scope, dql string) tea.Cmd {
+// shape as query so owner/seq staleness handling applies unchanged. ctx is the
+// caller's: most views pass context.Background() and drop a stale result via
+// seq, like queries; a view whose spec sets CancelOnLeave passes a context it
+// cancels (tableView.fetch), and one built by withProgress to hear how a slow
+// call is going.
+func (d *dataSource) call(ctx context.Context, owner any, seq int, name string, scope catalog.Scope, dql string) tea.Cmd {
 	return func() tea.Msg {
 		start := time.Now()
 		src := d.sources[name]
@@ -233,8 +236,47 @@ func (d *dataSource) call(owner any, seq int, name string, scope catalog.Scope, 
 			return dataMsg{owner: owner, seq: seq, dql: dql, elapsed: time.Since(start),
 				err: fmt.Errorf("data source %q is not wired", name)}
 		}
-		records, err := src(context.Background(), scope, dql)
+		records, err := src(ctx, scope, dql)
 		return dataMsg{owner: owner, seq: seq, dql: dql, elapsed: time.Since(start), records: records, err: err}
+	}
+}
+
+// callProgress is what a slow source says about a call still in flight. The
+// source writes it from the call's goroutine and the view reads it on every
+// render, so it is the one piece of view state behind a lock.
+type callProgress struct {
+	mu   sync.Mutex
+	text string
+}
+
+func (p *callProgress) set(text string) {
+	p.mu.Lock()
+	p.text = text
+	p.mu.Unlock()
+}
+
+func (p *callProgress) get() string {
+	if p == nil {
+		return ""
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.text
+}
+
+type progressKey struct{}
+
+func withProgress(ctx context.Context, p *callProgress) context.Context {
+	return context.WithValue(ctx, progressKey{}, p)
+}
+
+// ReportProgress lets a Source say how a slow call is going ("throttled —
+// retrying in 10s"). The view that issued the call shows the latest text next
+// to its loading line; a call nobody watches drops it. Exported because
+// sources live in the main package.
+func ReportProgress(ctx context.Context, text string) {
+	if p, ok := ctx.Value(progressKey{}).(*callProgress); ok && p != nil {
+		p.set(text)
 	}
 }
 

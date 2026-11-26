@@ -65,8 +65,9 @@ var processesSpec = &Spec{
 		{Title: "SEEN", Width: 5, Right: true, Value: lifetimeAge},
 	},
 	Entity: nodeEntity("PROCESS"),
-	// No 's': spans carry no process scope field (SpanScopable).
-	Drills: map[string]string{"l": "logs", "m": "metrics", "p": "problems", "v": "events"},
+	// No 's': spans carry no process scope field (SpanScopable). 'h' profiles
+	// the process: its row id is the PROCESS-… id an analysis takes.
+	Drills: map[string]string{"l": "logs", "m": "metrics", "p": "problems", "v": "events", "h": "hotspots"},
 	Enrich: &EnrichSpec{
 		Key:    func(rec map[string]any) string { return Str(rec, "id") },
 		By:     "dt.smartscape.process",

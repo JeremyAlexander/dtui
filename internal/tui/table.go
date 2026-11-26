@@ -1,8 +1,10 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -23,15 +25,26 @@ type tableView struct {
 	spec  *catalog.Spec
 	scope catalog.Scope
 
-	all  []map[string]any // as fetched
-	rows []map[string]any // after /-filter and sort
+	all []map[string]any // as fetched
+	// summary is the record an API source led its result with to describe it
+	// as a whole (catalog.SummaryKey); nil when it sent none.
+	summary map[string]any
+	rows    []map[string]any // after /-filter and sort
 	scroller
 
 	loading bool
 	err     error
-	seq     int
-	dql     string
-	elapsed string
+	// cancel ends the in-flight API call of a CancelOnLeave spec; interrupted
+	// marks a call ended by leaving the view, fetched again on the way back.
+	cancel      context.CancelFunc
+	interrupted bool
+	// progress is what the source says about the call in flight, and started
+	// is when it was issued (the loading line counts from it).
+	progress *callProgress
+	started  time.Time
+	seq      int
+	dql      string
+	elapsed  string
 
 	sortCol  int // -1 = fetch order
 	sortDesc bool
@@ -389,7 +402,17 @@ func (v *tableView) tagDiscoverCmd() tea.Cmd {
 func (v *tableView) fetch() tea.Cmd {
 	v.dql = v.composeDQL()
 	if v.spec.API != "" {
-		return v.ds.call(v, v.seq, v.spec.API, v.scope, v.dql)
+		ctx := context.Background()
+		if v.spec.CancelOnLeave {
+			// A newer fetch supersedes the one in flight: end it, so it does
+			// not keep its server-side slot for a result nobody will read.
+			if v.cancel != nil {
+				v.cancel()
+			}
+			ctx, v.cancel = context.WithCancel(ctx)
+		}
+		v.progress, v.started = &callProgress{}, catalog.Now()
+		return v.ds.call(withProgress(ctx, v.progress), v, v.seq, v.spec.API, v.scope, v.dql)
 	}
 	if v.spec.RecordCap > 0 {
 		return v.ds.queryCapped(v, v.seq, v.dql, v.spec.RecordCap)
@@ -410,6 +433,30 @@ func (v *tableView) hopCmd() tea.Cmd {
 	}
 	v.dql = "" // the list query composes once the widened scope is known
 	return v.ds.query(hopOwner{v}, v.seq, q)
+}
+
+// Left ends the in-flight call of a CancelOnLeave spec when the view drops off
+// the breadcrumb trail. The result would be dropped anyway; cancelling frees
+// what the call holds on the server while it runs.
+func (v *tableView) Left() {
+	if !v.spec.CancelOnLeave || !v.loading || v.cancel == nil {
+		return
+	}
+	v.cancel()
+	v.cancel = nil
+	v.seq++ // the cancelled call's result is stale
+	v.loading = false
+	v.interrupted = true
+}
+
+// Returned fetches again when the view comes back onto the trail after Left
+// interrupted its call.
+func (v *tableView) Returned() tea.Cmd {
+	if !v.interrupted {
+		return nil
+	}
+	v.interrupted = false
+	return v.Refresh()
 }
 
 func (v *tableView) SetTimeframe(tf catalog.Timeframe) tea.Cmd {
@@ -435,7 +482,11 @@ func (v *tableView) Crumb() string {
 		label += "·" + v.spec.LensAt(v.scope.Lens).Name
 	}
 	if v.scope.Arg != "" {
-		label += fmt.Sprintf(" (%s)", strings.ToLower(v.scope.Arg))
+		arg := strings.ToLower(v.scope.Arg)
+		if v.spec.ArgLabel != nil {
+			arg = v.spec.ArgLabel(v.scope.Arg)
+		}
+		label += fmt.Sprintf(" (%s)", arg)
 	}
 	if v.scope.Entity != nil && v.spec.UsesScope() {
 		name := v.scope.Entity.Name
@@ -460,6 +511,17 @@ func (v *tableView) Crumb() string {
 		label += " [" + strings.Join(narrow, " ") + "]"
 	}
 	return label
+}
+
+// setArg applies a command-bar or launch argument: the entity to analyse on
+// an EntityArg spec when it is shaped like an entity id, the incremental
+// filter otherwise.
+func (v *tableView) setArg(arg string) {
+	if v.spec.EntityArg && entityIDRe.MatchString(arg) {
+		v.scope.Entity = entityFromID(arg)
+		return
+	}
+	v.setFilter(arg)
 }
 
 // setFilter pre-fills the incremental filter (command-bar args, home jumps).
@@ -534,7 +596,7 @@ func (v *tableView) Hints() []keyHint {
 		}
 	}
 	// Stable order for the drill keys.
-	for _, k := range []string{"l", "s", "m", "p", "v", "u", "e", "a"} {
+	for _, k := range []string{"l", "s", "m", "p", "v", "u", "e", "a", "h"} {
 		if target, ok := v.spec.Drills[k]; ok {
 			hints = append(hints, keyHint{k, target})
 		}
@@ -655,8 +717,9 @@ func (v *tableView) Update(msg tea.Msg) tea.Cmd {
 		}
 		v.loading = false
 		v.err = msg.err
+		v.summary = nil
 		if msg.err == nil {
-			v.all = msg.records
+			v.summary, v.all = catalog.SplitSummary(msg.records)
 			if v.spec.Decode != nil {
 				v.all = v.spec.Decode(v.all)
 			}
@@ -669,8 +732,8 @@ func (v *tableView) Update(msg tea.Msg) tea.Cmd {
 				// nil on empty keeps the spec's declared fallback columns —
 				// deriveColumns would pin a "(no rows)" placeholder.
 				v.dynCols = nil
-				if len(msg.records) > 0 {
-					v.dynCols = deriveColumns(msg.records)
+				if len(v.all) > 0 {
+					v.dynCols = deriveColumns(v.all)
 					// Timestamped tables sample newest-first client-side. The
 					// server query cannot sort blindly — sorting on a field
 					// the table lacks is a hard FIELD_DOES_NOT_EXIST
@@ -686,7 +749,7 @@ func (v *tableView) Update(msg tea.Msg) tea.Cmd {
 				}
 			}
 			if v.onData != nil {
-				v.onData(msg.records)
+				v.onData(v.all)
 			}
 			v.applyFilter()
 			return v.enrich()
@@ -984,9 +1047,12 @@ func (v *tableView) selected() map[string]any {
 }
 
 func (v *tableView) pageSize() int {
-	chrome := 3
+	chrome := 3 + len(v.captionLines(v.tableWidth()))
 	if len(v.spec.Lenses) > 0 {
 		chrome++ // the lens strip line
+	}
+	if v.footnote() != "" {
+		chrome++
 	}
 	if v.previewBottom() {
 		chrome += previewBottomH + 1 // panel plus its rule
@@ -1030,7 +1096,73 @@ func (v *tableView) View(width, height int) string {
 	if v.reader {
 		return v.renderReader(width, height)
 	}
-	return previewLayout(v.ds.previewOn(), width, height, v.renderTable, v.previewLines)
+	return previewLayout(v.previewOn(), width, height, v.renderTable, v.previewLines)
+}
+
+// tableWidth is the width renderTable gets: the body minus a side preview.
+func (v *tableView) tableWidth() int {
+	if !v.previewSide() {
+		return v.width
+	}
+	return v.width - min(v.width*2/5, 48) - 3
+}
+
+// captionLines lays the spec's caption segments out at the given width,
+// breaking between segments and never inside one, on at most three lines.
+func (v *tableView) captionLines(width int) []string {
+	if v.spec.Caption == nil || v.err != nil || (v.loading && v.summary == nil) {
+		return nil
+	}
+	const sep = " · "
+	var lines []string
+	line := ""
+	for _, seg := range v.spec.Caption(v.scope, v.summary) {
+		seg = catalog.SafeText(seg)
+		switch {
+		case line == "":
+			line = seg
+		case lipgloss.Width(line)+len(sep)+lipgloss.Width(seg) <= width-2:
+			line += sep + seg
+		default:
+			lines = append(lines, line)
+			line = seg
+		}
+	}
+	if line != "" {
+		lines = append(lines, line)
+	}
+	if len(lines) > 3 {
+		lines = append(lines[:2], strings.Join(lines[2:], sep))
+	}
+	return lines
+}
+
+// footnote is the spec's line under the rows ("" = none).
+func (v *tableView) footnote() string {
+	if v.spec.Footnote == nil || v.err != nil || v.loading {
+		return ""
+	}
+	return catalog.SafeText(v.spec.Footnote(v.scope, v.summary, v.selected()))
+}
+
+// loadingText words the wait for a slow first result: the spec's line, how
+// long the call has run, and the latest progress the source reported.
+func (v *tableView) loadingText() []string {
+	if v.spec.Loading == nil || !v.loading || len(v.all) > 0 {
+		return nil
+	}
+	text := v.spec.Loading(v.scope)
+	if text == "" {
+		return nil
+	}
+	if !v.started.IsZero() {
+		text += " — " + catalog.FormatDuration(catalog.Now().Sub(v.started).Truncate(time.Second))
+	}
+	lines := []string{text}
+	if p := v.progress.get(); p != "" {
+		lines = append(lines, catalog.SafeText(p))
+	}
+	return lines
 }
 
 func (v *tableView) renderTable(width, height int) string {
@@ -1091,6 +1223,14 @@ func (v *tableView) renderTable(width, height int) string {
 		b.WriteString("\n" + theme.Error.Render("✗ "+wrap(v.err.Error(), width-2)))
 		return b.String()
 	}
+	for _, line := range v.captionLines(width) {
+		chrome++
+		b.WriteString(" " + theme.Dim.Render(ansi.Truncate(line, width-1, "…")) + "\n")
+	}
+	foot := v.footnote()
+	if foot != "" {
+		chrome++
+	}
 
 	// One gutter cell marks the cursor row; columns share the rest.
 	widths := v.columnWidths(width - 1)
@@ -1121,12 +1261,20 @@ func (v *tableView) renderTable(width, height int) string {
 			b.WriteString("\n")
 		}
 	}
+	if wait := v.loadingText(); wait != nil {
+		b.WriteString("\n")
+		for _, line := range wait {
+			b.WriteString("\n" + lipgloss.PlaceHorizontal(width, lipgloss.Center, theme.Dim.Render(ansi.Truncate(line, width-2, "…"))))
+		}
+	}
 	if len(v.rows) == 0 && !v.loading {
 		if v.filter != "" && len(v.all) > 0 {
 			b.WriteString(theme.Dim.Render(fmt.Sprintf("  no rows match %q (%d fetched — esc clears the filter)", v.filter, len(v.all))))
 		} else {
 			empty := "∅ no data in timeframe (last " + v.scope.Timeframe.Label + ")"
-			if len(v.spec.Lenses) > 0 {
+			if own := v.emptyText(); own != "" {
+				empty = "∅ " + own
+			} else if len(v.spec.Lenses) > 0 {
 				what := v.spec.LensAt(v.scope.Lens).Name
 				if what == "all" {
 					what = "data" // "no all in timeframe" reads broken
@@ -1134,10 +1282,25 @@ func (v *tableView) renderTable(width, height int) string {
 				empty = fmt.Sprintf("∅ no %s in timeframe (last %s) — [/] switches lens",
 					what, v.scope.Timeframe.Label)
 			}
-			b.WriteString("\n" + lipgloss.PlaceHorizontal(width, lipgloss.Center, theme.Dim.Render(empty)))
+			b.WriteString("\n" + lipgloss.PlaceHorizontal(width, lipgloss.Center, theme.Dim.Render(wrap(empty, width-4))))
 		}
 	}
+	if foot != "" {
+		// Pinned to the body's last line, under however many rows there are.
+		if gap := height - 1 - strings.Count(b.String(), "\n"); gap > 0 {
+			b.WriteString(strings.Repeat("\n", gap))
+		}
+		b.WriteString(" " + theme.Dim.Render(ansi.Truncate(foot, width-1, "…")))
+	}
 	return b.String()
+}
+
+// emptyText is the spec's own wording of an empty result ("" = generic).
+func (v *tableView) emptyText() string {
+	if v.spec.Empty == nil {
+		return ""
+	}
+	return catalog.SafeText(v.spec.Empty(v.scope, v.summary))
 }
 
 func (v *tableView) renderRow(i int, widths []int, width int) string {

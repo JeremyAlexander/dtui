@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sort"
@@ -270,7 +271,7 @@ func (v *inspectorView) resolveOwners() tea.Cmd {
 	if len(ids) == 0 {
 		return nil
 	}
-	return v.ds.call(inspUserOwner{v}, v.seq, "resolve-users", catalog.Scope{}, strings.Join(ids, ","))
+	return v.ds.call(context.Background(), inspUserOwner{v}, v.seq, "resolve-users", catalog.Scope{}, strings.Join(ids, ","))
 }
 
 // withName appends the resolved Smartscape name next to an entity-id value

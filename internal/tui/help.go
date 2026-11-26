@@ -56,6 +56,7 @@ func (h *helpOverlay) View(width, height int) string {
 			{"p", "problems"},
 			{"v", "events"},
 			{"a", "log patterns — Davis clustering of the current logs (enter: records with the pattern's fields parsed out)"},
+			{"h", "hotspots of a process (code-level profiling) — from there h flips between hotspots and allocations"},
 			{"u", "sessions of a frontend / session timeline of a RUM event"},
 			{"e", "user events of a frontend / of a session"},
 			{"x / X", "smartscape navigator — walk the topology from the selection (:nav); one-hop relations live on the detail page's related tab"},

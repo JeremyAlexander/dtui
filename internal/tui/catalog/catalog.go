@@ -411,6 +411,32 @@ type Spec struct {
 	// instead of injecting | filter / | search stages.
 	MetricRoster bool
 
+	// EntityArg makes the view's command-bar argument name the entity it
+	// analyses (`hotspots PROCESS-…`) instead of pre-filling the row filter:
+	// an argument shaped like an entity id becomes the scope's Entity.
+	EntityArg bool
+	// ArgLabel shortens Scope.Arg for the breadcrumb (nil = lowercased as is).
+	ArgLabel func(arg string) string
+	// NoPreview drops the peek pane: the row is its own summary and the table
+	// needs the width.
+	NoPreview bool
+	// CancelOnLeave cancels the view's in-flight API call when the view leaves
+	// the breadcrumb trail, and fetches again if the user comes back to it. For
+	// sources whose call holds a scarce server-side slot while it runs.
+	CancelOnLeave bool
+	// Caption renders the line under the status line that says what the rows
+	// are a reading of: the window actually analysed, the totals, a cap. It
+	// gets the source's summary record (see SummaryKey; nil when the source
+	// sent none) and joins the returned segments with " · ".
+	Caption func(s Scope, summary map[string]any) []string
+	// Empty words an empty result ("" = the generic "no data in timeframe").
+	Empty func(s Scope, summary map[string]any) string
+	// Loading words the wait for a slow first result ("" = spinner only).
+	Loading func(s Scope) string
+	// Footnote renders one line under the rows ("" = none): a caveat on a
+	// column, or the selected row's untruncated identity.
+	Footnote func(s Scope, summary, selected map[string]any) string
+
 	// FacetPriority pins the most useful facet fields to the top of the picker,
 	// in the given order, ahead of the alphabetical scalars and the discovered
 	// smartscape tag tail (tags:<context> keys, always last) — the "preselected
@@ -474,6 +500,23 @@ func ScanMetricDims(records []map[string]any, exclude map[string]bool, declaredK
 		}
 	}
 	return dims, primaryTagKeys
+}
+
+// SummaryKey marks the one record an API source may lead its result with to
+// describe the result as a whole (the analysed window, totals, why it is
+// empty). The table lifts it out before the rows are shown and hands it to
+// the spec's Caption, Empty and Footnote.
+const SummaryKey = "__summary"
+
+// SplitSummary separates a source result into its summary record (nil when
+// the source sent none) and its rows.
+func SplitSummary(records []map[string]any) (summary map[string]any, rows []map[string]any) {
+	if len(records) > 0 {
+		if _, ok := records[0][SummaryKey]; ok {
+			return records[0], records[1:]
+		}
+	}
+	return nil, records
 }
 
 // UsesScope reports whether a view's query can compose an entity scope.
@@ -570,6 +613,7 @@ var specs = []*Spec{
 	frontendsSpec, databasesSpec, genaiSpec, vulnsSpec, attacksSpec, metricsSpec,
 	sessionsSpec, userEventsSpec, bizeventsSpec, breakpointsSpec, snapshotsSpec,
 	patternsSpec, slosSpec, detectorsSpec, dashboardsSpec,
+	hotspotsSpec, allocationsSpec,
 	syntheticSpec, executionsSpec,
 	dictionarySpec,
 	tablesSpec, bucketsSpec, filesSpec, recordsSpec,

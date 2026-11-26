@@ -48,6 +48,10 @@ var enterHandlers = map[string]enterHandler{
 			return "definition"
 		},
 	},
+	"function-focus": {
+		open: (*tableView).openFunctionFocus,
+		hint: func(*tableView) string { return "callers/callees" },
+	},
 	// Page tabs whose rows are slices of the page's own subject (a
 	// vulnerability's entities/timeline): enter shows the full record
 	// instead of re-routing to the same page it came from.
@@ -189,6 +193,20 @@ func (v *tableView) openModelFields(rec map[string]any) tea.Cmd {
 		return func() tea.Msg { return pushViewMsg{spec: spec, scope: scope} }
 	}
 	return v.inspect(rec)
+}
+
+// openFunctionFocus pushes the hotspots view focused on the selected row's
+// function: the same process, window and thread state, read as that
+// function's callers and callees. Enter on one of those walks the call graph;
+// esc walks back.
+func (v *tableView) openFunctionFocus(rec map[string]any) tea.Cmd {
+	fn := catalog.FocusTarget(v.scope, rec)
+	if fn == "" {
+		return status("this row is the function in focus — enter a caller or callee to walk on")
+	}
+	spec, scope := v.spec, v.scope
+	scope.Arg = fn
+	return func() tea.Msg { return pushViewMsg{spec: spec, scope: scope} }
 }
 
 // openTrace jumps to the waterfall of the selected row's trace, anchored on

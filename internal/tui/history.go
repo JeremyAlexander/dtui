@@ -592,7 +592,7 @@ func (a *app) restoreEntry(entry historyEntry) tea.Cmd {
 	a.prev = a.stack
 	a.stack = stack
 	size := bodySizeMsg{width: a.width, height: a.bodyHeight()}
-	var cmds []tea.Cmd
+	cmds := []tea.Cmd{a.trailChanged(a.prev)}
 	for _, v := range stack {
 		cmds = append(cmds, v.Update(size), v.Init())
 	}

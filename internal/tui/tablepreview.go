@@ -38,10 +38,13 @@ func previewBottomOn(on bool, width, height int) bool {
 	return on && width < previewPaneMinWidth && height >= previewBottomMinHeight
 }
 
-func (v *tableView) previewSide() bool { return previewSideOn(v.ds.previewOn(), v.width) }
+// previewOn is the app-wide preference, minus the specs that opt out.
+func (v *tableView) previewOn() bool { return v.ds.previewOn() && !v.spec.NoPreview }
+
+func (v *tableView) previewSide() bool { return previewSideOn(v.previewOn(), v.width) }
 
 func (v *tableView) previewBottom() bool {
-	return previewBottomOn(v.ds.previewOn(), v.width, v.height)
+	return previewBottomOn(v.previewOn(), v.width, v.height)
 }
 
 // previewLayout composes a view body with the selected row's preview pane: a

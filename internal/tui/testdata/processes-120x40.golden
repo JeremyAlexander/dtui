@@ -36,5 +36,5 @@
 
 
 
- enter details  d record  l logs  m metrics  p problems  v events  / filter  f facets  J/K sort  : views  t timeframe  …
+ enter details  d record  l logs  m metrics  p problems  v events  h hotspots  / filter  f facets  J/K sort  : views  t…
  ≡ dtctl query 'smartscapeNodes "PROCESS" | fieldsRemove references | sort name asc | limit 500'

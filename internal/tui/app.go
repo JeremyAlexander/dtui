@@ -593,9 +593,46 @@ func (a *app) navigate(view viewModel, replace bool) tea.Cmd {
 	}
 	a.recordHistory()
 	return tea.Batch(
+		a.trailChanged(a.prev),
 		view.Update(bodySizeMsg{width: a.width, height: a.bodyHeight()}),
 		view.Init(),
 	)
+}
+
+// trailLeaver is implemented by views that hold something only while they are
+// on the breadcrumb trail: an API call that occupies a server-side slot.
+type trailLeaver interface {
+	// Left tells the view it dropped off the trail.
+	Left()
+	// Returned tells it that it is on the trail (again); it returns the fetch
+	// that makes up for what Left interrupted, nil when there was nothing.
+	Returned() tea.Cmd
+}
+
+// trailChanged settles the views after the stack changed from before: those
+// no longer on it are told they left, and those on it get to resume. A covered
+// view is still on the trail (esc returns to it), so it keeps running; the
+// '-' stack is not, so a view parked there is interrupted until '-' brings it
+// back. Every place that replaces a.stack calls this.
+func (a *app) trailChanged(before []viewModel) tea.Cmd {
+	on := make(map[viewModel]bool, len(a.stack))
+	for _, v := range a.stack {
+		on[v] = true
+	}
+	for _, v := range before {
+		if l, ok := v.(trailLeaver); ok && !on[v] {
+			l.Left()
+		}
+	}
+	var cmds []tea.Cmd
+	for _, v := range a.stack {
+		if l, ok := v.(trailLeaver); ok {
+			if cmd := l.Returned(); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		}
+	}
+	return tea.Batch(cmds...)
 }
 
 func (a *app) handleKey(msg tea.KeyMsg) tea.Cmd {
@@ -709,7 +746,8 @@ func (a *app) handleKey(msg tea.KeyMsg) tea.Cmd {
 		case "-":
 			if a.prev != nil {
 				a.stack, a.prev = a.prev, a.stack
-				return a.top().Update(bodySizeMsg{width: a.width, height: a.bodyHeight()})
+				return tea.Batch(a.trailChanged(a.prev),
+					a.top().Update(bodySizeMsg{width: a.width, height: a.bodyHeight()}))
 			}
 			return nil
 		case "esc":
@@ -728,6 +766,7 @@ func (a *app) handleKey(msg tea.KeyMsg) tea.Cmd {
 					a.tf = tf
 					a.prev = nil // '-' would return to a page on the other window
 				}
+				return a.trailChanged([]viewModel{popped})
 			}
 			return nil
 		}
@@ -871,7 +910,7 @@ func (a *app) launchPage(msg NavigateMsg, tf catalog.Timeframe, warns *[]string)
 func (a *app) narrowedTable(spec *catalog.Spec, scope catalog.Scope, filter string, searches []string, facets []catalog.Facet) *tableView {
 	v := newTableView(a.ds, spec, scope)
 	if filter != "" {
-		v.setFilter(filter)
+		v.setArg(filter)
 	}
 	v.searches = searches
 	v.facets = facets
@@ -898,7 +937,7 @@ func (a *app) jumpTo(name, filter string) tea.Cmd {
 	var restored string
 	if tv, ok := view.(*tableView); ok {
 		if filter != "" {
-			tv.setFilter(filter)
+			tv.setArg(filter)
 		} else {
 			restored = a.applyLastFilter(tv)
 		}
@@ -1055,6 +1094,7 @@ func (a *app) applyFacetBelow(msg applyFacetMsg) tea.Cmd {
 		}
 		a.prev = a.stack
 		a.stack = a.stack[:i+1]
+		a.trailChanged(a.prev) // a faceted list is never interrupted: no resume to run
 		return tv.addFacet(catalog.Facet{Field: msg.field, Value: msg.value, Tokens: msg.tokens})
 	}
 	return statusErr("no list view beneath to facet")
