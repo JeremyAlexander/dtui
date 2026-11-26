@@ -249,11 +249,12 @@ type dataMsg struct {
 // call runs a named API source asynchronously, delivering the same dataMsg
 // shape as query so owner/seq staleness handling applies unchanged. Like
 // queries, calls are never cancelled mid-flight; stale results are dropped
-// via seq.
+// via seq. The source is the one wired when the command is created
+// (fetcher says why).
 func (d *dataSource) call(owner any, seq int, name string, scope catalog.Scope, dql string) tea.Cmd {
+	src := d.sources[name]
 	return func() tea.Msg {
 		start := time.Now()
-		src := d.sources[name]
 		if src == nil {
 			return dataMsg{owner: owner, seq: seq, dql: dql, elapsed: time.Since(start),
 				err: fmt.Errorf("data source %q is not wired", name)}
@@ -286,34 +287,46 @@ func (d *dataSource) queryCapped(owner any, seq int, dql string, maxRecords int6
 }
 
 func (d *dataSource) run(owner any, seq int, dql string, maxRecords int64, enrichMetrics bool) tea.Cmd {
+	fetch, opts := d.fetcher(), d.execOpts(maxRecords, enrichMetrics)
 	return func() tea.Msg {
-		return d.fetch(owner, seq, dql, d.execOpts(maxRecords, enrichMetrics))
+		return fetch(owner, seq, dql, opts)
 	}
 }
 
-// fetch runs one query to its result. It blocks: only a command calls it.
-func (d *dataSource) fetch(owner any, seq int, dql string, opts exec.DQLExecuteOptions) dataMsg {
-	start := time.Now()
-	if d.runFn != nil && d.runWith == nil {
-		records, err := d.runFn(dql)
-		return dataMsg{owner: owner, seq: seq, dql: dql, elapsed: time.Since(start), records: records, err: err}
-	}
-	run := d.runWith
-	if run == nil {
-		run = func(dql string, opts exec.DQLExecuteOptions) (*exec.DQLQueryResponse, error) {
-			return d.exec.ExecuteQueryWithContext(context.Background(), dql, opts)
+// fetcher returns the function that runs one query to its result. That
+// function blocks: only a command calls it.
+//
+// It is bound to the executor of the moment it is made, on the update loop,
+// like the options a command is created with. A command runs later, on a
+// goroutine of its own, and a context switch or a segment change in between
+// replaces the executor and the segments on this data source. A query
+// composed for one environment must not run through the wiring of the next,
+// and a command must not read fields the update loop writes.
+func (d *dataSource) fetcher() func(owner any, seq int, dql string, opts exec.DQLExecuteOptions) dataMsg {
+	executor, runFn, runWith := d.exec, d.runFn, d.runWith
+	return func(owner any, seq int, dql string, opts exec.DQLExecuteOptions) dataMsg {
+		start := time.Now()
+		var resp *exec.DQLQueryResponse
+		var err error
+		switch {
+		case runWith != nil:
+			resp, err = runWith(dql, opts)
+		case runFn != nil:
+			records, err := runFn(dql)
+			return dataMsg{owner: owner, seq: seq, dql: dql, elapsed: time.Since(start), records: records, err: err}
+		default:
+			resp, err = executor.ExecuteQueryWithContext(context.Background(), dql, opts)
 		}
-	}
-	resp, err := run(dql, opts)
-	msg := dataMsg{owner: owner, seq: seq, dql: dql, elapsed: time.Since(start), err: rewriteSegmentVarError(err)}
-	if err == nil {
-		if resp == nil {
-			msg.err = errors.New("query cancelled")
-		} else {
-			msg.take(resp)
+		msg := dataMsg{owner: owner, seq: seq, dql: dql, elapsed: time.Since(start), err: rewriteSegmentVarError(err)}
+		if err == nil {
+			if resp == nil {
+				msg.err = errors.New("query cancelled")
+			} else {
+				msg.take(resp)
+			}
 		}
+		return msg
 	}
-	return msg
 }
 
 // take copies out of a response what a view reads.

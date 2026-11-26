@@ -208,9 +208,10 @@ func (d *dataSource) sampleOpts(s *catalog.SampleSpec) exec.DQLExecuteOptions {
 // stack traces is too slow for the update loop, which also draws. Like every
 // query it is never cancelled; a superseded result is dropped by seq.
 func (d *dataSource) sample(owner any, seq int, dql string, s *catalog.SampleSpec, window string) tea.Cmd {
+	fetch, opts := d.fetcher(), d.sampleOpts(s)
 	return func() tea.Msg {
 		start := time.Now()
-		msg := d.fetch(owner, seq, dql, d.sampleOpts(s))
+		msg := fetch(owner, seq, dql, opts)
 		if msg.err == nil {
 			msg.records, msg.sample = takeSample(s, window, msg.records, msg.notices, msg.sampled)
 		}
