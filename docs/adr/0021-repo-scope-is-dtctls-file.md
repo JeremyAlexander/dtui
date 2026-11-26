@@ -61,11 +61,15 @@ nothing about the format.
   re-implement the lookup, the renderer or the insertion.
 - **The entry's filter narrows the logs and spans lists.** The rewrite is
   applied to the composed query of `:logs` and `:traces`, after the lens, the
-  facets and the searches are in it, and to the two queries derived from that
-  list, the facet value query (`f`) and the pattern analysis (`a`), so both
-  describe the rows on screen. It is not applied to the trace waterfall (a
-  trace is shown whole), the home panels, `:agentlogs`, `:records` or a
-  segment's variable query.
+  facets and the searches are in it. The pattern analysis (`a`) takes that
+  list's query text as it was sent, with no whitespace folded, so it carries
+  the entry's filter where one was inserted. The analyzer request dtui sends
+  carries no segments. On a list narrowed by segments, the entry's or the
+  user's, the analysis therefore says in its header that segments do not
+  narrow it, and an entry that holds only segments narrows the list and not
+  the analysis. The rewrite is also applied to the facet value query (`f`).
+  It is not applied to the trace waterfall (a trace is shown whole), the home
+  panels, `:agentlogs`, `:records` or a segment's variable query.
 - **DQL the user hands to dtui is scoped as dtctl scopes it.** `:query`,
   `dtui query <dql>`, `--dql` and `-f` go through the same rewrite, with the
   claim or the reason for no claim in the header. An agent hands off the text
@@ -249,7 +253,8 @@ header. A view that carries neither shows no scope.
   segments are sent; one segment id named by the entry and by the user with
   different variables; eleven segments in total; a missing segment and a
   failed check; `:traces` without `--lens` under an applied filter; a pinned
-  `:logs` page.
+  `:logs` page; the analyzer input of the pattern analysis for an entry that
+  holds only segments and for a bound name with two spaces.
 - Zero configuration still works
   ([ADR-0010](0010-curated-defaults-runtime-discovery.md)): no scope file
   means no scope, and every view opens as it does today.
