@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -78,7 +79,12 @@ func importsByFile(t *testing.T, root string) map[string][]string {
 			return err
 		}
 		for _, imp := range f.Imports {
-			result[path] = append(result[path], strings.Trim(imp.Path.Value, `"`))
+			// The literal may be quoted or a raw string; both name one path.
+			importPath, err := strconv.Unquote(imp.Path.Value)
+			if err != nil {
+				return fmt.Errorf("%s: import %s: %w", path, imp.Path.Value, err)
+			}
+			result[path] = append(result[path], importPath)
 		}
 		return nil
 	})
@@ -86,6 +92,21 @@ func importsByFile(t *testing.T, root string) map[string][]string {
 		t.Fatal(err)
 	}
 	return result
+}
+
+// TestImportsByFileReadsEverySpelling pins the walk the import guards rest on:
+// an import path written as a raw string is the same import as a quoted one.
+func TestImportsByFileReadsEverySpelling(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "a.go")
+	src := "package a\n\nimport (\n\t_ `net/http`\n\t_ \"os\"\n)\n"
+	if err := os.WriteFile(file, []byte(src), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"net/http", "os"}
+	if got := importsByFile(t, dir)[file]; !slices.Equal(got, want) {
+		t.Errorf("imports of %q are %q, want %q", src, got, want)
+	}
 }
 
 // TestTUIHasNoDirectTenantAccess pins "no HTTP inside internal/tui" and the
