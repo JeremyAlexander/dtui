@@ -559,9 +559,10 @@ Validated live on both tenants (box 24h, demo 2h windows):
   `exception.is_caused_by_root`); pure-OTel SDK events carry
   `exception.stacktrace` (701 events on demo had ONLY that spelling).
   `catalog.SpanEvent.Exception()` coalesces both. Cause chains produce
-  multiple exception events per span (2–31 seen). No event seen so far
-  carried `exception.caused_by_id`: the chain's root is found by the flag
-  alone, and the id-link step of `catalog.rootException` is unverified.
+  multiple exception events per span (2–31 seen), and the chain's root is
+  the event flagged `exception.is_caused_by_root`. Not validated:
+  `exception.caused_by_id` was on no event seen on either tenant, so the
+  id-link step of `catalog.rootException` rests on the field's name alone.
 - **Raw iterative expressions are rejected in `filter` — but `iAny()` makes
   them legal.** `filter in("exception", span.events[][span_event.name])`
   fails with `ITERATIVE_EXPRESSION_FOR_FILTER`, yet
