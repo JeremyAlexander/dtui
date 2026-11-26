@@ -319,6 +319,11 @@ type Spec struct {
 	// sentinel "waterfall" opens the trace waterfall for Trace(rec).
 	EnterTarget string
 	EnterArg    func(rec map[string]any) string
+	// TabTarget names a second reading of the view that tab switches to, in
+	// place of cycling the lens strip, which keeps its brackets. It is a
+	// sentinel the TUI resolves (tabHandlers): "flame-graph" is the flame
+	// graph of the hotspots analysis (ADR-0021).
+	TabTarget string
 	// EnterInheritsScope carries this view's entity scope and server-side
 	// narrowing (searches, facets) into the EnterTarget view, for targets that
 	// list the raw records behind an aggregated row.

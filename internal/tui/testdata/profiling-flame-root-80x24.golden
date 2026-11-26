@@ -1,0 +1,24 @@
+ ▛▞▟ dtui  ·  context:test  ·  ● readonly                               last 2h
+ hotspots (shop-backend) › flame·running ──────────────────────────────────────
+  running   lock   net_io   disk_io   wait               levels 1 to 16 of 23 ▼
+ last 2h (10:00–12:00 UTC) · 77,631 running samples (stacks seen, not time) · a…
+▌all
+▏java.lang.Thread.run
+▏…n▏org.apache.tomcat.util.threads.TaskThread$WrappingRunnable.run             ▏
+▏…n▏java.util.concurrent.ThreadPoolExecutor$Worker.run                         ▏
+▏…n▏org.apache.tomcat.util.net.NioEndpoint$SocketProcessor.doRun               ▏
+▏…d▏org.apache.coyote.http11.Http11Processor.service
+▏  ▏org.apache.catalina.connector.CoyoteAdapter.service                       ▏
+   ▏org.apache.catalina.core.StandardWrapperValve.invoke
+   ▏org.apache.catalina.core.ApplicationFilterChain.doFilter
+   ▏org.springframework.security.web.FilterChainProxy.doFilter
+   ▏com.example.shop.web.RequestIdFilter.doFilter                         ▏…l
+   ▏com.example.shop.web.TenantFilter.doFilter                            ▏…w
+   ▏org.springframework.web.servlet.DispatcherServlet.doDispatch
+   ▏…ableHandlerMethod.invokeForRequest▏…MethodProcessor.handleReturnValue
+   ▏▏…ddItem▏…oducts▏▏▏▏▏▏▏▏….search▏▏▏▏…ttpMessageConverter.writeInternal
+   ▏▏…ddItem▏…oducts▏▏▏▏▏▏▏▏…e.query▏▏▏▏c.f.j.d.ObjectWriter.writeValue
+ ▸ every running stack of the process
+   self 0 · total 77,631 · 100.0% of all
+ ↑↓←→ move  enter zoom  / search  # search this  [ ] thread state  tab function…
+ ≡ dtctl exec profiling hotspots PROCESS-000000000000A001 --view stacks --show-…

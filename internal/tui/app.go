@@ -500,6 +500,17 @@ func (a *app) dispatch(msg tea.Msg) tea.Cmd {
 		}
 		return a.navigate(newMetricChartView(a.ds, msg.key, entity, a.tf), false)
 
+	case flameOpenMsg:
+		return a.navigate(msg.view, false)
+
+	case flameBuiltMsg:
+		// The tree was built off the update loop for one view, which may be
+		// covered or off the trail by now: it is that view's either way.
+		return msg.view.Update(msg)
+
+	case popViewMsg:
+		return a.pop()
+
 	case waterfallMsg:
 		return a.navigate(newWaterfallView(a.ds, msg.traceID, msg.focusSpanID, a.tf, msg.at), false)
 
@@ -773,22 +784,28 @@ func (a *app) handleKey(msg tea.KeyMsg) tea.Cmd {
 			if cmd := top.Update(msg); cmd != nil {
 				return cmd
 			}
-			if len(a.stack) > 1 {
-				a.prev = a.stack
-				popped := top
-				a.stack = a.stack[:len(a.stack)-1]
-				a.notice = queryNotice{} // stale for the view we just left
-				if tf, ok := a.windowBelow[popped]; ok {
-					delete(a.windowBelow, popped)
-					a.tf = tf
-					a.prev = nil // '-' would return to a page on the other window
-				}
-				return a.trailChanged([]viewModel{popped})
-			}
-			return nil
+			return a.pop()
 		}
 	}
 	return top.Update(msg)
+}
+
+// pop leaves the visible view for the one it covers (esc); the first view of
+// the trail has nothing beneath it and stays.
+func (a *app) pop() tea.Cmd {
+	if len(a.stack) < 2 {
+		return nil
+	}
+	a.prev = a.stack
+	popped := a.top()
+	a.stack = a.stack[:len(a.stack)-1]
+	a.notice = queryNotice{} // stale for the view we just left
+	if tf, ok := a.windowBelow[popped]; ok {
+		delete(a.windowBelow, popped)
+		a.tf = tf
+		a.prev = nil // '-' would return to a page on the other window
+	}
+	return a.trailChanged([]viewModel{popped})
 }
 
 // navigateExternal handles a deep-link request from the wasm host (see

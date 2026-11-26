@@ -18,6 +18,28 @@ type enterHandler struct {
 	hint func(v *tableView) string
 }
 
+// tabHandler is the second reading of a view that tab switches to
+// (Spec.TabTarget): what the footer calls it, and how it opens.
+type tabHandler struct {
+	// hint is "" where the view has no second reading right now.
+	hint func(v *tableView) string
+	open func(v *tableView) tea.Cmd
+}
+
+// tabHandlers registers the TabTarget sentinels. Every Spec.TabTarget must be
+// a key here: TestEnterTargetsAndDrillsResolve enforces it.
+var tabHandlers = map[string]tabHandler{
+	"flame-graph": {
+		open: (*tableView).openFlame,
+		hint: func(v *tableView) string {
+			if catalog.ProfileAllocations(v.scope) {
+				return "" // the graph is of thread states; tab says so
+			}
+			return "flame graph"
+		},
+	},
+}
+
 // enterHandlers registers the EnterTarget sentinels that are NOT catalog
 // view names. Every Spec.EnterTarget must be a key here or resolve via
 // catalog.Lookup — TestEnterTargetsAndDrillsResolve enforces it.

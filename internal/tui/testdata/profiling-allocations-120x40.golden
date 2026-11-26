@@ -36,5 +36,5 @@
   789.0 MiB  ▏          796.9 MiB       1.01×    8,617,984  c.example.shop.bundle.BundleMapper.toDto ← BundleService.lo…
   786.0 MiB  ▏          801.7 MiB       1.02×    8,585,216  c.f.j.c.util.TextBuffer.contentsAsString ← UTF8JsonGenerato…
  * SURVIVED counts bytes once per GC outlived: can exceed ALLOC, not live heap
- tab lens  enter inspect  / filter  J/K sort  : views  t timeframe  S segments  r refresh  ? help  q quit
+ [ ] lens  enter inspect  / filter  J/K sort  : views  t timeframe  S segments  r refresh  ? help  q quit
  ✓ lens: allocations — allocated bytes per allocation site and call path

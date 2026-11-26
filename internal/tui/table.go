@@ -52,6 +52,10 @@ type tableView struct {
 	sortCol  int // -1 = fetch order
 	sortDesc bool
 
+	// flame is the flame graph tab opened from this table (Spec.TabTarget),
+	// kept so that it is found as it was left.
+	flame *flameView
+
 	// Raw reader mode (RawReadable specs — logs): renders the flex body column
 	// file-like and wrapped — content only, so it reads like a log file. Per-
 	// record metadata stays one enter away (the inspector).
@@ -611,10 +615,18 @@ func (v *tableView) Hints() []keyHint {
 	}
 	var hints []keyHint
 	if len(v.spec.Lenses) > 0 {
-		if v.lensDigits {
+		switch {
+		case v.lensDigits:
 			hints = append(hints, keyHint{"1-9", "lens"})
-		} else {
+		case v.spec.TabTarget != "":
+			hints = append(hints, keyHint{"[ ]", "lens"})
+		default:
 			hints = append(hints, keyHint{"tab", "lens"})
+		}
+	}
+	if h, ok := tabHandlers[v.spec.TabTarget]; ok {
+		if label := h.hint(v); label != "" {
+			hints = append(hints, keyHint{"tab", label})
 		}
 	}
 	if !v.ds.previewOn() && !v.spec.NoPreview {
@@ -941,16 +953,20 @@ func (v *tableView) handleKey(msg tea.KeyMsg) tea.Cmd {
 			return v.setLens(v.scope.Lens-1, true)
 		}
 		return status("no lens strip on this view")
-	case "tab":
+	case "tab", "shift+tab":
 		// tab cycles the view's primary strip; on a plain table that is the
 		// lens strip. (A table nested in a detail tab never sees tab — the
-		// page's tab bar claims it first.)
-		if len(v.spec.Lenses) > 0 {
-			return v.setLens(v.scope.Lens+1, true)
+		// page's tab bar claims it first.) A view with a second reading
+		// (Spec.TabTarget) switches to it instead.
+		if h, ok := tabHandlers[v.spec.TabTarget]; ok {
+			return h.open(v)
 		}
-	case "shift+tab":
 		if len(v.spec.Lenses) > 0 {
-			return v.setLens(v.scope.Lens-1, true)
+			step := 1
+			if msg.String() == "shift+tab" {
+				step = -1
+			}
+			return v.setLens(v.scope.Lens+step, true)
 		}
 	case "/":
 		v.filtering = true

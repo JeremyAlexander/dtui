@@ -37,7 +37,7 @@ func (h *helpOverlay) View(width, height int) string {
 			{"enter", "detail / drill into children / follow entity link / expand value / waterfall / session timeline"},
 			{"0-9", "global bookmarks: 0 home · 1 problems · 2 services · 3 hosts · 4 pods · 5 logs · 6 traces · 7 workloads · 8 events · 9 aws — on an entered page 1-9 address the innermost numbered strip: its tabs, or the active tab's lens strip when it shows one (0 still jumps home, esc restores all bookmarks)"},
 			{"esc / -", "back / toggle last two views"},
-			{"tab", "cycle the view's primary strip: lens strip on tables · tabs on detail pages · panels on home"},
+			{"tab", "cycle the view's primary strip: lens strip on tables · tabs on detail pages · panels on home · functions and flame graph on :hotspots"},
 			{"[ / ]", "cycle the lens strip explicitly (the only way for a strip nested inside a detail tab)"},
 			{"P", "preview pane on/off — the peek at the selected row is on by default and auto-hides on cramped terminals"},
 			{"H", "history — restore a previous page (survives restarts)"},
@@ -79,6 +79,14 @@ func (h *helpOverlay) View(width, height int) string {
 	}
 	var b strings.Builder
 	b.WriteString(theme.OverlayTitle.Render("dtctl tui — keys") + "\n")
+	if _, onFlame := h.app.top().(*flameView); onFlame {
+		// The overlay is longer than most terminals: a view with keys of
+		// its own has them where they are sure to be read.
+		b.WriteString("\n" + theme.Section("Flame graph (tab returns to the functions)") + "\n")
+		for _, k := range flameHelp {
+			b.WriteString(fmt.Sprintf("  %s %s\n", theme.KeyHint.Render(fmt.Sprintf("%-12s", k.Key)), k.Desc))
+		}
+	}
 	for _, s := range sections {
 		b.WriteString("\n" + theme.Section(s.title) + "\n")
 		for _, h := range s.keys {

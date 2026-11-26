@@ -1,0 +1,24 @@
+ ▛▞▟ dtui  ·  context:test  ·  ● readonly                               last 2h
+ hotspots (shop-backend) › flame·running ──────────────────────────────────────
+  running   lock   net_io   disk_io   wait      zoomed · levels 1 to 16 of 27 ▼
+ last 2h (10:00–12:00 UTC) · 77,631 running samples (stacks seen, not time) · a…
+▏all
+▏java.lang.Thread.run
+▏org.apache.tomcat.util.threads.TaskThread$WrappingRunnable.run
+▏java.util.concurrent.ThreadPoolExecutor$Worker.run
+▏org.apache.tomcat.util.net.NioEndpoint$SocketProcessor.doRun
+▏org.apache.coyote.http11.Http11Processor.service
+▏org.apache.catalina.connector.CoyoteAdapter.service
+▌org.apache.catalina.core.StandardWrapperValve.invoke
+▏org.apache.catalina.core.ApplicationFilterChain.doFilter
+▏org.springframework.security.web.FilterChainProxy.doFilter
+▏com.example.shop.web.RequestIdFilter.doFilter                             ▏…al
+▏com.example.shop.web.TenantFilter.doFilter                                ▏…pw
+▏org.springframework.web.servlet.DispatcherServlet.doDispatch
+▏…cableHandlerMethod.invokeForRequest▏▏…dyMethodProcessor.handleReturnValue
+▏▏…dItem▏…roducts▏▏…▏▏▏▏▏▏…r.search▏▏ ▏…2HttpMessageConverter.writeInternal
+▏▏…dItem▏…roducts▏▏…▏▏▏▏▏▏…ce.query▏▏ ▏c.f.j.d.ObjectWriter.writeValue
+ ▸ org.apache.catalina.core.StandardWrapperValve.invoke
+   self 0 · total 72,546 · 93.4% of all · 100.0% of the zoomed frame
+ ↑↓←→ move  enter zoom  backspace zoom out  / search  # search this  [ ] thread…
+ ≡ dtctl exec profiling hotspots PROCESS-000000000000A001 --view stacks --show-…

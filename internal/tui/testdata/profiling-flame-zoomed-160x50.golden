@@ -1,0 +1,50 @@
+ ▛▞▟ dtui  ·  context:test  ·  ● readonly                                                                                                               last 2h
+ hotspots (shop-backend) › flame·running ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  running   lock   net_io   disk_io   wait                                                                                                   zoomed · 27 levels
+ last 2h (10:00–12:00 UTC) · 77,631 running samples (stacks seen, not time) · all threads, leaf: total
+▏all
+▏java.lang.Thread.run
+▏org.apache.tomcat.util.threads.TaskThread$WrappingRunnable.run
+▏java.util.concurrent.ThreadPoolExecutor$Worker.run
+▏org.apache.tomcat.util.net.NioEndpoint$SocketProcessor.doRun
+▏org.apache.coyote.http11.Http11Processor.service
+▏org.apache.catalina.connector.CoyoteAdapter.service
+▌org.apache.catalina.core.StandardWrapperValve.invoke
+▏org.apache.catalina.core.ApplicationFilterChain.doFilter
+▏org.springframework.security.web.FilterChainProxy.doFilter
+▏com.example.shop.web.RequestIdFilter.doFilter                                                                                                         ▏…ernal
+▏com.example.shop.web.TenantFilter.doFilter                                                                                                            ▏…ashpw
+▏org.springframework.web.servlet.DispatcherServlet.doDispatch
+▏o.s.web.method.support.InvocableHandlerMethod.invokeForRequest            ▏…▏o.s.w.s.m.m.a.RequestResponseBodyMethodProcessor.handleReturnValue
+▏▏▏…oller.addItem▏…ler.listProducts▏…▏…r▏▏▏▏▏▏▏▏▏▏▏▏…hController.search▏▏▏▏  ▏o.s.h.converter.json.AbstractJackson2HttpMessageConverter.writeInternal
+▏▏▏…rvice.addItem▏…ice.findProducts▏…▏…r▏▏▏▏▏▏▏▏▏▏▏▏SearchService.query▏▏▏▏  ▏com.fasterxml.jackson.databind.ObjectWriter.writeValue
+·▏▏…ne.priceCart▏▏…▏…pper.toDto▏…ry▏·▏▏…▏▏▏▏·▏▏▏▏▏▏▏…se▏Ranker.score   ▏▏▏·  ▏c.f.jackson.databind.ser.DefaultSerializerProvider.serializeValue
+  ▏…pply▏▏…     ▏▏ ▏…mat▏…es   ▏…ke  ▏     ▏  ▏▏▏  ▏…  ▏…ncy▏…e              ▏c.f.jackson.databind.ser.std.CollectionSerializer.serializeContents
+  ▏…            ▏  ▏…t         ▏…st        ▏  ▏▏▏                            ▏com.fasterxml.jackson.databind.ser.BeanSerializer.serialize
+                ▏              ▏…st        ▏  ▏▏▏                            ▏c.fasterxml.jackson.databind.ser.BeanPropertyWriter.serializeAsField▏…
+                ▏              ▏▏…t        ▏  ▏▏▏                            ▏▏▏▏▏…▏…▏…tributes▏…iption▏…es▏…e▏…e▏…▏▏▏▏▏▏▏▏▏▏▏▏▏▏▏▏▏…▏▏▏▏▏▏▏▏▏·
+                ▏              ▏                                             ·▏▏▏▏…▏·▏▏…ring   ▏▏…ing  ▏▏… ▏… ▏… ▏▏·▏▏▏▏▏▏▏··▏▏·▏▏▏▏▏▏▏·▏▏▏▏▏▏
+                ▏              ▏                                              ···▏    ▏…        ▏       ·  ▏  ▏   · ·▏▏ · ·  ·· ·▏▏ ·▏· ···▏··
+                               ▏
+                               ▏
+                               ▏
+                               ▏
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ ▸ org.apache.catalina.core.StandardWrapperValve.invoke
+   self 0 · total 72,546 · 93.4% of all · 100.0% of the zoomed frame
+ ↑↓←→ move  enter zoom  backspace zoom out  / search  # search this  [ ] thread state  tab functions  : views  t timeframe  S segments  r refresh  esc back  ? …
+ ≡ dtctl exec profiling hotspots PROCESS-000000000000A001 --view stacks --show-waiting --limit 0 --default-timeframe-start 'now()-2h'

@@ -35,6 +35,9 @@ func TestEnterTargetsAndDrillsResolve(t *testing.T) {
 					spec.Name, spec.EnterTarget)
 			}
 		}
+		if _, ok := tabHandlers[spec.TabTarget]; spec.TabTarget != "" && !ok {
+			t.Errorf("%s: TabTarget %q is not a tabHandlers sentinel", spec.Name, spec.TabTarget)
+		}
 		for key, target := range spec.Drills {
 			if !drillSpecials[target] && catalog.Lookup(target) == nil {
 				t.Errorf("%s: drill %q -> %q resolves to no view", spec.Name, key, target)

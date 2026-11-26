@@ -390,7 +390,7 @@ var hotspotsSpec = &Spec{
 			segs = append(segs, fmt.Sprintf("%s allocated, %s survived* (pressure, not heap content)",
 				FormatBytes(int64(alloc)), FormatBytes(int64(survived))))
 			if rows, _ := FloatValue(summary[ProfSumRows]); rows > ProfileRowCap {
-				segs = append(segs, fmt.Sprintf("top %d of %s call paths by allocated bytes", ProfileRowCap, groupInt(int64(rows))))
+				segs = append(segs, fmt.Sprintf("top %d of %s call paths by allocated bytes", ProfileRowCap, GroupInt(int64(rows))))
 			}
 			return segs
 		}
@@ -399,17 +399,17 @@ var hotspotsSpec = &Spec{
 		rows, _ := FloatValue(summary[ProfSumRows])
 		if s.Arg != "" {
 			segs = append(segs, fmt.Sprintf("%s %s samples with the function on the stack",
-				groupInt(int64(samples)), state))
+				GroupInt(int64(samples)), state))
 			for _, dir := range [][2]string{{ProfSumCallers, "callers"}, {ProfSumCallees, "callees"}} {
 				if n, _ := FloatValue(summary[dir[0]]); n > ProfileFocusCap {
-					segs = append(segs, fmt.Sprintf("top %d of %s %s", ProfileFocusCap, groupInt(int64(n)), dir[1]))
+					segs = append(segs, fmt.Sprintf("top %d of %s %s", ProfileFocusCap, GroupInt(int64(n)), dir[1]))
 				}
 			}
 		} else {
 			segs = append(segs, fmt.Sprintf("%s %s samples (stacks seen, not time)",
-				groupInt(int64(samples)), state))
+				GroupInt(int64(samples)), state))
 			if rows > ProfileRowCap {
-				segs = append(segs, fmt.Sprintf("top %d of %s functions by self samples", ProfileRowCap, groupInt(int64(rows))))
+				segs = append(segs, fmt.Sprintf("top %d of %s functions by self samples", ProfileRowCap, GroupInt(int64(rows))))
 			}
 		}
 		segs = append(segs, "all threads, leaf: total")
@@ -439,6 +439,7 @@ var hotspotsSpec = &Spec{
 	NoPreview:     true,
 	CancelOnLeave: true,
 	EnterTarget:   "function-focus", // sentinel: the same view, focused on the row's function
+	TabTarget:     "flame-graph",
 }
 
 // FocusTarget names the function enter on a hotspots row focuses, or says
@@ -500,7 +501,7 @@ func countCell(key string) func(map[string]any) string {
 		if !ok {
 			return ""
 		}
-		return groupInt(int64(f))
+		return GroupInt(int64(f))
 	}
 }
 
@@ -707,8 +708,8 @@ func shareBar(frac float64, width int) string {
 	return b.String()
 }
 
-// groupInt renders an integer with thousands separators ("48,213").
-func groupInt(n int64) string {
+// GroupInt renders an integer with thousands separators ("48,213").
+func GroupInt(n int64) string {
 	s := strconv.FormatInt(n, 10)
 	neg := strings.HasPrefix(s, "-")
 	s = strings.TrimPrefix(s, "-")

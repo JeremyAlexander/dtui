@@ -46,5 +46,5 @@
    0.5      350  ▏            0.5      350  ▏             1  com.example.shop.session.SessionStore.evictExpired
    0.4      315  ▏            1.6    1,260  ▏             1  com.example.shop.cart.dto.CartDto.getItems
  ▸ com.fasterxml.jackson.core.json.UTF8JsonGenerator.writeString
- tab lens  enter callers/callees  / filter  J/K sort  : views  t timeframe  S segments  r refresh  ? help  q quit
+ [ ] lens  tab flame graph  enter callers/callees  / filter  J/K sort  : views  t timeframe  S segments  r refresh  ? help  q quit
  ≡ dtctl exec profiling hotspots PROCESS-000000000000A001 --view functions --state running --show-waiting --limit 300 --default-timeframe-start 'now()-2h'
