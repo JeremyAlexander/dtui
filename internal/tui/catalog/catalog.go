@@ -565,10 +565,11 @@ func floorTimeframe(tf Timeframe, min time.Duration, label string) string {
 // on a view whose query ignores scope), the pin must be neither applied nor
 // claimed in the breadcrumb. Scopable catches the subtler case where the
 // filter differs but would match nothing (traces on a non-span-scopable
-// type).
+// type). A view without a query has nothing to compare: it takes a pin only
+// when its Scopable says which entities its source reads.
 func (s *Spec) CanScope(tf Timeframe, e Entity) bool {
 	if s.Query == nil {
-		return false
+		return s.Scopable != nil && s.Scopable(e)
 	}
 	if s.Query(Scope{Timeframe: tf, Entity: &e}) == s.Query(Scope{Timeframe: tf}) {
 		return false

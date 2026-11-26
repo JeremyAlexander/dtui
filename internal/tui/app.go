@@ -949,9 +949,13 @@ func (a *app) jumpTo(name, filter string) tea.Cmd {
 		return statusErr(err.Error())
 	}
 	var restored string
+	// An argument that names the view's entity is the scope the user asked
+	// for: the pin was not ignored, it was overruled.
+	named := false
 	if tv, ok := view.(*tableView); ok {
 		if filter != "" {
 			tv.setArg(filter)
+			named = tv.spec.EntityArg && tv.scope.Entity != nil
 		} else {
 			restored = a.applyLastFilter(tv)
 		}
@@ -961,8 +965,13 @@ func (a *app) jumpTo(name, filter string) tea.Cmd {
 	isErr := false
 	// The view was built unscoped when the pin didn't apply — say so, so the
 	// user isn't left reading an unfiltered list wondering why.
-	if a.pinRejected(name) {
-		notes = append(notes, fmt.Sprintf("%s can't scope to %s — showing all (ctrl+x unpins)", name, a.pin.Type))
+	if a.pinRejected(name) && !named {
+		note := fmt.Sprintf("%s can't scope to %s — showing all (ctrl+x unpins)", name, a.pin.Type)
+		if spec := catalog.Lookup(name); spec != nil && spec.EntityArg {
+			// Without its entity such a view shows nothing at all.
+			note = fmt.Sprintf("%s can't scope to %s (ctrl+x unpins)", name, a.pin.Type)
+		}
+		notes = append(notes, note)
 		isErr = true
 	}
 	// Same honesty for segments: API-backed views bypass query:execute, so

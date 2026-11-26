@@ -361,6 +361,11 @@ var hotspotsSpec = &Spec{
 		}
 		return ""
 	},
+	// A pinned process is analysed like one named in the command bar. The
+	// source has the last word on what an analysis runs on.
+	Scopable: func(e Entity) bool {
+		return e.Type == "PROCESS" || e.Type == "PROCESS_GROUP_INSTANCE" || e.Type == "PROCESS_GROUP"
+	},
 	ArgLabel:      func(arg string) string { return shortFrame(arg, 32) },
 	Entity:        profileEntity,
 	EntityArg:     true,

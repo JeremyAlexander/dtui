@@ -349,3 +349,51 @@ func TestAllocationsAreALensOfHotspots(t *testing.T) {
 		t.Errorf("caption over the refusal: %q", got)
 	}
 }
+
+// A view without a query can still take a pin when it says which entities it
+// reads: the profiling view analyses a pinned process. Every other view
+// without a query keeps refusing every pin, and the views with one are
+// unchanged.
+func TestCanScopeWithoutAQuery(t *testing.T) {
+	tf := DefaultTimeframe
+	pins := []Entity{
+		{ID: "PROCESS-000000000000A001", Type: "PROCESS"},
+		{ID: "PROCESS_GROUP_INSTANCE-000000000000A001", Type: "PROCESS_GROUP_INSTANCE"},
+		{ID: "PROCESS_GROUP-000000000000A001", Type: "PROCESS_GROUP"},
+		{ID: "SERVICE-000000000000B001", Type: "SERVICE"},
+		{ID: "HOST-000000000000C001", Type: "HOST"},
+		{ID: "K8S_POD-000000000000D001", Type: "K8S_POD"},
+	}
+	queryless := 0
+	for _, s := range All() {
+		if s.Query != nil {
+			continue
+		}
+		queryless++
+		for i, pin := range pins {
+			want := s.Name == "hotspots" && i < 3
+			if got := s.CanScope(tf, pin); got != want {
+				t.Errorf("%s.CanScope(%s) = %v, want %v", s.Name, pin.Type, got, want)
+			}
+		}
+	}
+	if queryless < 4 {
+		t.Fatalf("only %d views without a query: the test no longer covers the others", queryless)
+	}
+	for _, tc := range []struct {
+		view string
+		pin  Entity
+		want bool
+	}{
+		{"logs", pins[3], true},
+		{"logs", pins[0], true},
+		{"sessions", pins[4], false},
+		{"traces", pins[3], true},
+		{"traces", pins[0], false},
+		{"problems", pins[4], true},
+	} {
+		if got := Lookup(tc.view).CanScope(tf, tc.pin); got != tc.want {
+			t.Errorf("%s.CanScope(%s) = %v, want %v", tc.view, tc.pin.Type, got, tc.want)
+		}
+	}
+}

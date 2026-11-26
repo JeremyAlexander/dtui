@@ -630,3 +630,61 @@ func TestAllocationPathsCanBeFilteredAndSorted(t *testing.T) {
 		}
 	}
 }
+
+// A pinned process is the one :hotspots analyses; an explicit argument wins
+// over the pin; and the notice that a pin cannot scope the view appears only
+// when that is what happened.
+func TestProfilingTakesThePinnedProcess(t *testing.T) {
+	process := &catalog.Entity{ID: "PROCESS-000000000000A001", Name: "shop-backend", Type: "PROCESS"}
+	service := &catalog.Entity{ID: "SERVICE-000000000000B001", Name: "shop-frontend", Type: "SERVICE"}
+	for _, tc := range []struct {
+		name       string
+		pin        *catalog.Entity
+		arg        string
+		wantEntity string
+		wantStatus string
+	}{
+		{"a pinned process", process, "", "PROCESS-000000000000A001", ""},
+		{"an argument over a pinned process", process, "PROCESS-000000000000A002", "PROCESS-000000000000A002", ""},
+		{"an argument over a pinned service", service, "PROCESS-000000000000A002", "PROCESS-000000000000A002", ""},
+		{"a pinned service", service, "", "", "hotspots can't scope to SERVICE (ctrl+x unpins)"},
+	} {
+		a := testApp(t, "home")
+		a.pin = tc.pin
+		a.status = ""
+		deliver(a, a.jumpTo("hotspots", tc.arg))
+		tv := a.top().(*tableView)
+		got := ""
+		if tv.scope.Entity != nil {
+			got = tv.scope.Entity.ID
+		}
+		if got != tc.wantEntity || a.status != tc.wantStatus {
+			t.Errorf("%s: analyses %q with status %q, want %q with %q", tc.name, got, a.status, tc.wantEntity, tc.wantStatus)
+		}
+	}
+	// Another view keeps the wording that fits a list.
+	a := testApp(t, "home")
+	a.pin = &catalog.Entity{ID: "FRONTEND-AAAABBBBCCCCDDDD", Name: "astroshop", Type: "FRONTEND"}
+	deliver(a, a.jumpTo("traces", ""))
+	if want := "traces can't scope to FRONTEND — showing all (ctrl+x unpins)"; a.status != want {
+		t.Errorf("traces under a frontend pin: status %q, want %q", a.status, want)
+	}
+}
+
+// A call reads from the source that was wired when it was issued: one made
+// before a context switch must not reach the next environment's source with
+// this one's process id.
+func TestCallKeepsTheSourceItWasIssuedWith(t *testing.T) {
+	source := func(name string) Source {
+		return func(context.Context, catalog.Scope, string) ([]map[string]any, error) {
+			return []map[string]any{{"from": name}}, nil
+		}
+	}
+	ds := &dataSource{sources: map[string]Source{"hotspots": source("before")}}
+	cmd := ds.call(context.Background(), nil, 1, "hotspots", catalog.Scope{}, "")
+	ds.sources = map[string]Source{"hotspots": source("after")}
+	msg := cmd().(dataMsg)
+	if msg.err != nil || len(msg.records) != 1 || msg.records[0]["from"] != "before" {
+		t.Errorf("the call answered from %v (err %v), want the source it was issued with", msg.records, msg.err)
+	}
+}
