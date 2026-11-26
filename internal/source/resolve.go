@@ -109,6 +109,9 @@ func (ix *Index) resolve(ctx context.Context, f Frame, locate func(context.Conte
 		if how != read || (need.function && !has.function) || (need.pkg != "" && !has.pkg) {
 			continue
 		}
+		if need.declared[rel] && m.How == FileOnly {
+			continue // its name is all that agrees, and it declares nothing of the frame
+		}
 		found.Matches = append(found.Matches, m)
 	}
 	slices.SortStableFunc(found.Matches, func(a, b Match) int { return int(b.How) - int(a.How) })
@@ -126,6 +129,21 @@ const ResolveTime = maxResolveTime
 type needs struct {
 	function bool
 	pkg      string
+	// declared are the files that fit the frame by their name alone, with
+	// no directory that agrees: such a file counts only when it declares
+	// the frame's function or its type. A dependency's index.js is not the
+	// application's for being called the same.
+	declared map[string]bool
+}
+
+// byNameAlone marks files as fitting the frame by their name alone.
+func (n *needs) byNameAlone(files []string) {
+	for _, rel := range files {
+		if n.declared == nil {
+			n.declared = map[string]bool{}
+		}
+		n.declared[rel] = true
+	}
 }
 
 // candidates are the files of the index a frame's label points at, and what
@@ -140,7 +158,12 @@ func (ix *Index) candidates(f Frame) (files []string, need needs) {
 		if len(want) == 0 {
 			return nil, needs{}
 		}
-		return bestBySuffix(ix.byName[want[len(want)-1]], want, 1, func(rel string) []string { return segments(rel, "/") }), needs{}
+		files, agree := bestBySuffix(ix.byName[want[len(want)-1]], want, 1, func(rel string) []string { return segments(rel, "/") })
+		// The label names directories and none of them is the file's.
+		if agree == 1 && len(want) > 1 {
+			need.byNameAlone(files)
+		}
+		return files, need
 	case Go:
 		return ix.goFiles(f.Package), needs{function: true, pkg: goPackage(f.Package)}
 	}
@@ -155,16 +178,26 @@ func (ix *Index) candidates(f Frame) (files []string, need needs) {
 	// The JVM: a class in the directory its package names.
 	for _, name := range names {
 		for _, ext := range []string{".java", ".kt", ".scala", ".groovy"} {
-			files = append(files, bestBySuffix(ix.byName[name+ext], pkg, len(pkg), dirOf)...)
+			inPackage, _ := bestBySuffix(ix.byName[name+ext], pkg, len(pkg), dirOf)
+			files = append(files, inPackage...)
 		}
 	}
-	// Python: package.module.function, or package.module.Class.method.
-	files = append(files, bestBySuffix(ix.byName[outer+".py"], pkg, len(pkg), dirOf)...)
+	// Python: package.module.function, or package.module.Class.method. A
+	// module without a package has no directory to agree with.
+	modules, _ := bestBySuffix(ix.byName[outer+".py"], pkg, len(pkg), dirOf)
+	if len(pkg) == 0 {
+		need.byNameAlone(modules)
+	}
+	files = append(files, modules...)
 	if len(pkg) > 0 {
-		files = append(files, bestBySuffix(ix.byName[pkg[len(pkg)-1]+".py"], pkg[:len(pkg)-1], len(pkg)-1, dirOf)...)
+		modules, _ = bestBySuffix(ix.byName[pkg[len(pkg)-1]+".py"], pkg[:len(pkg)-1], len(pkg)-1, dirOf)
+		if len(pkg) == 1 {
+			need.byNameAlone(modules)
+		}
+		files = append(files, modules...)
 	}
 	if len(files) > 0 {
-		return dedupe(files), needs{}
+		return dedupe(files), need
 	}
 	// .NET, and a JVM language that does not keep its packages in
 	// directories: a file named after the type, wherever it is, that
@@ -207,7 +240,7 @@ var majorVersion = regexp.MustCompile(`^v[0-9]+$`)
 func (ix *Index) goFiles(pkg string) []string {
 	pool := slices.DeleteFunc(slices.Clone(ix.byExt[".go"]), func(rel string) bool { return strings.HasSuffix(rel, "_test.go") })
 	want := segments(pkg, "/")
-	if best := bestBySuffix(pool, want, 1, func(rel string) []string { return segments(path.Dir(rel), "/") }); len(best) > 0 {
+	if best, _ := bestBySuffix(pool, want, 1, func(rel string) []string { return segments(path.Dir(rel), "/") }); len(best) > 0 {
 		return best
 	}
 	return pool
@@ -218,9 +251,10 @@ func segments(s, sep string) []string {
 }
 
 // bestBySuffix keeps the files whose own segments end like want, as far as
-// the best of them does and at least atLeast segments far.
-func bestBySuffix(files, want []string, atLeast int, of func(rel string) []string) []string {
-	best, score := []string(nil), atLeast
+// the best of them does and at least atLeast segments far. agree is how many
+// segments that is.
+func bestBySuffix(files, want []string, atLeast int, of func(rel string) []string) (best []string, agree int) {
+	score := atLeast
 	for _, rel := range files {
 		have, n := of(rel), 0
 		for n < len(have) && n < len(want) && have[len(have)-1-n] == want[len(want)-1-n] {
@@ -233,7 +267,7 @@ func bestBySuffix(files, want []string, atLeast int, of func(rel string) []strin
 			best = append(best, rel)
 		}
 	}
-	return best
+	return best, score
 }
 
 func dedupe(files []string) []string {

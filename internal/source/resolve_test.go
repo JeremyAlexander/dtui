@@ -205,6 +205,48 @@ func TestResolve(t *testing.T) {
 	}
 }
 
+// A file whose name is all that agrees with a frame is the frame's only when
+// it declares the frame's function or type. dtctl cuts a Node frame's path
+// at node_modules, so a dependency's file reads like one of the checkout
+// (graphql/lib/index.js), and a dotted name with no directory to agree on
+// fits any script of that name.
+func TestResolveNeedsMoreThanAFileName(t *testing.T) {
+	ix := scan(t, tree(t, map[string]string{
+		"src/index.js":     "function start() {}\n",
+		"scripts/utils.py": "def tidy():\n    pass\n",
+		"server.js":        "function handle() {}\n",
+	}))
+	for _, tc := range []struct {
+		label string
+		want  []Match
+	}{
+		// A dependency's file and a library's module: the name alone.
+		{"graphql/lib/index.js:execute", nil},
+		{"graphql/lib/index.js:(anonymous)", nil},
+		{"utils.Helper.run", nil},
+		{"utils.run", nil},
+		// The same names with a declaration in the file.
+		{"utils.tidy", []Match{{"scripts/utils.py", 1, Declaration}}},
+		{"/app/server.js:handle", []Match{{"server.js", 1, Declaration}}},
+		// The cost: a function without a name, in a file of which only the
+		// name agrees, is not found any more.
+		{"/app/server.js:(anonymous)", nil},
+		// A label that names the file and nothing else disagrees with
+		// nothing, and one whose directory agrees is told by its place.
+		{"index.js:(anonymous)", []Match{{"src/index.js", 0, FileOnly}}},
+		{"/app/src/index.js:(anonymous)", []Match{{"src/index.js", 0, FileOnly}}},
+		// What is left open until the analysis says which frames are the
+		// application's (docs/dev/tech-debt.md): a dependency's function
+		// named like one the file declares.
+		{"graphql/lib/index.js:start", []Match{{"src/index.js", 1, Declaration}}},
+	} {
+		got, unread, late := parts(ix.Resolve(context.Background(), Parse(tc.label)))
+		if !reflect.DeepEqual(got, tc.want) || unread != 0 || late {
+			t.Errorf("%s\n got  %+v (%d unread)\n want %+v", tc.label, got, unread, tc.want)
+		}
+	}
+}
+
 // Text of a label never becomes a path or a pattern: whatever it holds, a
 // match is a file the walk saw inside the root, or there is none.
 func TestResolveIsConfinedToTheRoot(t *testing.T) {
