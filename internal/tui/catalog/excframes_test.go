@@ -819,3 +819,28 @@ func TestJavaFrameNameReadsWhatItsExpressionDoes(t *testing.T) {
 		checkJavaFrameName(t, line)
 	}
 }
+
+func TestRootCauseBoundaries(t *testing.T) {
+	cases := []struct {
+		name, stack string
+		want        []StackFrame
+		typ         string
+	}{
+		// A trace whose indentation was stripped ends at its first
+		// suppressed block: nothing shows where the block does.
+		{"java: a suppressed block without indentation",
+			"a.B: x\nat a.B.b(B.java:1)\nSuppressed: c.D: y\nat c.D.d(D.java:2)\nCaused by: e.F: z\nat e.F.f(F.java:3)",
+			frames(StackJava, "a.B", "b"), ""},
+		{"dotnet: two inner exceptions introduced on one line",
+			"A.Outer: x ---> B.Middle: y ---> C.Inner: z\n   at N.S.Type.Method(String s)",
+			frames(StackDotNet, "N.S.Type", "Method"), "C.Inner"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, typ := parseStack(tc.stack)
+			if !reflect.DeepEqual(got, tc.want) || typ != tc.typ {
+				t.Errorf("frames %+v type %q\nwant %+v %q", got, typ, tc.want, tc.typ)
+			}
+		})
+	}
+}
