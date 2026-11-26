@@ -53,7 +53,7 @@ of which splits or merges issues it should not:
 - A segment of a Windows path with more than three words ends the path at
   its first space, and so does the last segment (`C:\data\my cart.json`).
 - The pass-through lists (`javaPassThrough` and its siblings) match by
-  method name alone, so an application method named `invoke` or `next`
+  method name alone, so an application method named `proceed` or `next`
   never counts toward a key next to other application frames unless it is
   the throw site.
 - `rootException` follows `exception.caused_by_id` without that field ever

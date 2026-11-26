@@ -44,9 +44,11 @@ var javaVendorPrefixes = []string{
 	"com.dynatrace.",
 }
 
-// javaPassThrough: servlet filters, interceptors, and reflective and proxied
-// calls.
-var javaPassThrough = []string{"doFilter", "doFilterInternal", "intercept", "invoke", "proceed"}
+// javaPassThrough: servlet filters, interceptors and the aspects around a
+// call. "invoke" is not one of them: a reflective or proxied call is the
+// runtime's or a generated class's, which do not count anyway, and an
+// application's own invoke is as often where the work is done.
+var javaPassThrough = []string{"doFilter", "doFilterInternal", "intercept", "proceed"}
 
 // javaNoSource are the JVM's words for code without a source file, and
 // what CGLIB writes for a class it generated. javaUnknownSource is the one

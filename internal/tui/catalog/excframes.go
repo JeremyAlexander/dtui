@@ -74,8 +74,11 @@ type stackNotation struct {
 	// runtime's or a framework's.
 	inApp func(f StackFrame) bool
 	// passThrough are the functions that only hand a call on: a link of a
-	// filter or middleware chain, a reflective call, async plumbing. Such a
-	// frame is on the stack of every request, whatever fails below it.
+	// filter or middleware chain, async plumbing. Such a frame is on the
+	// stack of every request, whatever fails below it. The lists match by
+	// name alone, so they hold only names that say what the function is; a
+	// name an application gives its own entry point ("invoke", "step",
+	// "dispatch", "__call__") is not on them.
 	passThrough []string
 }
 

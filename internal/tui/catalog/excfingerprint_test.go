@@ -443,7 +443,6 @@ func TestFingerprintSkipsPassThroughFrames(t *testing.T) {
 			"com.example.shop.web.TracingFilter.doFilter",
 			"com.example.shop.web.AuthFilter.doFilterInternal",
 			"com.example.shop.web.RetryInterceptor.intercept",
-			"com.example.shop.web.AuditProxy.invoke",
 			"com.example.shop.web.Aspect.proceed",
 			"com.example.shop.Main.main"), RungAppFrames,
 			frames(StackJava, "com.example.shop.cart.CartService", "addItem",
@@ -464,12 +463,11 @@ func TestFingerprintSkipsPassThroughFrames(t *testing.T) {
 				"org.apache.catalina.core.ApplicationFilterChain", "doFilter")},
 		{"dotnet: middleware", `   at Example.Shop.CartService.AddItem(String sku)
    at Example.Shop.TracingMiddleware.InvokeAsync(HttpContext context)
-   at Example.Shop.AuthMiddleware.Invoke(HttpContext context)
+   at Example.Shop.AuthMiddleware.InvokeAsync(HttpContext context)
    at Example.Shop.Program.Main(String[] args)`, RungAppFrames,
 			frames(StackDotNet, "Example.Shop.CartService", "AddItem", "Example.Shop.Program", "Main")},
 		{"javascript: middleware and compiled async plumbing", `    at CartService.addItem (/app/src/cart/service.js:42:17)
     at /app/src/cart/service.js:30:71
-    at step (/app/src/cart/service.js:33:23)
     at Object.next (/app/src/cart/service.js:14:53)
     at fulfilled (/app/src/cart/service.js:5:58)
     at __awaiter (/app/src/cart/service.js:4:12)
@@ -478,9 +476,9 @@ func TestFingerprintSkipsPassThroughFrames(t *testing.T) {
 			frames(StackJS, "src/cart/service.js", "CartService.addItem", "src/cart/service.js", "<anonymous>",
 				"src/cart/controller.js", "CartController.post")},
 		{"python: middleware and decorators", `Traceback (most recent call last):
-  File "/app/shop/web.py", line 9, in __call__
+  File "/app/shop/web.py", line 9, in wrapped
     return self.app(environ, start_response)
-  File "/app/shop/views.py", line 12, in dispatch
+  File "/app/shop/views.py", line 12, in inner
     return handler(request)
   File "/app/shop/auth.py", line 30, in wrapper
     return view(request)
@@ -528,7 +526,7 @@ func TestFingerprintKeepsPassThroughFramesOnTheAllFramesRung(t *testing.T) {
 	pythonMiddleware := func(file string) string {
 		return "Traceback (most recent call last):\n" +
 			"  File \"/usr/lib/python3.11/wsgiref/handlers.py\", line 137, in run\n    self.result = application(self.environ, self.start_response)\n" +
-			"  File \"/app/shop/" + file + "\", line 9, in __call__\n    return json.loads(body)\n" +
+			"  File \"/app/shop/" + file + "\", line 9, in wrapper\n    return json.loads(body)\n" +
 			"  File \"/usr/lib/python3.11/json/decoder.py\", line 355, in raw_decode\n    raise JSONDecodeError(\"Expecting value\", s, err.value) from None\n"
 	}
 	dotnetMiddleware := func(middleware string) string {
@@ -618,6 +616,47 @@ func TestFingerprintKeysCarryTheClassifier(t *testing.T) {
 	b, _ := FingerprintExceptions([]SpanException{{Type: "T"}}, namedBuiltin("ab"))
 	if a.Key == b.Key {
 		t.Error("the classifier id runs into the type")
+	}
+}
+
+// A name an application gives its own entry point is not plumbing by that
+// name alone: a command's invoke, a state machine's step, a view's dispatch
+// and a callable's __call__ are where the work is done as often as where it
+// is handed on. They count toward the key like any frame.
+func TestEntryPointNamesCountTowardTheKey(t *testing.T) {
+	cases := []struct {
+		name string
+		pair [2]string
+		want StackFrame
+	}{
+		{"java invoke", [2]string{
+			javaStack("com.example.shop.Repo.save", "com.example.shop.AddItem.invoke", "com.example.shop.Main.main"),
+			javaStack("com.example.shop.Repo.save", "com.example.shop.RemoveItem.invoke", "com.example.shop.Main.main")},
+			StackFrame{Module: "com.example.shop.AddItem", Function: "invoke", Syntax: StackJava}},
+		{"dotnet Invoke", [2]string{
+			"   at Example.Shop.Repo.Save(Cart cart)\n   at Example.Shop.AddItem.Invoke(Request request)\n   at Example.Shop.Program.Main(String[] args)",
+			"   at Example.Shop.Repo.Save(Cart cart)\n   at Example.Shop.RemoveItem.Invoke(Request request)\n   at Example.Shop.Program.Main(String[] args)"},
+			StackFrame{Module: "Example.Shop.AddItem", Function: "Invoke", Syntax: StackDotNet}},
+		{"javascript step", [2]string{
+			"    at save (/app/src/repo.js:4:11)\n    at step (/app/src/checkout/machine.js:33:23)\n    at run (/app/src/main.js:7:3)",
+			"    at save (/app/src/repo.js:4:11)\n    at step (/app/src/refund/machine.js:33:23)\n    at run (/app/src/main.js:7:3)"},
+			StackFrame{Module: "src/checkout/machine.js", Function: "step", Syntax: StackJS}},
+		{"python dispatch and __call__", [2]string{
+			"Traceback (most recent call last):\n  File \"/app/shop/main.py\", line 7, in run\n  File \"/app/shop/checkout.py\", line 12, in __call__\n" +
+				"  File \"/app/shop/repo.py\", line 4, in save\nValueError: locked",
+			"Traceback (most recent call last):\n  File \"/app/shop/main.py\", line 7, in run\n  File \"/app/shop/refund.py\", line 12, in dispatch\n" +
+				"  File \"/app/shop/repo.py\", line 4, in save\nValueError: locked"},
+			StackFrame{Module: "shop/checkout.py", Function: "__call__", Syntax: StackPython}},
+	}
+	for _, tc := range cases {
+		a := mustFingerprint(t, SpanException{Type: "T", StackTrace: tc.pair[0]})
+		b := mustFingerprint(t, SpanException{Type: "T", StackTrace: tc.pair[1]})
+		if a.Rung != RungAppFrames || len(a.Frames) != 3 || a.Frames[1] != tc.want {
+			t.Errorf("%s: rung %v, frames %+v, want %+v second", tc.name, a.Rung, a.Frames, tc.want)
+		}
+		if a.Key == b.Key {
+			t.Errorf("%s: two entry points share the key %s", tc.name, a.Key)
+		}
 	}
 }
 

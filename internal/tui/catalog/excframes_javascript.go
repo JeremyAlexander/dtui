@@ -52,7 +52,7 @@ var jsNoFile = []string{FrameAnonymous, "native", "index"}
 // helpers a compiler emits into the application's own files for async
 // functions and generators.
 var jsPassThrough = []string{
-	"next", "_next", "step", "fulfilled", "rejected", "__awaiter", "asyncGeneratorStep", "new Promise",
+	"next", "_next", "fulfilled", "rejected", "__awaiter", "asyncGeneratorStep", "new Promise",
 }
 
 // jsFrameParts reads a frame line as its function and location. named is

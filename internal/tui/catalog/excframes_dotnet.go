@@ -48,9 +48,10 @@ var dotnetVendorPrefixes = []string{
 	"System.", "Microsoft.", "Newtonsoft.", "Grpc.", "OpenTelemetry.", "Dynatrace.",
 }
 
-// dotnetPassThrough: middleware, by the convention ASP.NET finds it by, and
-// delegate calls.
-var dotnetPassThrough = []string{"Invoke", "InvokeAsync"}
+// dotnetPassThrough: middleware, by the name ASP.NET finds it by. A plain
+// "Invoke" is a delegate's, which is the runtime's, or a method of the
+// application's.
+var dotnetPassThrough = []string{"InvokeAsync"}
 
 const dotnetInnerEnd = "--- End of inner exception stack trace"
 

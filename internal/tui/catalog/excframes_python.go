@@ -28,9 +28,10 @@ var pythonPackageDirs = []string{"site-packages/", "dist-packages/"}
 
 const pythonStdlibDir = "lib/python/"
 
-// pythonPassThrough: WSGI and ASGI middleware, view dispatch, and the
-// closures decorators wrap a function in.
-var pythonPassThrough = []string{"__call__", "dispatch", "wrapper", "wrapped", "inner"}
+// pythonPassThrough: the closures decorators wrap a function in. A
+// callable's "__call__" and a view's "dispatch" are the application's own
+// entry points.
+var pythonPassThrough = []string{"wrapper", "wrapped", "inner"}
 
 const (
 	// pythonFramePrefix is what pythonFrameRe starts with.
