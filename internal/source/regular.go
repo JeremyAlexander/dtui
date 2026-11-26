@@ -13,11 +13,23 @@ import (
 // took its place after the walk. Reading one can wait forever or never end.
 var errNotRegular = errors.New("not a regular file any more")
 
+// opener opens the file at a path for reading. A lookup opens with
+// openNoWait; the type is there so that the look before the open can be
+// tested with an open that waits, as it does where no flag keeps it from it.
+type opener func(abs string) (*os.File, error)
+
+// openNoWait opens a file for reading with the platform's openFlags: without
+// waiting where a flag asks for that, plainly where none does.
+func openNoWait(abs string) (*os.File, error) { return os.OpenFile(abs, openFlags, 0) }
+
 // openRegular opens the regular file at abs for reading, and nothing else.
-// The path is looked at without following a link, opened without waiting,
-// and the opened file is looked at again: what is read is the regular file
-// that was seen, also when the path was swapped in between.
-func openRegular(abs string) (*os.File, error) {
+// The path is looked at without following a link and is opened only when it
+// names a regular file; the opened file is then looked at again: what is
+// read is the regular file that was seen, also when the path was swapped in
+// between. The first look is the one that holds on every platform. Where
+// open cannot be told not to wait, it is all that keeps a lookup from a
+// named pipe.
+func openRegular(open opener, abs string) (*os.File, error) {
 	seen, err := os.Lstat(abs)
 	if err != nil {
 		return nil, err
@@ -25,12 +37,12 @@ func openRegular(abs string) (*os.File, error) {
 	if !seen.Mode().IsRegular() {
 		return nil, errNotRegular
 	}
-	return openSame(abs, seen)
+	return openSame(open, abs, seen)
 }
 
 // openSame opens abs and refuses it unless it is the regular file seen.
-func openSame(abs string, seen fs.FileInfo) (*os.File, error) {
-	file, err := os.OpenFile(abs, openFlags, 0)
+func openSame(open opener, abs string, seen fs.FileInfo) (*os.File, error) {
+	file, err := open(abs)
 	if err != nil {
 		return nil, err
 	}

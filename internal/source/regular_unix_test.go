@@ -103,8 +103,25 @@ func TestOpenSameDoesNotWaitOnANamedPipe(t *testing.T) {
 	}
 	pipe := pipeAt(t, root, "a.go")
 	within(t, pipe, func() {
-		if file, err := openSame(pipe, seen); !errors.Is(err, errNotRegular) {
+		if file, err := openSame(openNoWait, pipe, seen); !errors.Is(err, errNotRegular) {
 			t.Errorf("a named pipe is opened for the file seen: %v, %v", file, err)
+		}
+	})
+}
+
+// A named pipe is refused before it is opened. It is opened here as a
+// platform without the flag opens a file, where the open of a pipe waits for
+// a writer: only the look before the open keeps the lookup from it.
+func TestOpenRegularDoesNotOpenANamedPipe(t *testing.T) {
+	root := tree(t, map[string]string{"a.go": "package a\n"})
+	pipe := pipeAt(t, root, "a.go")
+	within(t, pipe, func() {
+		file, err := openRegular(openPlain, pipe)
+		if !errors.Is(err, errNotRegular) {
+			t.Errorf("a named pipe is opened: %v, %v", file, err)
+		}
+		if file != nil {
+			file.Close()
 		}
 	})
 }

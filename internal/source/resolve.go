@@ -272,7 +272,7 @@ func (ix *Index) open(rel string) (*os.File, error) {
 	if err != nil {
 		return nil, err
 	}
-	return openRegular(abs)
+	return openRegular(openNoWait, abs)
 }
 
 // scanFile is locate for the content of the file m names. It reads up to

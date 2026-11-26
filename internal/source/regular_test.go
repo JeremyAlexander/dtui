@@ -98,7 +98,7 @@ func TestOpenSameRefusesAnotherFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	file, err := openSame(a, seen)
+	file, err := openSame(openNoWait, a, seen)
 	if err != nil {
 		t.Fatalf("the file that was seen is refused: %v", err)
 	}
@@ -106,7 +106,7 @@ func TestOpenSameRefusesAnotherFile(t *testing.T) {
 		t.Errorf("read %q, %v", content, err)
 	}
 	file.Close()
-	if file, err := openSame(b, seen); !errors.Is(err, errNotRegular) {
+	if file, err := openSame(openNoWait, b, seen); !errors.Is(err, errNotRegular) {
 		t.Errorf("another file is opened for the one seen: %v, %v", file, err)
 	}
 	// A directory is refused for what it is, also when it is what was seen.
@@ -114,14 +114,65 @@ func TestOpenSameRefusesAnotherFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if file, err := openSame(root, dir); err == nil {
+	if file, err := openSame(openNoWait, root, dir); err == nil {
 		t.Errorf("a directory is opened: %v", file.Name())
 	}
-	if file, err := openRegular(root); !errors.Is(err, errNotRegular) {
+	if file, err := openRegular(openNoWait, root); !errors.Is(err, errNotRegular) {
 		t.Errorf("a directory is opened: %v, %v", file, err)
 	}
-	if _, err := openRegular(filepath.Join(root, "missing.go")); !errors.Is(err, os.ErrNotExist) {
+	if _, err := openRegular(openNoWait, filepath.Join(root, "missing.go")); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("a missing file: %v", err)
+	}
+}
+
+// openPlain opens a file as a platform does that has no flag to open without
+// waiting. The tests open with it on every platform: with the flag, the look
+// at the opened file refuses what the look before the open let through, and
+// a missing look before the open would not show.
+func openPlain(abs string) (*os.File, error) { return os.OpenFile(abs, os.O_RDONLY, 0) }
+
+// What is not a regular file is refused by the look at its path, before it
+// is opened: where an open cannot be told not to wait, that look is all that
+// keeps a lookup from one that would. So the open is not reached for a
+// directory, a symbolic link or a missing file, and is reached once for a
+// regular file.
+func TestOpenRegularLooksBeforeItOpens(t *testing.T) {
+	root := tree(t, map[string]string{"a.go": "package a\n"})
+	a := filepath.Join(root, "a.go")
+	var opened []string
+	recording := func(abs string) (*os.File, error) {
+		opened = append(opened, abs)
+		return openPlain(abs)
+	}
+
+	if file, err := openRegular(recording, root); !errors.Is(err, errNotRegular) {
+		t.Errorf("a directory: %v, %v", file, err)
+	}
+	if file, err := openRegular(recording, filepath.Join(root, "missing.go")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("a missing file: %v, %v", file, err)
+	}
+	// A link is refused for what it is, wherever it leads: Abs hands out the
+	// place a link leads to, never the link.
+	link := filepath.Join(root, "link.go")
+	if err := os.Symlink(a, link); err != nil {
+		t.Log("no symbolic link here:", err)
+	} else if file, err := openRegular(recording, link); !errors.Is(err, errNotRegular) {
+		t.Errorf("a symbolic link: %v, %v", file, err)
+	}
+	if len(opened) != 0 {
+		t.Fatalf("opened %q: what is not a regular file is not to be opened at all", opened)
+	}
+
+	file, err := openRegular(recording, a)
+	if err != nil {
+		t.Fatalf("a regular file is refused: %v", err)
+	}
+	defer file.Close()
+	if content, err := io.ReadAll(file); err != nil || string(content) != "package a\n" {
+		t.Errorf("read %q, %v", content, err)
+	}
+	if len(opened) != 1 || opened[0] != a {
+		t.Errorf("opened %q, want the regular file once", opened)
 	}
 }
 
@@ -192,7 +243,7 @@ func TestBoundedStopsAtTheBoundOnAFileThatGrows(t *testing.T) {
 	if err := os.WriteFile(p, bytes.Repeat([]byte("x"), readChunk), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	file, err := openRegular(p)
+	file, err := openRegular(openNoWait, p)
 	if err != nil {
 		t.Fatal(err)
 	}
