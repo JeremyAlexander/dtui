@@ -1359,3 +1359,18 @@ func TestNoRecordedAnalysisInTheProduct(t *testing.T) {
 		}
 	}
 }
+
+// An allocation row says what share of all bytes allocated it is: the top
+// path of the recording allocates 19,126,026,240 of 144,158,228,480 bytes.
+func TestProfilingAllocationRowsCarryTheirShare(t *testing.T) {
+	_, allocations := sourcesAt(recordedProfiler(t))
+	records, err := allocations(context.Background(), catalog.Scope{Entity: shopProcess, Timeframe: timeframe(t, "2h")}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, rows := catalog.SplitSummary(records)
+	pct, ok := catalog.FloatValue(rows[0][catalog.ProfAllocPct])
+	if got := fmt.Sprintf("%.2f", pct); !ok || got != "13.27" {
+		t.Errorf("the top path is %s%% of the bytes (set=%v), want 13.27", got, ok)
+	}
+}

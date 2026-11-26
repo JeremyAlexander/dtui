@@ -54,6 +54,7 @@ const (
 	ProfSite          = "site"    // allocation site: the allocating frame
 	ProfCallers       = "callers" // []any of frames, innermost caller first
 	ProfAllocBytes    = "allocBytes"
+	ProfAllocPct      = "allocPct" // percent of all bytes allocated
 	ProfSurvivedBytes = "survivedBytes"
 	ProfAllocCount    = "allocCount"
 
@@ -301,11 +302,11 @@ var hotspotsSpec = &Spec{
 		}
 	},
 	Decode: func(records []map[string]any) []map[string]any {
-		stampRelative(records, ProfAllocBytes)
-		// Every bar is a share of the samples counted, on one scale, so
-		// that equal shares draw equal bars and a flat profile looks flat.
+		// Every bar is a share of what was counted (samples, or bytes
+		// allocated), on one scale, so that equal shares draw equal bars
+		// and a flat profile looks flat.
 		for _, rec := range records {
-			for _, key := range []string{ProfSelfPct, ProfTotalPct, ProfShare} {
+			for _, key := range []string{ProfSelfPct, ProfTotalPct, ProfShare, ProfAllocPct} {
 				if pct, ok := FloatValue(rec[key]); ok {
 					rec["__rel."+key] = pct / 100
 				}
@@ -418,7 +419,7 @@ const survivedCaveat = "* SURVIVED adds an object's bytes once per GC it lived t
 var allocationColumns = []Column{
 	// "1023.9 MiB" is the widest a byte count gets.
 	{Title: "ALLOC", Width: 10, Right: true, Field: ProfAllocBytes, Value: bytesCell(ProfAllocBytes)},
-	barColumn("ALLOC ▇", "__rel."+ProfAllocBytes),
+	barColumn("ALLOC ▇", "__rel."+ProfAllocPct),
 	{Title: "SURVIVED*", Width: 10, Right: true, Field: ProfSurvivedBytes, Value: bytesCell(ProfSurvivedBytes)},
 	{Title: "SURV/ALLOC", Width: 10, Right: true, Value: survivedRatio, Sort: func(rec map[string]any) any {
 		if r, ok := survivedRatioOf(rec); ok {
@@ -487,25 +488,6 @@ func frameColumn(title, key string) Column {
 	return Column{
 		Title: title, Field: key,
 		ValueW: func(rec map[string]any, width int) string { return shortFrame(Str(rec, key), width) },
-	}
-}
-
-// stampRelative stores each record's value under key as a fraction of the
-// largest one, for the bar next to it.
-func stampRelative(records []map[string]any, key string) {
-	top := 0.0
-	for _, rec := range records {
-		if f, ok := FloatValue(rec[key]); ok && f > top {
-			top = f
-		}
-	}
-	if top == 0 {
-		return
-	}
-	for _, rec := range records {
-		if f, ok := FloatValue(rec[key]); ok {
-			rec["__rel."+key] = f / top
-		}
 	}
 }
 

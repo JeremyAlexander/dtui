@@ -22,8 +22,8 @@ The view reads dtctl's `pkg/resources/profiling` through one adapter,
 is a GET. `c` copies the `dtctl exec profiling …` command that prints what the
 view holds: the same process, window, thread state and row limit.
 
-The bars of the functions table are shares of all samples counted, on one
-scale. The table holds the 300 functions with the most self samples and its
+Every bar is a share of what was counted, on one scale: of all samples in
+the functions table, of all bytes allocated in the allocations lens. The table holds the 300 functions with the most self samples and its
 caption says so when there are more.
 
 ## Looking at it without the permission

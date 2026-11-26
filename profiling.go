@@ -560,13 +560,17 @@ func allocationsSource(p profiler, runs *profileRuns) tui.Source {
 		records := make([]map[string]any, 0, len(rows)+1)
 		records = append(records, summary)
 		for _, row := range rows {
-			records = append(records, stampProcess(map[string]any{
+			rec := map[string]any{
 				catalog.ProfSite:          row.Site,
 				catalog.ProfCallers:       anySlice(row.Callers),
 				catalog.ProfAllocBytes:    float64(row.AllocBytes),
 				catalog.ProfSurvivedBytes: float64(row.SurvivedBytes),
 				catalog.ProfAllocCount:    float64(row.AllocCount),
-			}, entity))
+			}
+			if allocBytes > 0 {
+				rec[catalog.ProfAllocPct] = float64(row.AllocBytes) / float64(allocBytes) * 100
+			}
+			records = append(records, stampProcess(rec, entity))
 		}
 		return records, nil
 	}

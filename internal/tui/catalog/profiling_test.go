@@ -428,3 +428,22 @@ func TestProfileWindowLabelReadsTheAnalysis(t *testing.T) {
 		t.Errorf("across midnight: %q, want %q", got, want)
 	}
 }
+
+// The allocations bar is on the scale of the other bars: a share of all
+// bytes allocated, not of the largest row.
+func TestAllocationBarIsAShareOfAllBytes(t *testing.T) {
+	rows := hotspotsSpec.Decode([]map[string]any{
+		{ProfAllocBytes: 250.0, ProfAllocPct: 25.0},
+		{ProfAllocBytes: 125.0, ProfAllocPct: 12.5},
+	})
+	bar := allocationColumns[1]
+	if got := bar.TextAt(rows[0], 8); got != "██" {
+		t.Errorf("a quarter of the bytes draws %q, want %q", got, "██")
+	}
+	if got := bar.TextAt(rows[1], 8); got != "█" {
+		t.Errorf("an eighth of the bytes draws %q, want %q", got, "█")
+	}
+	if k := bar.Sort(rows[0]); k != 0.25 {
+		t.Errorf("the bar sorts as %v, want 0.25", k)
+	}
+}
