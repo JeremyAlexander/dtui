@@ -1,5 +1,5 @@
  ▛▞▟ dtui  ·  context:test  ·  ● readonly                               last 2h
- hotspots (shop-backend) › hotspots (UTF8JsonGenerator.writeString) (shop-backe…
+ … › hotspots (UTF8JsonGenerator.writeString) (shop-backend) ──────────────────
  28 rows · 38s
   running    lock    net_io    disk_io    wait    allocations
  last 2h (10:00–12:00 UTC)

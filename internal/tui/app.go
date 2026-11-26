@@ -1318,7 +1318,13 @@ func (a *app) renderHeader() string {
 				crumbs[i] = theme.CrumbDim.Render(label)
 			}
 		}
-		line2 = " " + strings.Join(crumbs, theme.CrumbDim.Render(" › "))
+		sep := theme.CrumbDim.Render(" › ")
+		line2 = " " + strings.Join(crumbs, sep)
+		// A trail longer than the terminal loses its start, not its end:
+		// where the reader is now is the one crumb that must be read.
+		for from := 1; lipgloss.Width(line2) > a.width && from < len(crumbs); from++ {
+			line2 = " " + theme.CrumbDim.Render("…") + sep + strings.Join(crumbs[from:], sep)
+		}
 		if fill := a.width - lipgloss.Width(line2) - 2; fill > 0 {
 			line2 += " " + theme.Rule.Render(strings.Repeat("─", fill))
 		}

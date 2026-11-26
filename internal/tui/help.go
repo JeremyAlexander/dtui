@@ -5,14 +5,22 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/dynatrace-oss/dtui/internal/tui/catalog"
 	"github.com/dynatrace-oss/dtui/internal/tui/theme"
 )
 
-// helpOverlay is the '?' key reference; any key dismisses it.
+// helpOverlay is the '?' key reference. It is wrapped to the terminal and,
+// where it is longer than the screen, scrolled with the movement keys; any
+// other key dismisses it, and any key at all when everything is in view.
 type helpOverlay struct {
 	app *app
+	// top is the first line in view, and more whether the last View had
+	// lines it could not show.
+	top  int
+	more bool
+	page int
 }
 
 func (a *app) openHelp() tea.Cmd {
@@ -22,12 +30,48 @@ func (a *app) openHelp() tea.Cmd {
 
 func (h *helpOverlay) Hints() []keyHint { return nil }
 
-func (h *helpOverlay) HandleKey(tea.KeyMsg) tea.Cmd {
+func (h *helpOverlay) HandleKey(msg tea.KeyMsg) tea.Cmd {
+	if h.more || h.top > 0 {
+		switch msg.String() {
+		case "down", "j":
+			h.top++
+			return nil
+		case "up", "k":
+			h.top--
+			return nil
+		case "pgdown", " ", "ctrl+f":
+			h.top += max(h.page, 1)
+			return nil
+		case "pgup", "ctrl+b":
+			h.top -= max(h.page, 1)
+			return nil
+		case "g", "home":
+			h.top = 0
+			return nil
+		case "G", "end":
+			h.top = 1 << 30
+			return nil
+		}
+	}
 	h.app.overlay = nil
 	return nil
 }
 
+// helpKeyWidth is the column the keys of the help are set in.
+const helpKeyWidth = 12
+
 func (h *helpOverlay) View(width, height int) string {
+	// What the box's border and padding leave of the body.
+	inner := max(width-theme.OverlayBox.GetHorizontalFrameSize(), 20)
+	rows := max(height-theme.OverlayBox.GetVerticalFrameSize(), 3)
+	entry := func(k keyHint) string {
+		lines := wrapLines(k.Desc, max(inner-helpKeyWidth-3, 10))
+		out := fmt.Sprintf("  %s %s", theme.KeyHint.Render(fmt.Sprintf("%-*s", helpKeyWidth, k.Key)), lines[0])
+		for _, line := range lines[1:] {
+			out += "\n" + strings.Repeat(" ", helpKeyWidth+3) + line
+		}
+		return out + "\n"
+	}
 	sections := []struct {
 		title string
 		keys  []keyHint
@@ -77,23 +121,41 @@ func (h *helpOverlay) View(width, height int) string {
 			{"q", "quit"},
 		}},
 	}
+	section := func(title string) string {
+		lines := wrapLines(title, max(inner-4, 10))
+		out := theme.Section(lines[0])
+		for _, line := range lines[1:] {
+			out += "\n    " + theme.HeaderVal.Render(line)
+		}
+		return out
+	}
 	var b strings.Builder
 	b.WriteString(theme.OverlayTitle.Render("dtctl tui — keys") + "\n")
 	if _, onFlame := h.app.top().(*flameView); onFlame {
 		// The overlay is longer than most terminals: a view with keys of
 		// its own has them where they are sure to be read.
-		b.WriteString("\n" + theme.Section("Flame graph (tab returns to the functions)") + "\n")
+		b.WriteString("\n" + section("Flame graph (tab returns to the functions)") + "\n")
 		for _, k := range flameHelp {
-			b.WriteString(fmt.Sprintf("  %s %s\n", theme.KeyHint.Render(fmt.Sprintf("%-12s", k.Key)), k.Desc))
+			b.WriteString(entry(k))
 		}
 	}
 	for _, s := range sections {
-		b.WriteString("\n" + theme.Section(s.title) + "\n")
-		for _, h := range s.keys {
-			b.WriteString(fmt.Sprintf("  %s %s\n",
-				theme.KeyHint.Render(fmt.Sprintf("%-12s", h.Key)), h.Desc))
+		b.WriteString("\n" + section(s.title) + "\n")
+		for _, k := range s.keys {
+			b.WriteString(entry(k))
 		}
 	}
-	b.WriteString("\n" + theme.Dim.Render(wrap("views: home · query · nav · "+strings.Join(catalog.Names(), " · "), 76)))
-	return centerOverlay(width, height, b.String())
+	b.WriteString("\n" + theme.Dim.Render(wrap("views: home · query · nav · "+strings.Join(catalog.Names(), " · "), min(76, inner))))
+
+	lines := strings.Split(b.String(), "\n")
+	h.page = rows - 1
+	h.top = max(min(h.top, len(lines)-h.page), 0)
+	h.more = len(lines) > rows
+	if h.more {
+		// One line of the box says where the reader is and how to move.
+		note := fmt.Sprintf("lines %d to %d of %d · j/k pgdn/pgup scroll · any other key closes",
+			h.top+1, min(h.top+h.page, len(lines)), len(lines))
+		lines = append(lines[h.top:min(h.top+h.page, len(lines)):len(lines)], theme.Dim.Render(ansi.Truncate(note, inner, "…")))
+	}
+	return centerOverlay(width, height, strings.Join(lines, "\n"))
 }

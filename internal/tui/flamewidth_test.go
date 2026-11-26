@@ -278,3 +278,22 @@ func TestTheCursorIsUnlikeASearchHit(t *testing.T) {
 		t.Errorf("a selected hit and another hit:\n%s", out)
 	}
 }
+
+// A trail of crumbs longer than the terminal keeps its end, where the reader
+// is; one that fits is as it was.
+func TestBreadcrumbKeepsItsEnd(t *testing.T) {
+	a, tv, _, _ := openFlame(t)
+	crumbs := func() string { return strings.TrimRight(strings.Split(screen(a), "\n")[1], " ─") }
+	a.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	if got := crumbs(); got != " hotspots (shop-backend) › flame·running" {
+		t.Errorf("a trail that fits: %q", got)
+	}
+	tv.scope.Entity.Name = "SpringBoot com.example.shop.backend.ShopBackendApplication shop-backend-7d9f8b6c5d-x2k4q (shop-backend)"
+	if got := crumbs(); got != " … › flame·running" {
+		t.Errorf("a trail too long for 80 columns: %q", got)
+	}
+	a.Update(tea.WindowSizeMsg{Width: 140, Height: 24})
+	if got := crumbs(); !strings.HasPrefix(got, " hotspots (SpringBoot ") || !strings.HasSuffix(got, "› flame·running") {
+		t.Errorf("the same trail where it fits: %q", got)
+	}
+}
