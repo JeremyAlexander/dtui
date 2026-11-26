@@ -7,10 +7,17 @@ import (
 
 // .NET traces: "at Ns.Type.Method(String arg) in File.cs:line 1" frames. An
 // exception that wraps another prints the inner one first, closed by an
-// "End of inner exception stack trace" line.
+// "End of inner exception stack trace" line. Mono writes a space before the
+// parameters: "at Ns.Type.Method (System.String arg) [0x0001a] in <…>:0".
 
 var (
-	dotnetTypeArgsRe = regexp.MustCompile(`\[[^\]]*\]`)
+	// The method name, the space Mono puts after it, and the parameters.
+	dotnetFrameRe = regexp.MustCompile("^at ([\\w.<>|$`\\[\\],+]+)( ?)\\(([^()]*)\\)")
+	// Mono's notation is close to prose ("at checkout (final step)"), so
+	// there the name must be qualified and every parameter must start with
+	// a type name.
+	dotnetMonoParamsRe = regexp.MustCompile("^(?:[A-Z][\\w.`\\[\\]<>&*+]*(?: \\w+)?(?:, |$))*$")
+	dotnetTypeArgsRe   = regexp.MustCompile(`\[[^\]]*\]`)
 	// Compiler-generated names: async state machines, closure classes and
 	// the lambdas in them.
 	dotnetAsyncRe   = regexp.MustCompile(`<(\w+)>d__\d+\.MoveNext$`)
@@ -27,12 +34,12 @@ var dotnetVendorPrefixes = []string{
 const dotnetInnerEnd = "--- End of inner exception stack trace"
 
 func dotnetFrame(line string) (StackFrame, bool) {
-	rest, ok := strings.CutPrefix(line, "at ")
-	if !ok {
+	m := dotnetFrameRe.FindStringSubmatch(line)
+	if m == nil {
 		return StackFrame{}, false
 	}
-	name, _, ok := strings.Cut(strings.TrimSpace(rest), "(")
-	if !ok || strings.ContainsAny(name, " \t") {
+	name := m[1]
+	if m[2] != "" && (!strings.Contains(name, ".") || !dotnetMonoParamsRe.MatchString(m[3])) {
 		return StackFrame{}, false
 	}
 	name = dotnetTypeArgsRe.ReplaceAllString(name, "")

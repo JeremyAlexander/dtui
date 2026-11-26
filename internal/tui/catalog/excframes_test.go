@@ -54,6 +54,19 @@ func TestParseStackFramesJava(t *testing.T) {
 				"com.acme.shop.Gen", "run",
 				"com.acme.shop.Gen", "go",
 				"com.acme.shop.Kt", "run")},
+		{"a OneAgent call stack: no at, a space before the location", "com.example.shop.cart.CartService.addItem (CartService.java:42)\n" +
+			"com.example.shop.cart.CartController.post (CartController.java:17)\n" +
+			"jdk.internal.reflect.DirectMethodHandleAccessor.invoke (DirectMethodHandleAccessor.java:103)\n" +
+			"java.lang.reflect.Method.invoke (Method.java:580)\n" +
+			"org.apache.catalina.core.ApplicationFilterChain.doFilter (ApplicationFilterChain.java:129)\n" +
+			"java.lang.Thread.run (Thread.java:1583)",
+			frames(StackJava,
+				"com.example.shop.cart.CartService", "addItem",
+				"com.example.shop.cart.CartController", "post",
+				"jdk.internal.reflect.DirectMethodHandleAccessor", "invoke",
+				"java.lang.reflect.Method", "invoke",
+				"org.apache.catalina.core.ApplicationFilterChain", "doFilter",
+				"java.lang.Thread", "run")},
 		{"prose with parentheses is not a frame", "com.acme.shop.CartService.addItem(sku was empty)\nfailed (see above)", nil},
 		{"generated classes collapse", `	at com.acme.shop.CartService$$EnhancerBySpringCGLIB$$1a2b3c4d.addItem(<generated>)
 	at com.acme.shop.CartService$$FastClassBySpringCGLIB$$9f8e7d6c.invoke(<generated>)
@@ -163,6 +176,14 @@ func TestParseStackFramesDotNet(t *testing.T) {
 			frames(StackDotNet,
 				"Acme.Shop.CartService", "AddItem", "Acme.Shop.CartService", "Total")},
 		{"a name that starts with a dot", "   at .Run()", frames(StackDotNet, "", "Run")},
+		{"mono writes a space before the parameters", `System.InvalidOperationException: Cart 7 is locked
+  at Example.Shop.CartService.AddItem (System.String sku, System.Int32 quantity) [0x0001a] in <3f2b8c1e9d4a4b7c8e210a1b2c3d4e5f>:0
+  at Example.Shop.CartController.Post (Example.Shop.CartRequest request) [0x00007] in /src/shop/CartController.cs:17
+  at Example.Shop.Program.Main () [0x00000] in <3f2b8c1e9d4a4b7c8e210a1b2c3d4e5f>:0`,
+			frames(StackDotNet,
+				"Example.Shop.CartService", "AddItem",
+				"Example.Shop.CartController", "Post",
+				"Example.Shop.Program", "Main")},
 		{"the innermost exception is the root", `Acme.Shop.CheckoutException: failed
  ---> System.InvalidOperationException: Cart 7 is locked
    at Acme.Shop.CartService.AddItem(String sku)
@@ -226,6 +247,9 @@ created by github.com/acme/shop/list.Start`,
 			frames(StackGo, "", "run", "shop/", "run")},
 		{"a one-letter name", "f(0x1)", frames(StackGo, "", "f")},
 		{"lines that are not frames", "exit status 2\nmain.run(context deadline exceeded)\n(0x1)\ncreated by \nfoo bar()\nmain.run(0x1) tail", nil},
+		{"a call in prose is not a frame", "decode(abc)\nretry(3)\nfailed()\ncart.decode(abc, 7)\ncreated by admin", nil},
+		{"a frame needs a package or arguments", "run()\nmain.run()\nrun(0x1, {0xc000010000?, 0x5}, ...)",
+			frames(StackGo, "main", "run", "", "run")},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) { assertFrames(t, tc.stack, tc.want) })
@@ -267,7 +291,18 @@ func TestParseStackFramesNode(t *testing.T) {
 			frames(StackJS, "node_modules/b/index.js", "parse")},
 		{"an unclosed location is kept", "    at parse (/app/src/parse.js:1:2",
 			frames(StackJS, "/app/src/parse.js", "parse")},
-		{"an empty location", "    at parse ()", frames(StackJS, "", "parse")},
+		{"prose after at is not a frame", "at least 3 items (max 5)\nat startup\nat parse ()\nat sign (@) expected\n" +
+			"at checkout (final step)\nat Checkout (see above)\nat 10:11:12 the cart (id 7) was locked\nat 10:11:12", nil},
+		{"function@location, as Firefox and Safari write it", `addItem@https://shop.example.invalid/static/js/cart.js:42:17
+async*post@https://shop.example.invalid/static/js/api.js:17:5
+@https://shop.example.invalid/static/js/main.js:5:1
+CartService.prototype.total@https://shop.example.invalid/static/js/cart.js:60:9`,
+			frames(StackJS,
+				"https://shop.example.invalid/static/js/cart.js", "addItem",
+				"https://shop.example.invalid/static/js/api.js", "post",
+				"https://shop.example.invalid/static/js/main.js", "<anonymous>",
+				"https://shop.example.invalid/static/js/cart.js", "CartService.prototype.total")},
+		{"a mail address is not a frame", "bob@shop.example.invalid\nask bob@shop.example.invalid:25:1", nil},
 		{"at without a frame", "    at \n    at async \n    at some words here", nil},
 	}
 	for _, tc := range cases {
@@ -318,6 +353,31 @@ Traceback (most recent call last):
     cart.add_item(sku)
 RuntimeError: failed`,
 			frames(StackPython, "/app/shop/cart.py", "add_item")},
+		{"an exception group yields its first sub-exception", `  + Exception Group Traceback (most recent call last):
+  |   File "/app/shop/api.py", line 17, in post
+  |     async with asyncio.TaskGroup() as tg:
+  |   File "/usr/lib/python3.11/asyncio/taskgroups.py", line 145, in __aexit__
+  |     raise me from None
+  | ExceptionGroup: unhandled errors in a TaskGroup (2 sub-exceptions)
+  +-+---------------- 1 ----------------
+    | Traceback (most recent call last):
+    |   File "/app/shop/tasks.py", line 30, in run
+    |     cart.add_item(sku)
+    |   File "/app/shop/cart.py", line 42, in add_item
+    |     raise ValueError("locked")
+    | ValueError: locked
+    +---------------- 2 ----------------
+    | Traceback (most recent call last):
+    |   File "/app/shop/stock.py", line 9, in reserve
+    |     raise KeyError(sku)
+    | KeyError: 'kettle'
+    +------------------------------------`,
+			frames(StackPython, "/app/shop/cart.py", "add_item", "/app/shop/tasks.py", "run")},
+		{"a group without sub-exceptions keeps its own frames", `  + Exception Group Traceback (most recent call last):
+  |   File "/app/shop/api.py", line 17, in post
+  |     raise ExceptionGroup("none", [])
+  +------------------------------------`,
+			frames(StackPython, "/app/shop/api.py", "post")},
 		{"a line in another notation is not a frame", `  File "/app/shop/cart.py", line 42, in add_item
     session.commit()
 main.run()
@@ -358,11 +418,29 @@ func TestStackNotationsMatchTheirSyntax(t *testing.T) {
 	}
 }
 
+func TestParseStackFramesLineBreaks(t *testing.T) {
+	want := frames(StackJava, "com.example.shop.Api", "post", "com.example.shop.Server", "handle")
+	for name, stack := range map[string]string{
+		"line feeds":       "\tat com.example.shop.Api.post(Api.java:12)\n\tat com.example.shop.Server.handle(Server.java:80)\n",
+		"carriage returns": "\tat com.example.shop.Api.post(Api.java:12)\r\tat com.example.shop.Server.handle(Server.java:80)\r",
+		"both":             "\tat com.example.shop.Api.post(Api.java:12)\r\n\tat com.example.shop.Server.handle(Server.java:80)\r\n",
+		"escaped":          `java.lang.IllegalStateException: locked\n\tat com.example.shop.Api.post(Api.java:12)\n\tat com.example.shop.Server.handle(Server.java:80)`,
+		"escaped pair":     `java.lang.IllegalStateException: locked\r\n\tat com.example.shop.Api.post(Api.java:12)\r\n\tat com.example.shop.Server.handle(Server.java:80)`,
+	} {
+		t.Run(name, func(t *testing.T) { assertFrames(t, stack, want) })
+	}
+	// Where the text has real line breaks, a backslash and an n are text:
+	// here part of a Windows path.
+	assertFrames(t, "   at Example.Shop.Cart.Add(String sku) in C:\\src\\new\\Cart.cs:line 4\n   at Example.Shop.Api.Post()",
+		frames(StackDotNet, "Example.Shop.Cart", "Add", "Example.Shop.Api", "Post"))
+}
+
 func TestParseStackFramesUnparseable(t *testing.T) {
 	for _, in := range []string{
 		"", "\n\n", "not a stack trace", "Error: something failed (code 5)",
 		"at", "at ", "0x1)", "File \"x\"", "... 3 more", "Caused by: ", "goroutine 1 [running]:",
 		"app/models/cart.rb:42:in `add_item'", "#0 /app/Cart.php(42): Cart->addItem()",
+		"at least 3 items (max 5)", "at startup", "decode(abc)", "the cart (id 7) was locked at 10:11:12",
 	} {
 		if got := ParseStackFrames(in); got != nil {
 			t.Errorf("ParseStackFrames(%q) = %+v, want nil", in, got)
@@ -432,6 +510,9 @@ func FuzzParseStackFrames(f *testing.F) {
 		"at a.<b>d__1.MoveNext()", "at a.<>c.<b>b__1()", "at a$$Lambda$1/0x1.run()", "at a$$b.c(<generated>)",
 		"at /", "at async ", "at f [as g] (x:1:2)", "--- End of inner exception stack trace ---",
 		"Traceback (most recent call last):", "Suppressed: x\nat a.b(C.java:1)",
+		"at A.B (System.String s) [0x1] in <a>:0", "f@https://a/b.js:1:2", "@a:1:2", "a.b (C.java:1)",
+		"| File \"a\", line 1, in f\n+-+---- 1 ----\n| File \"b\", line 2, in g\n+---- 2 ----", `at a.b(C.java:1)\nat c.d(E.java:2)`,
+		"at a.b(C.java:1)\rat c.d(E.java:2)", "run(0x1, {0x2?}, ...)", "created by a.b",
 	} {
 		f.Add(seed)
 	}

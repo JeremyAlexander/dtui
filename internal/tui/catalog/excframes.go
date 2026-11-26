@@ -73,7 +73,7 @@ var stackNotations = [...]stackNotation{
 // one where it ends in "... N more"), the innermost .NET exception, the
 // first Python traceback, the first goroutine. Unparseable text yields nil.
 func ParseStackFrames(stack string) []StackFrame {
-	lines := strings.Split(stack, "\n")
+	lines := stackLines(stack)
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		for i := range stackNotations {
@@ -83,6 +83,23 @@ func ParseStackFrames(stack string) []StackFrame {
 		}
 	}
 	return nil
+}
+
+var (
+	stackLineBreaks = strings.NewReplacer("\r\n", "\n", "\r", "\n")
+	// stackEscapedBreaks are line breaks and tabs that arrived escaped.
+	stackEscapedBreaks = strings.NewReplacer(`\r\n`, "\n", `\n`, "\n", `\r`, "\n", `\t`, "\t")
+)
+
+// stackLines splits a trace into lines at "\n", "\r\n" or "\r". A trace
+// without any line break whose breaks arrived escaped (a backslash and an
+// "n") is split at those instead; where real breaks exist, a backslash is
+// text ("C:\src\new").
+func stackLines(stack string) []string {
+	if !strings.ContainsAny(stack, "\r\n") {
+		stack = stackEscapedBreaks.Replace(stack)
+	}
+	return strings.Split(stackLineBreaks.Replace(stack), "\n")
 }
 
 // framesOf reads every line that is a frame.

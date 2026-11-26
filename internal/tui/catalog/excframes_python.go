@@ -6,11 +6,16 @@ import (
 )
 
 // Python tracebacks: `File "/path/file.py", line 1, in fn` frames, each
-// followed by its source line, the throw site last.
+// followed by its source line, the throw site last. An exception group
+// prints its own traceback and then one per sub-exception, in a gutter of
+// "|" under numbered "+---- 1 ----" rules.
 
 var (
 	pythonFrameRe = regexp.MustCompile(`^File "([^"]+)", line \d+(?:, in (.+))?$`)
 	pythonVerRe   = regexp.MustCompile(`python\d+(?:\.\d+)*`)
+	// The rule above a sub-exception of a group, numbered, and the
+	// unnumbered one that closes the group.
+	pythonGroupRuleRe = regexp.MustCompile(`^\+[-+]{3,}(?: (\d+) -+)?$`)
 )
 
 // pythonPackageDirs are where installed packages live; pythonRuntimeDirs
@@ -20,10 +25,14 @@ var (
 	pythonRuntimeDirs = []string{"lib/python/", "lib64/python/"}
 )
 
-const pythonTraceback = "Traceback (most recent call last)"
+const (
+	pythonTraceback = "Traceback (most recent call last)"
+	// pythonGutter is what an exception group puts before each line.
+	pythonGutter = "|+ "
+)
 
 func pythonFrame(line string) (StackFrame, bool) {
-	m := pythonFrameRe.FindStringSubmatch(line)
+	m := pythonFrameRe.FindStringSubmatch(strings.TrimLeft(line, pythonGutter))
 	if m == nil {
 		return StackFrame{}, false
 	}
@@ -42,7 +51,9 @@ func pythonModule(path string) string {
 }
 
 // pythonRootCause returns the frames of the first traceback, which is the
-// first exception raised, reversed so that the throw site comes first.
+// first exception raised, reversed so that the throw site comes first. An
+// exception group is a wrapper around the exceptions it collected, so there
+// the first sub-exception is the root, at any depth of nesting.
 func pythonRootCause(lines []string) []StackFrame {
 	var out []StackFrame
 	source := false // the line is the source text of the frame before it
@@ -53,7 +64,9 @@ func pythonRootCause(lines []string) []StackFrame {
 			source = true
 			continue
 		}
-		if !source && len(out) > 0 && strings.HasPrefix(line, pythonTraceback) {
+		if m := pythonGroupRuleRe.FindStringSubmatch(line); m != nil && m[1] == "1" {
+			out = nil
+		} else if len(out) > 0 && (m != nil || !source && strings.Contains(line, pythonTraceback)) {
 			break
 		}
 		source = false

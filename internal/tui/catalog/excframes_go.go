@@ -11,8 +11,9 @@ import (
 var (
 	goGoroutineRe = regexp.MustCompile(`^goroutine \d+ \[`)
 	goNameRe      = regexp.MustCompile(`^[\w./~%·*()\[\],-]+$`)
-	// Arguments are printed as hex words, "..." when elided.
-	goArgsRe     = regexp.MustCompile(`^[0-9a-fx?,{}\s.]*$`)
+	// Arguments are printed as hex words ("0x1f", "0xc000012345?"), in
+	// braces where they are the fields of one value, "..." when elided.
+	goArgsRe     = regexp.MustCompile(`^(?:0x[0-9a-f]+\??|\.\.\.|[{},\s])*$`)
 	goTypeArgsRe = regexp.MustCompile(`\[[^\]]*\]`)
 	// A method's receiver is written "(*Type)" or "(Type)".
 	goReceiver = strings.NewReplacer("(*", "", "(", "", ")", "")
@@ -25,19 +26,23 @@ var goVendorPrefixes = []string{
 }
 
 // goFrame reads a frame or a "created by" line. The file line that follows
-// each frame matches nothing.
+// each frame matches nothing. A call written in prose ("decode(abc)",
+// "failed()") is no frame: a frame names a package, or prints its arguments
+// the way the runtime does.
 func goFrame(line string) (StackFrame, bool) {
 	name, created := strings.CutPrefix(line, "created by ")
+	args := ""
 	if created {
 		name, _, _ = strings.Cut(name, " in goroutine ")
 	} else {
 		open := strings.LastIndexByte(line, '(')
-		if open == -1 || !strings.HasSuffix(line, ")") || !goArgsRe.MatchString(line[open+1:len(line)-1]) {
+		if open == -1 || !strings.HasSuffix(line, ")") {
 			return StackFrame{}, false
 		}
-		name = line[:open]
+		name, args = line[:open], line[open+1:len(line)-1]
 	}
-	if !goNameRe.MatchString(name) {
+	if !goNameRe.MatchString(name) || !goArgsRe.MatchString(args) ||
+		!strings.Contains(name, ".") && args == "" {
 		return StackFrame{}, false
 	}
 	name = goTypeArgsRe.ReplaceAllString(name, "")
