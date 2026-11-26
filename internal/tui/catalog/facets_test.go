@@ -121,7 +121,8 @@ func TestTailStartKeepsAnUncappedProjection(t *testing.T) {
 		"fetch logs\n| fields a\n| sort a\n| limit 5":        2,
 		"fetch logs\n| sort a\n| limit 5\n| fields a":        1,
 		"fetch logs\n| sort a\n| limit 5\n| fieldsAdd b = 1": 4,
-		"| fields a": 1,
+		"| fields a":          1,
+		"| sort a\n| limit 5": 0,
 	} {
 		lines := strings.Split(dql, "\n")
 		if got := tailStart(lines); got != want {

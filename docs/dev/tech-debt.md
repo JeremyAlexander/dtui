@@ -26,6 +26,39 @@ Live Debugger data and update the learnings entry.
 need a new YAML field and a restore path in `applyNamedPreset`. Fix: add
 `lens` to the preset schema if a real preset needs it.
 
+## The exceptions view's sample caps are not measured
+
+`ExceptionSampleRows` (1000) and `ExceptionSampleBytes` (8 MB) in
+`internal/tui/catalog/excissues.go` were set from the size of single spans:
+the only live tenant at hand held four exception spans, so no full sample
+was ever fetched, and the grouping was checked on synthetic spans only. It
+matters because the view's opening time and memory are these two numbers.
+Fix: open `:exceptions` on a tenant that fills the sample, time it, and
+settle both; record the result in `learnings.md` §1.11d.
+
+## The exceptions view computes each span's message for the key
+
+`exckey.FingerprintExceptions` parameterises the message of every span,
+though only the newest span's message of a group is shown and the key reads
+it on the message rung alone: about a fifth of the fingerprint's time on a
+span with a stack. It is off the update loop, so it costs fetch time, not
+frames. Fix: let the fingerprint skip the message where the key has frames
+and compute it once per group.
+
+## Two ways to echo a query
+
+`dataSource.echoQuery` folds a query's whitespace and quotes neither the
+query nor a segment id; `echoQueryExact` (the exceptions view) goes through
+`catalog.EchoCommand`. Fix: route `echoQuery` through `EchoCommand` and
+delete `echoQueryExact`.
+
+## An exception issue has no detail page
+
+`d` on an exceptions row opens the inspector on the row's three real fields
+(the newest span's ids and start time); what the key was built from is in
+the preview pane only, which narrow or short terminals hide. Fix: a detail
+view of the issue, or a `KeyFacts`-style block in the inspector.
+
 ## learnings.md is one long file
 
 `docs/dev/learnings.md` is over 1,700 lines, so an agent looking for one fact

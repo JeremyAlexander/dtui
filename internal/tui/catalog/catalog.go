@@ -291,6 +291,14 @@ type Spec struct {
 	// Live Debugger snapshots arrive as protobuf payloads and are decoded
 	// into readable variables and a stack here.
 	Decode func(records []map[string]any) []map[string]any
+	// Sample marks a view whose rows are computed from a bounded sample of
+	// the fetched records instead of being those records (nil = the records
+	// are the rows): the exceptions view groups the newest exception spans
+	// into issues. See SampleSpec.
+	Sample *SampleSpec
+	// Yank names what `y` copies for a row and how the status line calls it
+	// (nil, or "" text, leaves the default: the row's entity or record id).
+	Yank func(rec map[string]any) (text, label string)
 	// Dynamic derives the column set from the fetched records (the record
 	// sampler browses arbitrary tables); Columns is the empty-result
 	// fallback.
@@ -476,6 +484,29 @@ func ScanMetricDims(records []map[string]any, exclude map[string]bool, declaredK
 	return dims, primaryTagKeys
 }
 
+// SampleSpec describes a view that shows rows computed from a sample: the
+// query fetches at most Rows records and Bytes of result, and Group turns
+// them into the rows. A count in such a row is a share of the records that
+// arrived, never of the timeframe, so the view says above its table how many
+// arrived, how far back they reach and what cut them short (ADR-0007,
+// applied to completeness).
+//
+// Group runs where the records were fetched, off the update loop, on records
+// nothing else holds: it must be pure, and its rows must not keep the
+// records alive.
+type SampleSpec struct {
+	// Noun names one fetched record in the header ("exception span"); the
+	// plural adds an s.
+	Noun string
+	// Time is the record field the sample is ordered by, newest first: the
+	// header reads how far back the sample reaches from it.
+	Time string
+	// Rows is the query's own limit, restated so the view can tell a sample
+	// that hit it. Bytes caps the result's size.
+	Rows, Bytes int64
+	Group       func(records []map[string]any) []map[string]any
+}
+
 // UsesScope reports whether a view's query can compose an entity scope.
 func (s *Spec) UsesScope() bool { return s.Kind == KindSignal || s.EntityScoped }
 
@@ -564,7 +595,7 @@ type HopSpec struct {
 
 // specs is the ordered registry; order drives command-bar suggestions.
 var specs = []*Spec{
-	problemsSpec, servicesSpec, hostsSpec, processesSpec, logsSpec, tracesSpec, eventsSpec,
+	problemsSpec, servicesSpec, hostsSpec, processesSpec, logsSpec, tracesSpec, exceptionsSpec, eventsSpec,
 	podsSpec, containersSpec, workloadsSpec, namespacesSpec, nodesSpec, clustersSpec, fleetSpec, modulesSpec, agentLogsSpec,
 	awsSpec, azureSpec, entitiesSpec, resourcesSpec,
 	frontendsSpec, databasesSpec, genaiSpec, vulnsSpec, attacksSpec, metricsSpec,

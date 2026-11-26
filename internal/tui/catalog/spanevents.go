@@ -98,13 +98,20 @@ func SpanExceptions(rec map[string]any) []SpanException {
 	if cached, ok := rec[spanExcKey].([]SpanException); ok {
 		return cached
 	}
+	excs := parseSpanExceptions(rec)
+	rec[spanExcKey] = excs
+	return excs
+}
+
+// parseSpanExceptions is SpanExceptions without the memo: it writes nothing
+// to the record, for a caller that reads each record once.
+func parseSpanExceptions(rec map[string]any) []SpanException {
 	var excs []SpanException
 	for _, ev := range SpanEvents(rec) {
 		if ex, ok := ev.Exception(); ok {
 			excs = append(excs, ex)
 		}
 	}
-	rec[spanExcKey] = excs
 	return excs
 }
 

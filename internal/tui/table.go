@@ -27,6 +27,11 @@ type tableView struct {
 	rows []map[string]any // after /-filter and sort
 	scroller
 
+	// sample describes the records v.all was computed from, on a sampled
+	// spec (catalog.Spec.Sample); nil on every other view. It arrives with
+	// the rows and is replaced with them.
+	sample *sampleFacts
+
 	loading bool
 	err     error
 	seq     int
@@ -391,6 +396,9 @@ func (v *tableView) fetch() tea.Cmd {
 	if v.spec.API != "" {
 		return v.ds.call(v, v.seq, v.spec.API, v.scope, v.dql)
 	}
+	if v.spec.Sample != nil {
+		return v.ds.sample(v, v.seq, v.dql, v.spec.Sample, sampleWindow(v.scope.Timeframe))
+	}
 	if v.spec.RecordCap > 0 {
 		return v.ds.queryCapped(v, v.seq, v.dql, v.spec.RecordCap)
 	}
@@ -482,7 +490,27 @@ func (v *tableView) Echo() string {
 	if v.dql == "" {
 		return ""
 	}
+	if v.spec.Sample != nil {
+		return v.ds.echoQueryExact(v.dql)
+	}
 	return v.ds.echoQuery(v.dql)
+}
+
+// YankText supplies what the spec names for the selected row to the global
+// 'y' (catalog.Spec.Yank); views that name nothing keep the app's default.
+func (v *tableView) YankText() (text, label string, ok bool) {
+	rec := v.selected()
+	if v.spec.Yank == nil || rec == nil {
+		return "", "", false
+	}
+	text, label = v.spec.Yank(rec)
+	return text, label, text != ""
+}
+
+// sampleLine is a sampled view's header: what the rows below were computed
+// from ("" on other views and before the first sample).
+func (v *tableView) sampleLine() (text string, warn bool) {
+	return v.sample.line()
 }
 
 // DQL reveals the view's generated query (ctrl+q).
@@ -656,7 +684,7 @@ func (v *tableView) Update(msg tea.Msg) tea.Cmd {
 		v.loading = false
 		v.err = msg.err
 		if msg.err == nil {
-			v.all = msg.records
+			v.all, v.sample = msg.records, msg.sample
 			if v.spec.Decode != nil {
 				v.all = v.spec.Decode(v.all)
 			}
@@ -988,6 +1016,9 @@ func (v *tableView) pageSize() int {
 	if len(v.spec.Lenses) > 0 {
 		chrome++ // the lens strip line
 	}
+	if text, _ := v.sampleLine(); text != "" {
+		chrome++
+	}
 	if v.previewBottom() {
 		chrome += previewBottomH + 1 // panel plus its rule
 	}
@@ -1090,6 +1121,18 @@ func (v *tableView) renderTable(width, height int) string {
 	if v.err != nil {
 		b.WriteString("\n" + theme.Error.Render("✗ "+wrap(v.err.Error(), width-2)))
 		return b.String()
+	}
+
+	// A sampled view says what its counts are counts of, directly above
+	// them.
+	if text, warn := v.sampleLine(); text != "" {
+		chrome++
+		style := theme.Dim
+		if warn {
+			style = theme.Warn
+		}
+		b.WriteString(ansi.Truncate(" "+style.Render(text), width, "…"))
+		b.WriteString("\n")
 	}
 
 	// One gutter cell marks the cursor row; columns share the rest.

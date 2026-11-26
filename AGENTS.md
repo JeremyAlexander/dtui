@@ -67,12 +67,14 @@ belongs in a shared file; a third copy is a bug.
 | Cursor and viewport for a list | `internal/tui/scroller.go` |
 | Modal overlays | `internal/tui/overlay.go` |
 | Deep links into the web UI | `internal/tui/links.go` |
+| A `dtctl` command echo with a value in it | `catalog.EchoCommand` (`internal/tui/catalog/echo.go`) |
 | Server-side search and facets | `internal/tui/catalog/facets.go` |
 | Facet field safe to paste into DQL | `catalog.SafeFacetField` (`internal/tui/catalog/facets.go`); workspace keeps `unsafeFacetIdent` because it cannot import catalog |
 | Key facts and preview panes | `internal/tui/catalog/detail.go`, `internal/tui/catalog/preview.go` |
 | Timers (tests zero them) | `internal/tui/tick.go` |
 | Text inputs | `internal/tui/input.go` |
 | Group exceptions: issue key, stack frames, message placeholders | `exckey.FingerprintExceptions` (`excfingerprint.go`; `catalog.FingerprintExceptions` hands a span's events to it), `ParseStackFrames` (`excframes.go`; one parser per notation in `excframes_<runtime>.go`, listed in `stackNotations`), `ParameterizeMessage` (`excmessage.go`), all in `internal/exckey/`. A changed table, expression or limit there fails `TestExceptionKeyInputsArePinned`; a changed function body is caught only by a case, so add one. Both failures say how to repin before a release and when to raise `ExceptionKeyVersion` |
+| Rows computed from a bounded sample of records, with the header line that says so | `catalog.Spec.Sample` (`SampleSpec` in `catalog.go`); `internal/tui/sample.go` fetches, groups off the update loop and words the line |
 | API-backed data | a `Source` in `sources.go` |
 
 Add a row when you create a shared helper.

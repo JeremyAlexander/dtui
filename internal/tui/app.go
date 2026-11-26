@@ -689,7 +689,7 @@ func (a *app) handleKey(msg tea.KeyMsg) tea.Cmd {
 		case "c":
 			if echo := top.Echo(); echo != "" {
 				yank(echo)
-				return status("copied: " + echo)
+				return status("copied: " + flatten(echo))
 			}
 			return nil
 		case "o":
@@ -1291,7 +1291,7 @@ func (a *app) renderFooter() string {
 		line2 = " " + theme.Echo.Render("≈ "+a.notice.text)
 	default:
 		if echo := a.top().Echo(); echo != "" {
-			line2 = " " + theme.Echo.Render("≡ "+echo)
+			line2 = " " + theme.Echo.Render("≡ "+flatten(echo))
 		}
 	}
 	return line1 + "\n" + ansi.Truncate(line2, a.width, "…")

@@ -620,6 +620,40 @@ full 500-span trace in ~4.5 s.
   `samplingRatio`, raising `--default-scan-limit-gbytes`) but narrowing the
   timeframe is the biggest and the only one dtui applies automatically.
 
+### 1.11d Sampling exception spans — cost, projection and the size limit
+
+Validated live on a small OneAgent-fed tenant for the exceptions view
+(`catalog.exceptionsSpec`, `internal/tui/sample.go`). That tenant held four
+exception-bearing spans in 30 days, so these are facts about single spans
+and about the query's mechanics; nothing here was measured on a sample that
+reaches either cap.
+
+- **The `iAny` exception filter prunes the scan.** `fetch spans | filter
+  iAny(span.events[][span_event.name] == "exception")` scanned 2.9 MB over
+  2h, 18.6 MB over 7d and 26 MB over 30d, where an unfiltered count over the
+  same 30d scanned 1.09 GB. Server time for the 30d query was 46 to 60 ms.
+- **A projection halves an exception span.** One span was 9.8 KB of compact
+  JSON whole and 5.0 KB after `| fields` kept nine fields; about 4.7 KB of
+  that is the stack text in `span.events`, which the issue key needs. A
+  `| fields` after `| sort … | limit …` is accepted, and a `| filter` on a
+  field the projection drops still works when it sits before the sort
+  (four rows on `isNotNull(span.kind)`, none on a misspelled field), which
+  is where `tailStart` puts facets.
+- **A result cut at `maxResultBytes` is a prefix in sort order, announced as
+  `BYTE_LIMIT_ADDED`**: a WARNING, "Your result has been limited because the
+  maximum bytes (N) were reached." With `sort start_time desc` the records
+  that arrive are the newest. The limit is approximate: a limit of 12000
+  bytes returned about 15 KB. dtctl's own classifier does not know the type;
+  `classifyNotice` (`internal/tui/notice.go`) does, and the message alone
+  would otherwise pass for the row limit.
+- **`span.id` is a UID like `trace.id`.** `in(span.id, {"…"})` with string
+  literals returns nothing and warns about a type mismatch; it needs
+  `toUid("…")`. No code relies on this yet.
+- **OneAgent exception events on that tenant**: `exception.stack_trace`
+  without the JVM's `at ` prefix and without tabs, one exception event per
+  span, `span.status_code` null, `dt.service.name` set and `service.name`
+  absent.
+
 ### 1.12 The expansion tables (RUM, bizevents, dictionary, dt.system, synthetic)
 
 Validated live for Phase 3.5 (box tenant; synthetic on the demo tenant):
@@ -1436,6 +1470,8 @@ var myViewSpec = &Spec{
     EnterArg     func(rec) string // census row → typed browser via Scope.Arg
     Trace        func(rec) string // row's trace id (log→trace, trace→waterfall)
     Enrich   *EnrichSpec       // batched sparkline columns
+    Sample   *SampleSpec       // rows are computed from a bounded sample of the records
+    Yank     func(rec) (text, label string) // what y copies for a row
 }
 ```
 
@@ -1454,6 +1490,20 @@ Key design points learned:
 - **Curated where curation adds value, introspection everywhere else.** The
   generic `resources` view browses *any* Smartscape type from the census; only
   pods/hosts/services/etc. get bespoke columns.
+- **`SampleSpec`** is for a view whose rows no DQL can compute (the
+  exceptions view's issue key). The query fetches at most `Rows` records
+  and `Bytes` of result; `Group` turns them into rows inside the fetch
+  command (`dataSource.sample`), not in `Update`, which also draws. The
+  `dataMsg` then carries the rows and a `sampleFacts` (how many records
+  arrived, how far back they reach, the timeframe they were fetched over
+  and which limit cut them, read from that same response's notices), and
+  `tableView` prints them as a line above the header row. The facet picker
+  takes its fields from the fetched records, which the rows no longer
+  carry. A count in such a view is a share of the sample and the line must
+  say so; do not add a sampled view that hides it.
+- **A trailing `| fields` belongs to the sort/limit tail** (`tailStart`), so
+  a query can project the records it kept and searches and facets still
+  land before the cap, on the whole record.
 - **Two special `Drills` targets** beyond view names: `"metrics"` (canned
   charts) and `"trace"`/`"trace-logs"` (waterfall / trace-scoped logs).
   `EnterTarget: "waterfall"` is the sentinel for the bespoke waterfall screen.

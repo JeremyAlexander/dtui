@@ -110,6 +110,20 @@ func (d *dataSource) echoQuery(dql string) string {
 	return out
 }
 
+// echoQueryExact is echoQuery for a query that must reach the shell as it
+// ran: quoted by catalog.EchoCommand, its line breaks kept, each segment id
+// a word of its own however it is spelled.
+func (d *dataSource) echoQueryExact(dql string) string {
+	if dql == "" {
+		return ""
+	}
+	flags := make([]string, 0, 2*len(d.segments))
+	for _, ref := range d.segments {
+		flags = append(flags, "-S", ref.ID)
+	}
+	return catalog.EchoCommand("dtctl query", dql, flags...)
+}
+
 // dictOwner tags the one-shot dictionary fetch; the app routes its result
 // into the shared cache instead of a view.
 type dictOwner struct{}
@@ -217,6 +231,10 @@ type dataMsg struct {
 	// only from its own CLI path, which the TUI never invokes), so surfacing
 	// them here is the one place the user learns a result is PARTIAL.
 	notices []exec.QueryNotification
+	// sample is set by a sampled view's fetch (catalog.Spec.Sample): records
+	// then holds the rows computed from the sample, and sample what was
+	// fetched to compute them.
+	sample  *sampleFacts
 	elapsed time.Duration
 	err     error
 }
@@ -262,22 +280,27 @@ func (d *dataSource) queryCapped(owner any, seq int, dql string, maxRecords int6
 
 func (d *dataSource) run(owner any, seq int, dql string, maxRecords int64, enrichMetrics bool) tea.Cmd {
 	return func() tea.Msg {
-		start := time.Now()
-		if d.runFn != nil {
-			records, err := d.runFn(dql)
-			return dataMsg{owner: owner, seq: seq, dql: dql, elapsed: time.Since(start), records: records, err: err}
-		}
-		resp, err := d.exec.ExecuteQueryWithContext(context.Background(), dql, d.execOpts(maxRecords, enrichMetrics))
-		msg := dataMsg{owner: owner, seq: seq, dql: dql, elapsed: time.Since(start), err: rewriteSegmentVarError(err)}
-		if err == nil {
-			if resp == nil {
-				msg.err = errors.New("query cancelled")
-			} else {
-				msg.records = resp.GetRecords()
-				msg.metrics = resp.GetMetrics()
-				msg.notices = resp.GetNotifications()
-			}
-		}
-		return msg
+		return d.fetch(owner, seq, dql, d.execOpts(maxRecords, enrichMetrics))
 	}
+}
+
+// fetch runs one query to its result. It blocks: only a command calls it.
+func (d *dataSource) fetch(owner any, seq int, dql string, opts exec.DQLExecuteOptions) dataMsg {
+	start := time.Now()
+	if d.runFn != nil {
+		records, err := d.runFn(dql)
+		return dataMsg{owner: owner, seq: seq, dql: dql, elapsed: time.Since(start), records: records, err: err}
+	}
+	resp, err := d.exec.ExecuteQueryWithContext(context.Background(), dql, opts)
+	msg := dataMsg{owner: owner, seq: seq, dql: dql, elapsed: time.Since(start), err: rewriteSegmentVarError(err)}
+	if err == nil {
+		if resp == nil {
+			msg.err = errors.New("query cancelled")
+		} else {
+			msg.records = resp.GetRecords()
+			msg.metrics = resp.GetMetrics()
+			msg.notices = resp.GetNotifications()
+		}
+	}
+	return msg
 }
