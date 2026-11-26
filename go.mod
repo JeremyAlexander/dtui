@@ -4,7 +4,7 @@ go 1.26.11
 
 require (
 	github.com/Dynatrace/dtctl v0.46.0
-	github.com/Dynatrace/dtctl/sdk v0.46.0
+	github.com/Dynatrace/dtctl/sdk v0.47.0
 	github.com/adrg/xdg v0.5.3
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1
 	github.com/charmbracelet/bubbles v1.0.0
