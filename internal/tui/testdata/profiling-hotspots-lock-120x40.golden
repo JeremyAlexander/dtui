@@ -5,8 +5,8 @@
  FIXTURE java-webapp (a recording, not this environment) · last 2h of the selected 24h (10:00–12:00 UTC)
  11,353 lock samples (stacks seen, not time) · all threads, leaf: total
  SELF%     SELF  SELF ▇    TOTAL%    TOTAL  TOTAL ▇   PATHS  FUNCTION
-▌ 77.7    8,818  ████████    77.7    8,818  ██████▎       8  java.util.concurrent.locks.LockSupport.parkNanos
-  19.9    2,260  ██          19.9    2,260  █▋            1  com.example.shop.checkout.OrderNumberGenerator.next
+▌ 77.7    8,818  ██████▎     77.7    8,818  ██████▎       8  java.util.concurrent.locks.LockSupport.parkNanos
+  19.9    2,260  █▋          19.9    2,260  █▋            1  com.example.shop.checkout.OrderNumberGenerator.next
    1.6      180  ▏            1.6      180  ▏             1  com.example.shop.session.SessionStore.evictExpired
    0.8       95  ▏            0.8       95  ▏             1  com.example.shop.catalog.ProductCache.put
    0.0        0             100.0   11,353  ████████      1  java.lang.Thread.run

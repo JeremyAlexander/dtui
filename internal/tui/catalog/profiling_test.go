@@ -271,3 +271,30 @@ func TestCaptionSaysWhatTheRowCapKept(t *testing.T) {
 		t.Errorf("focus caption %q mentions callees, which were all kept", got)
 	}
 }
+
+// The SELF and TOTAL bars of the functions table share one scale, the share
+// of all samples: equal shares draw equal bars, and a flat profile looks flat.
+func TestHotspotBarsShareOneScale(t *testing.T) {
+	rows := hotspotsSpec.Decode([]map[string]any{
+		{ProfSelf: 40.0, ProfSelfPct: 4.0, ProfTotal: 500.0, ProfTotalPct: 50.0},
+		{ProfSelf: 20.0, ProfSelfPct: 2.0, ProfTotal: 40.0, ProfTotalPct: 4.0},
+	})
+	selfBar, totalBar := hotspotsSpec.Columns[2], hotspotsSpec.Columns[5]
+	for _, tc := range []struct {
+		name string
+		got  string
+		want string
+	}{
+		{"4% self", selfBar.TextAt(rows[0], 8), "▎"},
+		{"50% total", totalBar.TextAt(rows[0], 8), "████"},
+		{"2% self", selfBar.TextAt(rows[1], 8), "▏"},
+		{"4% total", totalBar.TextAt(rows[1], 8), "▎"},
+	} {
+		if tc.got != tc.want {
+			t.Errorf("%s draws %q, want %q", tc.name, tc.got, tc.want)
+		}
+	}
+	if k := selfBar.Sort(rows[0]); k != 0.04 {
+		t.Errorf("the 4%% self bar sorts as %v, want 0.04", k)
+	}
+}

@@ -242,10 +242,10 @@ var hotspotsSpec = &Spec{
 	Columns: []Column{
 		{Title: "SELF%", Width: 5, Right: true, Field: ProfSelfPct, Value: pctCell(ProfSelfPct)},
 		{Title: "SELF", Width: 7, Right: true, Field: ProfSelf, Value: countCell(ProfSelf)},
-		barColumn("SELF ▇", "__rel."+ProfSelf),
+		barColumn("SELF ▇", "__rel."+ProfSelfPct),
 		{Title: "TOTAL%", Width: 6, Right: true, Field: ProfTotalPct, Value: pctCell(ProfTotalPct)},
 		{Title: "TOTAL", Width: 7, Right: true, Field: ProfTotal, Value: countCell(ProfTotal)},
-		barColumn("TOTAL ▇", "__rel."+ProfTotal),
+		barColumn("TOTAL ▇", "__rel."+ProfTotalPct),
 		{Title: "PATHS", Width: 5, Right: true, Field: ProfPaths, Value: countCell(ProfPaths)},
 		frameColumn("FUNCTION", ProfFunction),
 	},
@@ -263,11 +263,13 @@ var hotspotsSpec = &Spec{
 		}
 	},
 	Decode: func(records []map[string]any) []map[string]any {
-		stampRelative(records, ProfSelf)
-		stampRelative(records, ProfTotal)
+		// Every bar is a share of the samples counted, on one scale, so
+		// that equal shares draw equal bars and a flat profile looks flat.
 		for _, rec := range records {
-			if share, ok := FloatValue(rec[ProfShare]); ok {
-				rec["__rel."+ProfShare] = share / 100
+			for _, key := range []string{ProfSelfPct, ProfTotalPct, ProfShare} {
+				if pct, ok := FloatValue(rec[key]); ok {
+					rec["__rel."+key] = pct / 100
+				}
 			}
 		}
 		return records
@@ -462,8 +464,7 @@ func frameColumn(title, key string) Column {
 }
 
 // stampRelative stores each record's value under key as a fraction of the
-// largest one, for the bar next to it: a share of 4% is the top of a flat
-// profile, and a bar scaled to 100% would not show it.
+// largest one, for the bar next to it.
 func stampRelative(records []map[string]any, key string) {
 	top := 0.0
 	for _, rec := range records {
