@@ -747,3 +747,67 @@ func TestFlameGraphHelpListsItsKeys(t *testing.T) {
 		}
 	}
 }
+
+// BenchmarkFlameGraphKey is what one key press costs on a profile larger
+// than any seen (50,000 stacks, each 100 frames deep, about half a million
+// frames) at 250 columns in full colour: the move, and the screen drawn again.
+// BenchmarkFlameGraphZoom is the same for a key that lays the graph out anew.
+func benchFlameView(b *testing.B) *flameView {
+	b.Helper()
+	old := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	b.Cleanup(func() { lipgloss.SetColorProfile(old) })
+	builder := flame.NewBuilder(len(catalog.HotspotStates()))
+	frames := make([]string, 100)
+	for s := range 50_000 {
+		for d := range frames {
+			switch {
+			case d < 60:
+				frames[d] = fmt.Sprintf("com.example.app.trunk%d.Handler.step%d", s%64, d)
+			case d < 90:
+				frames[d] = fmt.Sprintf("com.example.app.branch%d.Handler.step%d", s%8, d)
+			default:
+				frames[d] = fmt.Sprintf("com.example.app.leaf%d.Handler.step%d", s%997, d+s%7)
+			}
+		}
+		builder.Add(frames, []int64{int64(1 + s%13), int64(s % 3), 0, int64(s % 2), 1})
+	}
+	spec := catalog.Lookup("hotspots")
+	fv := &flameView{spec: spec, input: newTextInput(), width: 250, height: 56, building: true}
+	fv.built(flameBuiltMsg{view: fv, tree: builder.Tree(), summary: map[string]any{}})
+	if fv.graph.Tree().Len() < 400_000 {
+		b.Fatalf("the profile has %d frames", fv.graph.Tree().Len())
+	}
+	return fv
+}
+
+func BenchmarkFlameGraphKey(b *testing.B) {
+	fv := benchFlameView(b)
+	keys := []tea.KeyMsg{flameKey("down"), flameKey("right"), flameKey("down"), flameKey("up"), flameKey("left"), flameKey("up")}
+	b.ReportAllocs()
+	i := 0
+	for b.Loop() {
+		fv.handleKey(keys[i%len(keys)])
+		i++
+		if out := fv.View(250, 56); len(out) < 1000 {
+			b.Fatal("nothing was drawn")
+		}
+	}
+}
+
+func BenchmarkFlameGraphZoom(b *testing.B) {
+	fv := benchFlameView(b)
+	for range 30 {
+		fv.handleKey(flameKey("down"))
+	}
+	keys := []tea.KeyMsg{flameKey("enter"), flameKey("backspace"), flameKey("]"), flameKey("[")}
+	b.ReportAllocs()
+	i := 0
+	for b.Loop() {
+		fv.handleKey(keys[i%len(keys)])
+		i++
+		if out := fv.View(250, 56); len(out) < 1000 {
+			b.Fatal("nothing was drawn")
+		}
+	}
+}

@@ -177,3 +177,18 @@ func TestStacksSourceShape(t *testing.T) {
 		}
 	}
 }
+
+// A stack is handed over as one string, so a frame whose label holds the
+// separator comes out as two frames. Known and wrong; it stays until dtctl
+// exports the frames of a stack as a list (docs/dev/tech-debt.md).
+func TestAStackLabelWithTheSeparatorSplits(t *testing.T) {
+	tree := stackTree([]map[string]any{
+		{catalog.ProfStack: "main;parse(Ljava/lang/String;)V;leaf", "running": 3.0},
+	})
+	if got := tree.Levels(); got != 5 {
+		t.Errorf("the stack has %d levels under the root: the limit this test pins has changed, update the tech-debt entry", got-1)
+	}
+	if got := tree.Total(flame.Root, 0); got != 3 {
+		t.Errorf("the samples of the stack are %d, want 3 whatever its frames", got)
+	}
+}
