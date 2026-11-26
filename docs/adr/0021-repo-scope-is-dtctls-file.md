@@ -217,11 +217,14 @@ header. A view that carries neither shows no scope.
   0.47.0) and the move to the `github.com/Dynatrace/dtctl` module path.
 - dtui couples to an experimental dtctl package: its API may change in any
   dtctl release, and a dtctl bump can break the build.
-- The command echo (`c`) of a DQL view is the request dtui sent: the query
-  text, rewritten where the filter was inserted, and one `-S` per segment
-  sent, variables included, in the spelling dtctl's `--segment` takes. Every
-  argument is quoted for a POSIX shell (the catalog's `shellSingleQuote`) and
-  no whitespace inside the query is folded: a service name may hold an
+- The command echo (`c`) of a DQL view names the request dtui sent: the query
+  text, rewritten where the filter was inserted, one `-S` per segment sent,
+  variables included, in the spelling dtctl's `--segment` takes, and
+  `--context <name>` when the session's context is not the one dtctl would
+  use. dtui's context is session-local (`--context`, `DTCTL_CONTEXT` or the
+  workspace file), so without it a pasted command runs on dtctl's current
+  context. Every argument is quoted for a POSIX shell by one helper of the
+  catalog, which every echo goes through, and no whitespace inside the query is folded: a service name may hold an
   apostrophe or two spaces, and a segment's variables are joined with `&`.
   Today's `echoQuery` wraps the text in bare single quotes and folds
   whitespace, which would let a committed name end the quoting and run the
@@ -237,7 +240,7 @@ header. A view that carries neither shows no scope.
   command for other shells.
 - dtui scopes by default where dtctl, under a stability floor that hides the
   experimental flags, does not. The header says what dtui sent, and the echo's
-  prefix makes the pasted command return the same rows.
+  prefix makes the pasted command send the same request in the same context.
 - The entry's filter narrows rows, not the scan. A filter after `fetch` does
   not keep a wide timeframe under Grail's scan limit (dtctl's design document
   records a scoped 15-minute log count that still scanned 341 GB), so a scoped
