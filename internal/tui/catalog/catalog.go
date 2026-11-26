@@ -504,11 +504,26 @@ type SampleSpec struct {
 	// Rows is the query's own limit, restated so the view can tell a sample
 	// that hit it. Bytes caps the result's size.
 	Rows, Bytes int64
-	Group       func(records []map[string]any) []map[string]any
+	// Fields is the projection of the fetched records ("" = whole records):
+	// the field list of a `| fields` stage that Project appends behind the
+	// composed query. It is kept out of the query text so narrowing stages
+	// are placed by the one rule every query follows (tailStart) and see the
+	// whole record.
+	Fields string
+	Group  func(records []map[string]any) []map[string]any
 	// Match is text of a row that the `/` filter matches beside its cells
 	// (nil = the cells alone): what Group computed and no fetched record
 	// holds, like the issue key someone pasted from a ticket.
 	Match func(row map[string]any) string
+}
+
+// Project appends the sample's projection to a composed list query: the last
+// stage, behind the searches, the facets and the limit.
+func (s *SampleSpec) Project(dql string) string {
+	if s.Fields == "" {
+		return dql
+	}
+	return dql + "\n| fields " + s.Fields
 }
 
 // UsesScope reports whether a view's query can compose an entity scope.

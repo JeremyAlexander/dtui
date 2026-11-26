@@ -52,7 +52,7 @@ func issuesOf(t *testing.T, rows []map[string]any) []ExceptionIssue {
 
 func TestExceptionsQueryShape(t *testing.T) {
 	tf := Timeframe{Label: "2h"}
-	dql := exceptionsSpec.Query(Scope{Timeframe: tf})
+	dql := exceptionsSpec.Sample.Project(exceptionsSpec.Query(Scope{Timeframe: tf}))
 	want := "fetch spans, from:now() - 2h\n" +
 		"| filter iAny(span.events[][span_event.name] == \"exception\")\n" +
 		"| sort start_time desc\n" +
@@ -80,8 +80,8 @@ func TestExceptionsQueryShape(t *testing.T) {
 // compares the fetched count to it.
 func TestExceptionsQueryLimitIsTheSampleCap(t *testing.T) {
 	dql := exceptionsSpec.Query(Scope{Timeframe: Timeframe{Label: "2h"}})
-	if want := fmt.Sprintf("\n| limit %d\n", ExceptionSampleRows); !strings.Contains(dql, want) {
-		t.Errorf("query does not carry %q:\n%s", want, dql)
+	if want := fmt.Sprintf("\n| limit %d", ExceptionSampleRows); !strings.HasSuffix(dql, want) {
+		t.Errorf("query does not end on %q:\n%s", want, dql)
 	}
 	if exceptionsSpec.Sample.Rows != 1000 || exceptionsSpec.Sample.Bytes != 8*1024*1024 {
 		t.Errorf("sample caps = %d rows, %d bytes, want 1000 rows and 8 MB",
@@ -92,8 +92,8 @@ func TestExceptionsQueryLimitIsTheSampleCap(t *testing.T) {
 // A facet narrows what is sampled: it must land before the sort and the
 // limit, on the whole span, not on the projected fields after them.
 func TestExceptionsQueryNarrowsBeforeSampling(t *testing.T) {
-	dql := ComposeQuery(exceptionsSpec.Query(Scope{Timeframe: Timeframe{Label: "2h"}}),
-		[]string{"timeout"}, []Facet{{Field: "k8s.namespace.name", Value: "shop"}}, true)
+	dql := exceptionsSpec.Sample.Project(ComposeQuery(exceptionsSpec.Query(Scope{Timeframe: Timeframe{Label: "2h"}}),
+		[]string{"timeout"}, []Facet{{Field: "k8s.namespace.name", Value: "shop"}}, false))
 	lines := strings.Split(dql, "\n")
 	at := func(prefix string) int {
 		for i, l := range lines {
@@ -109,6 +109,17 @@ func TestExceptionsQueryNarrowsBeforeSampling(t *testing.T) {
 	if !(search < facet && facet < sortAt && sortAt < limit && limit < fields) || fields != len(lines)-1 {
 		t.Errorf("stage order is wrong (search %d, facet %d, sort %d, limit %d, fields %d of %d):\n%s",
 			search, facet, sortAt, limit, fields, len(lines), dql)
+	}
+}
+
+// A sample without a projection hands its query on as composed.
+func TestSampleSpecProjectsOnlyNamedFields(t *testing.T) {
+	const dql = "fetch spans\n| limit 5"
+	if got := (&SampleSpec{}).Project(dql); got != dql {
+		t.Errorf("Project without Fields = %q, want the query unchanged", got)
+	}
+	if got, want := (&SampleSpec{Fields: "a, b"}).Project(dql), dql+"\n| fields a, b"; got != want {
+		t.Errorf("Project = %q, want %q", got, want)
 	}
 }
 

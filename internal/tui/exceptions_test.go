@@ -122,6 +122,26 @@ func TestExceptionsViewGroupsInTheFetchCommand(t *testing.T) {
 	}
 }
 
+// The projection is the last stage of the query the view runs, echoes and
+// reveals: a search and a facet land before the limit, on the whole span.
+func TestExceptionsViewProjectsBehindItsNarrowing(t *testing.T) {
+	a := testApp(t, "exceptions")
+	tv := a.top().(*tableView)
+	tv.searches = []string{"timeout"}
+	tv.facets = []catalog.Facet{{Field: "k8s.namespace.name", Value: "shop"}}
+	tv.Refresh()
+	want := "fetch spans, from:now() - 2h\n" +
+		"| search \"*timeout*\"\n" +
+		"| filter iAny(span.events[][span_event.name] == \"exception\")\n" +
+		"| filter k8s.namespace.name == \"shop\"\n" +
+		"| sort start_time desc\n" +
+		"| limit 1000\n" +
+		"| fields start_time, span.id, trace.id, span.name, endpoint.name, dt.service.name, service.name, dt.smartscape.service, span.events"
+	if tv.DQL() != want {
+		t.Errorf("composed query =\n%s\nwant\n%s", tv.DQL(), want)
+	}
+}
+
 func TestExceptionsViewAsksForBothCaps(t *testing.T) {
 	d := &dataSource{segments: []exec.FilterSegmentRef{{ID: "uid-a"}}}
 	opts := d.sampleOpts(catalog.Lookup("exceptions").Sample)

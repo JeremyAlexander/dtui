@@ -1501,9 +1501,12 @@ Key design points learned:
   takes its fields from the fetched records, which the rows no longer
   carry. A count in such a view is a share of the sample and the line must
   say so; do not add a sampled view that hides it.
-- **A trailing `| fields` belongs to the sort/limit tail** (`tailStart`), so
-  a query can project the records it kept and searches and facets still
-  land before the cap, on the whole record.
+- **A sampled view's projection is not in its query text.** The query ends
+  on its sort and limit like every other, and `SampleSpec.Fields` names the
+  projection, which `composeDQL` appends last (`SampleSpec.Project`). So
+  searches and facets land before the cap, on the whole record, by the one
+  rule every query follows. `tailStart` never counts a `| fields` line as
+  tail: in a user's own query a facet may name a field that line creates.
 - **Two special `Drills` targets** beyond view names: `"metrics"` (canned
   charts) and `"trace"`/`"trace-logs"` (waterfall / trace-scoped logs).
   `EnterTarget: "waterfall"` is the sentinel for the bespoke waterfall screen.

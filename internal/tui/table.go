@@ -261,9 +261,9 @@ func (v *tableView) setLens(i int, wrap bool) tea.Cmd {
 // later in the pipeline; the bucket filter prunes physical reads at the
 // source), the record's bucket projected in on bucket-backed views (skipped
 // for API views — their query feeds an analyzer, not the table), any
-// primary-tag fieldsAdd stages for ProjectPrimaryTags specs, and the
-// remaining facet filters before the sort/limit tail. API-backed views
-// without a query render "".
+// primary-tag fieldsAdd stages for ProjectPrimaryTags specs, the remaining
+// facet filters before the sort/limit tail, and last a sampled view's
+// projection. API-backed views without a query render "".
 //
 // For MetricRoster specs the path differs: facets and searches embed into
 // filter:{} pre-aggregation via Scope.FilterConds rather than being injected
@@ -276,7 +276,9 @@ func (v *tableView) composeDQL() string {
 	if v.spec.MetricRoster {
 		return v.composeRosterDQL()
 	}
-	dql := catalog.ComposeQuery(v.spec.Query(v.scope), v.searches, v.facets, v.spec.API == "")
+	// A sampled view projects its records last (SampleSpec.Fields), which
+	// would drop a bucket projected up here.
+	dql := catalog.ComposeQuery(v.spec.Query(v.scope), v.searches, v.facets, v.spec.API == "" && v.spec.Sample == nil)
 	// Primary-tag column injection. Two paths depending on query shape:
 	//   InjectPrimaryTags set → spec uses | fields/| summarize; hook embeds
 	//     keys inside the projection boundary before the body is finalized.
@@ -293,6 +295,9 @@ func (v *tableView) composeDQL() string {
 			}
 			dql = catalog.InjectStages(dql, stages)
 		}
+	}
+	if v.spec.Sample != nil {
+		dql = v.spec.Sample.Project(dql)
 	}
 	return dql
 }

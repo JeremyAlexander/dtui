@@ -95,34 +95,17 @@ func TestInjectStagesNoTailAppends(t *testing.T) {
 	}
 }
 
-// A projection after the sort/limit suffix is part of the tail: a narrowing
-// stage must see the whole record, and must apply before the cap.
-func TestInjectStagesBeforeAProjectedTail(t *testing.T) {
-	dql := "fetch spans, from:now() - 2h\n| filter x == 1\n| sort start_time desc\n| limit 1000\n| fields start_time, span.events"
-	got := InjectStages(dql, []string{`| filter k8s.namespace.name == "shop"`})
-	want := "fetch spans, from:now() - 2h\n| filter x == 1\n| filter k8s.namespace.name == \"shop\"\n| sort start_time desc\n| limit 1000\n| fields start_time, span.events"
-	if got != want {
-		t.Errorf("InjectStages =\n%s\nwant\n%s", got, want)
-	}
-	// The explored field's values come from the records before the cap and
-	// the projection.
-	summary := FieldsSummaryQuery(dql, Facet{Field: "k8s.namespace.name"}, nil, nil)
-	if strings.Contains(summary, "| fields ") || strings.Contains(summary, "| limit 1000") {
-		t.Errorf("the summary query kept the tail:\n%s", summary)
-	}
-}
-
-// A projection that follows no sort or limit is a transform like any other:
-// stages append after it, and a second projection line is not skipped.
-func TestTailStartKeepsAnUncappedProjection(t *testing.T) {
+// A projection is never part of the tail, also behind a sort and a limit: a
+// stage placed in front of it could name a field the projection creates. A
+// view that projects the records it kept says so in SampleSpec.Fields.
+func TestTailStartStopsAtAProjection(t *testing.T) {
 	for dql, want := range map[string]int{
 		"fetch logs\n| fields a, b":                          2,
 		"fetch logs\n| limit 5\n| fields a\n| fields b":      4,
 		"fetch logs\n| fields a\n| sort a\n| limit 5":        2,
-		"fetch logs\n| sort a\n| limit 5\n| fields a":        1,
+		"fetch logs\n| sort a\n| limit 5\n| fields b = a":    4,
 		"fetch logs\n| sort a\n| limit 5\n| fieldsAdd b = 1": 4,
-		"| fields a":          1,
-		"| sort a\n| limit 5": 0,
+		"| sort a\n| limit 5":                                0,
 	} {
 		lines := strings.Split(dql, "\n")
 		if got := tailStart(lines); got != want {
@@ -176,7 +159,9 @@ func TestInjectionOnEveryCatalogQuery(t *testing.T) {
 			t.Errorf("%s: first line is not a source command:\n%s", spec.Name, dql)
 		}
 		got := InjectStages(dql, []string{`| filter x == "y"`})
-		if gl := strings.Split(got, "\n"); tailStart(gl) == len(gl) {
+		gl := strings.Split(got, "\n")
+		last := strings.TrimSpace(gl[len(gl)-1])
+		if !strings.HasPrefix(last, "| limit") && !strings.HasPrefix(last, "| sort") {
 			t.Errorf("%s: query does not end with a sort/limit tail:\n%s", spec.Name, dql)
 		}
 		idx := strings.Index(got, `| filter x == "y"`)
@@ -485,26 +470,5 @@ func TestEscapeFieldExported(t *testing.T) {
 	// A map-index ref keeps the base bare and backtick-quotes the key.
 	if got := EscapeField("labels[app.kubernetes.io/name]"); got != "labels[`app.kubernetes.io/name`]" {
 		t.Errorf("EscapeField(map-index) = %q, want base[`key`]", got)
-	}
-}
-
-// Counting a trailing `| fields` as tail moves where stages land in a query
-// that ends that way. Only a sampled view's query may: every other query,
-// in every lens, still ends on its sort or limit line, so the rule changed
-// nothing for it.
-func TestOnlyASampledQueryProjectsAfterItsTail(t *testing.T) {
-	for _, spec := range All() {
-		if spec.Query == nil {
-			continue
-		}
-		for lens := range max(1, len(spec.Lenses)) {
-			dql := StageLines(spec.Query(Scope{Timeframe: DefaultTimeframe, Lens: lens}))
-			lines := strings.Split(dql, "\n")
-			projected := !sortOrLimit(lines[len(lines)-1])
-			if projected != (spec.Sample != nil) {
-				t.Errorf("%s (lens %d): ends on %q; only a view with a Sample projects after its tail",
-					spec.Name, lens, lines[len(lines)-1])
-			}
-		}
 	}
 }

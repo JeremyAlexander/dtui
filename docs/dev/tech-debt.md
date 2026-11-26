@@ -64,12 +64,12 @@ result and take the notice only then.
 
 ## The exceptions view offers no bucket facet
 
-`BucketEligible` reads the view's `| fields` projection as dropping
-`dt.system.bucket`, so the facet manager does not pin the bucket and the
-query does not project it, though a bucket filter in front of the sort
-would narrow the scan before sampling. Fix: teach `BucketEligible` that a
-projection behind the sort/limit tail keeps the field queryable, and
-offer the facet without projecting the field.
+The view's projection (`SampleSpec.Fields`) drops `dt.system.bucket`, so
+`composeDQL` does not project the bucket on a sampled view and
+`orderCandidates` does not pin it, though a bucket filter in front of the
+sort would narrow the scan before sampling. Fix: offer the facet on a
+sampled view without projecting the field, once a bucket-filtered sample
+was checked on a live environment.
 
 ## The empty-table text says "last" before a custom window
 

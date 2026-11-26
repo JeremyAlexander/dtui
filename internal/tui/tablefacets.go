@@ -298,7 +298,8 @@ func (v *tableView) orderCandidates(scalars, tagKeys []string) []string {
 	// Discovered tag keys always trail — one identity per context+key, already
 	// grouped by tagContextOrder.
 	out = append(out, tagKeys...)
-	if catalog.BucketEligible(v.spec.Query(v.scope)) {
+	// A sampled view's records do not carry the bucket (composeDQL).
+	if v.spec.Sample == nil && catalog.BucketEligible(v.spec.Query(v.scope)) {
 		out = append([]string{catalog.BucketField}, out...)
 	}
 	return out

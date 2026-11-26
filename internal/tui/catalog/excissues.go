@@ -31,12 +31,13 @@ const (
 	ExceptionSampleBytes = 8 << 20
 )
 
-// exceptionSampleFields are the span fields the sample keeps: what the key
-// is computed from (span.events), what a row shows (the start time and the
-// service), what enter needs to open the newest span's trace, and three
-// fields no row reads (span.name, endpoint.name, dt.smartscape.service),
-// kept so the facet picker has them to offer. Everything else on a span is
-// left on the server, which halves the result (measured on single spans).
+// exceptionSampleFields are the span fields the sample keeps
+// (SampleSpec.Fields): what the key is computed from (span.events), what a
+// row shows (the start time and the service), what enter needs to open the
+// newest span's trace, and three fields no row reads (span.name,
+// endpoint.name, dt.smartscape.service), kept so the facet picker has them
+// to offer. Everything else on a span is left on the server, which halves
+// the result (measured on single spans).
 const exceptionSampleFields = "start_time, span.id, trace.id, span.name, endpoint.name, " +
 	"dt.service.name, service.name, dt.smartscape.service, span.events"
 
@@ -45,9 +46,9 @@ var exceptionsSpec = &Spec{
 	Aliases: []string{"exc"},
 	Kind:    KindSignal,
 	Desc:    "Exception issues: the newest exception spans, grouped by what was thrown where",
-	// Narrowing stages land before the sort and the limit (tailStart), so a
-	// search or a facet changes what is sampled and can use any span field;
-	// the projection comes last.
+	// The query ends on its sort and limit like every catalog query, so a
+	// search or a facet lands before them (tailStart): it changes what is
+	// sampled and can use any span field. Sample.Fields projects afterwards.
 	Query: func(s Scope) string {
 		var b strings.Builder
 		fmt.Fprintf(&b, "fetch spans, from:%s", s.Timeframe.DQL())
@@ -56,15 +57,15 @@ var exceptionsSpec = &Spec{
 		}
 		fmt.Fprintf(&b, "\n| filter %s", exceptionSpanFilter)
 		fmt.Fprintf(&b, "\n| sort start_time desc\n| limit %d", ExceptionSampleRows)
-		b.WriteString("\n| fields " + exceptionSampleFields)
 		return b.String()
 	},
 	Sample: &SampleSpec{
-		Noun:  "exception span",
-		Time:  "start_time",
-		Rows:  ExceptionSampleRows,
-		Bytes: ExceptionSampleBytes,
-		Group: GroupExceptionIssues,
+		Noun:   "exception span",
+		Time:   "start_time",
+		Rows:   ExceptionSampleRows,
+		Bytes:  ExceptionSampleBytes,
+		Fields: exceptionSampleFields,
+		Group:  GroupExceptionIssues,
 		// The key is in no cell and the EXCEPTION cell shortens the type.
 		Match: func(row map[string]any) string {
 			issue := issueOf(row)
