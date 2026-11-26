@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"sync"
 	"time"
 
@@ -23,8 +22,10 @@ import (
 // profiler runs profiling analyses of one process. Every request it sends is
 // a GET (ADR-0011): an analysis reads samples the agent already collected.
 type profiler interface {
-	// Eligible reports whether an analysis can run on the entity id at all.
-	Eligible(entityID string) bool
+	// Subject is the id the environment is asked about for entityID, the
+	// same for every spelling of one process; ok is false for an entity no
+	// analysis runs on.
+	Subject(entityID string) (id string, ok bool)
 	Hotspots(ctx context.Context, q profileQuery) (hotspotReading, error)
 	Allocations(ctx context.Context, q profileQuery) (allocationReading, error)
 }
@@ -125,9 +126,10 @@ func (f *profileFailure) Error() string {
 }
 
 // profileCacheTTL is how long an analysis of a moving window ("last 2h") is
-// reused. Switching the thread-state lens and walking callers and callees
-// read the same analysis, so within the TTL they cost no request; after it,
-// the next read (or r) analyses the window as it then is.
+// reused, counted from when it arrived. Switching the thread-state lens and
+// walking callers and callees read the same analysis, so within the TTL they
+// cost no request; after it, the next read (or r) analyses the window as it
+// then is.
 const profileCacheTTL = 2 * time.Minute
 
 // profileAbandonGrace is how long an analysis nobody waits for keeps running.
@@ -136,7 +138,8 @@ const profileCacheTTL = 2 * time.Minute
 // was really left, dtui stops polling after the grace.
 const profileAbandonGrace = 2 * time.Second
 
-// profileCacheSize bounds the analyses kept: a hotspots result is megabytes.
+// profileCacheSize bounds the finished analyses kept: a hotspots result is
+// megabytes.
 const profileCacheSize = 4
 
 // profileRuns shares analyses between the calls of the views. A call for an
@@ -148,6 +151,8 @@ const profileCacheSize = 4
 type profileRuns struct {
 	now   func() time.Time
 	grace time.Duration
+	// after runs f once d has passed; tests fire it by hand.
+	after func(d time.Duration, f func())
 
 	mu   sync.Mutex
 	runs map[string]*profileRun
@@ -158,18 +163,24 @@ type profileRun struct {
 	key    string
 	seq    int
 	window catalog.ProfileWindow
-	at     time.Time
 	pinned bool // an absolute, closed window: its analysis never goes stale
 
 	done    chan struct{}
+	at      time.Time // when the analysis arrived
 	result  any
 	err     error
 	cancel  context.CancelFunc
 	waiters map[context.Context]struct{}
+	// left counts the times the last waiter left, so that the grace timer
+	// of an earlier leave can tell it was overtaken.
+	left int
 }
 
 func newProfileRuns() *profileRuns {
-	return &profileRuns{now: time.Now, grace: profileAbandonGrace, runs: map[string]*profileRun{}}
+	return &profileRuns{
+		now: time.Now, grace: profileAbandonGrace, runs: map[string]*profileRun{},
+		after: func(d time.Duration, f func()) { time.AfterFunc(d, f) },
+	}
 }
 
 // profileNoteKey carries the run's progress reporter on the context of the
@@ -185,13 +196,17 @@ func profileNote(ctx context.Context, text string) {
 }
 
 // get returns the analysis for key, running fetch unless it is cached or in
-// flight, and the window it covers.
+// flight, and the window it covers. A call that is already cancelled starts
+// nothing.
 func (r *profileRuns) get(ctx context.Context, key string, tf catalog.Timeframe,
 	fetch func(ctx context.Context, w catalog.ProfileWindow) (any, error),
 ) (any, catalog.ProfileWindow, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, catalog.ProfileWindow{}, err
+	}
 	r.mu.Lock()
 	run := r.runs[key]
-	if run != nil && run.finished() && (run.err != nil || (!run.pinned && r.now().Sub(run.at) > profileCacheTTL)) {
+	if run != nil && run.finished() && !run.pinned && r.now().Sub(run.at) > profileCacheTTL {
 		delete(r.runs, key)
 		run = nil
 	}
@@ -211,18 +226,21 @@ func (r *profileRuns) get(ctx context.Context, key string, tf catalog.Timeframe,
 		r.mu.Lock()
 		delete(run.waiters, ctx)
 		if len(run.waiters) == 0 && !run.finished() {
-			time.AfterFunc(r.grace, func() { r.abandon(run) })
+			run.left++
+			left := run.left
+			r.after(r.grace, func() { r.abandon(run, left) })
 		}
 		r.mu.Unlock()
 		return nil, run.window, ctx.Err()
 	}
 }
 
-// abandon cancels a run that still has no one waiting for it.
-func (r *profileRuns) abandon(run *profileRun) {
+// abandon cancels a run that nobody has waited for since the leave numbered
+// left: a later leave has a grace, and a timer, of its own.
+func (r *profileRuns) abandon(run *profileRun, left int) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if len(run.waiters) > 0 || run.finished() {
+	if run.left != left || len(run.waiters) > 0 || run.finished() {
 		return
 	}
 	run.cancel()
@@ -235,11 +253,10 @@ func (r *profileRuns) abandon(run *profileRun) {
 func (r *profileRuns) start(key string, tf catalog.Timeframe,
 	fetch func(ctx context.Context, w catalog.ProfileWindow) (any, error),
 ) *profileRun {
-	now := r.now()
 	r.seq++
 	run := &profileRun{
-		key: key, seq: r.seq, at: now,
-		window:  catalog.ProfileWindowOf(tf, now),
+		key: key, seq: r.seq,
+		window:  catalog.ProfileWindowOf(tf, r.now()),
 		pinned:  tf.Absolute() && !tf.To.IsZero(),
 		done:    make(chan struct{}),
 		waiters: map[context.Context]struct{}{},
@@ -256,20 +273,26 @@ func (r *profileRuns) start(key string, tf catalog.Timeframe,
 		}
 	})
 	r.runs[key] = run
-	r.evict()
 	go func() {
 		defer cancel()
 		result, err := fetch(runCtx, run.window)
 		r.mu.Lock()
-		run.result, run.err = result, err
-		r.mu.Unlock()
+		run.result, run.err, run.at = result, err, r.now()
 		close(run.done)
+		// A failure is not kept: the next call asks again. The calls
+		// waiting for this one hold the run and read it from there.
+		if err != nil && r.runs[key] == run {
+			delete(r.runs, key)
+		}
+		r.evict()
+		r.mu.Unlock()
 	}()
 	return run
 }
 
 // evict drops the oldest finished analyses beyond the cache size; the caller
-// holds r.mu.
+// holds r.mu. One still running is never dropped, so more than the cache size
+// can be held while that many run at once.
 func (r *profileRuns) evict() {
 	for len(r.runs) > profileCacheSize {
 		var oldest *profileRun
@@ -302,20 +325,34 @@ func profileSources(p profiler, fixture string) (hotspots, allocations tui.Sourc
 	return hotspotsSource(p, runs, fixture), allocationsSource(p, runs, fixture)
 }
 
-// profileTarget is the process a profiling scope analyses, or the refusal
-// that says why there is none. It sends no request.
-func profileTarget(p profiler, scope catalog.Scope) (catalog.Entity, error) {
+// profileTarget is the process a profiling scope analyses and the id the
+// environment is asked about for it, or the refusal that says why there is
+// none. It sends no request.
+func profileTarget(p profiler, scope catalog.Scope) (entity catalog.Entity, subject string, err error) {
 	if scope.Entity == nil || scope.Entity.ID == "" {
-		return catalog.Entity{}, &profileFailure{Reason: profileNoProcess}
+		return catalog.Entity{}, "", &profileFailure{Reason: profileNoProcess}
 	}
-	if !p.Eligible(scope.Entity.ID) {
-		return catalog.Entity{}, &profileFailure{Reason: profileNotAProcess, Entity: scope.Entity.ID}
+	subject, ok := p.Subject(scope.Entity.ID)
+	if !ok {
+		return catalog.Entity{}, "", &profileFailure{Reason: profileNotAProcess, Entity: scope.Entity.ID}
 	}
-	return *scope.Entity, nil
+	return *scope.Entity, subject, nil
 }
 
-func profileKey(kind string, e catalog.Entity, tf catalog.Timeframe) string {
-	return strings.Join([]string{kind, e.ID, tf.Label, tf.From.UTC().Format(time.RFC3339), tf.To.UTC().Format(time.RFC3339)}, "|")
+// profileKey names the analysis a view of the timeframe reads, so that two
+// views share one exactly when they would send the same request: the kind,
+// the process as the environment knows it, and the window. A relative
+// timeframe is its length, capped like the request ("last 24h" and "last 7d"
+// both analyse the last 2h); an absolute one is its bounds as they are sent.
+func profileKey(kind, subject string, tf catalog.Timeframe) string {
+	if !tf.Absolute() {
+		return fmt.Sprintf("%s|%s|last %s", kind, subject, min(tf.Dur, catalog.ProfileMaxWindow))
+	}
+	if tf.To.IsZero() {
+		return fmt.Sprintf("%s|%s|from %d", kind, subject, tf.From.UnixMilli())
+	}
+	w := catalog.ProfileWindowOf(tf, tf.To)
+	return fmt.Sprintf("%s|%s|%d-%d", kind, subject, w.From.UnixMilli(), w.To.UnixMilli())
 }
 
 // profileSummary starts the record a profiling source leads its result with.
@@ -345,11 +382,11 @@ func stampProcess(rec map[string]any, e catalog.Entity) map[string]any {
 // a function (Scope.Arg).
 func hotspotsSource(p profiler, runs *profileRuns, fixture string) tui.Source {
 	return func(ctx context.Context, scope catalog.Scope, _ string) ([]map[string]any, error) {
-		entity, err := profileTarget(p, scope)
+		entity, subject, err := profileTarget(p, scope)
 		if err != nil {
 			return nil, err
 		}
-		result, window, err := runs.get(ctx, profileKey("hotspots", entity, scope.Timeframe), scope.Timeframe,
+		result, window, err := runs.get(ctx, profileKey("hotspots", subject, scope.Timeframe), scope.Timeframe,
 			func(ctx context.Context, w catalog.ProfileWindow) (any, error) {
 				return p.Hotspots(ctx, profileQuery{Entity: entity.ID, From: w.From, To: w.To})
 			})
@@ -418,11 +455,11 @@ func hotspotsSource(p profiler, runs *profileRuns, fixture string) tui.Source {
 // and call path.
 func allocationsSource(p profiler, runs *profileRuns, fixture string) tui.Source {
 	return func(ctx context.Context, scope catalog.Scope, _ string) ([]map[string]any, error) {
-		entity, err := profileTarget(p, scope)
+		entity, subject, err := profileTarget(p, scope)
 		if err != nil {
 			return nil, err
 		}
-		result, window, err := runs.get(ctx, profileKey("allocations", entity, scope.Timeframe), scope.Timeframe,
+		result, window, err := runs.get(ctx, profileKey("allocations", subject, scope.Timeframe), scope.Timeframe,
 			func(ctx context.Context, w catalog.ProfileWindow) (any, error) {
 				return p.Allocations(ctx, profileQuery{Entity: entity.ID, From: w.From, To: w.To})
 			})

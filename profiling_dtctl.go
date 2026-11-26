@@ -38,7 +38,9 @@ func newDtctlProfiler(c *session.Client) dtctlProfiler {
 	return dtctlProfiler{h: profiling.NewHandler(c)}
 }
 
-func (p dtctlProfiler) Eligible(entityID string) bool { return profiling.EligibleEntity(entityID) }
+func (p dtctlProfiler) Subject(entityID string) (string, bool) {
+	return profiling.APIEntityID(entityID), profiling.EligibleEntity(entityID)
+}
 
 func profilingWindow(q profileQuery) profiling.Window {
 	return profiling.Window{From: q.From.UnixMilli(), To: q.To.UnixMilli()}

@@ -446,12 +446,11 @@ func TestProfilingAsksForAtMostTwoHours(t *testing.T) {
 			t.Errorf("%s: analysed %s..%s, want the last %s", label, from, to, want)
 		}
 	}
-	// 24h and 7d are different selections but the same request.
+	// 2h, 24h and 7d are different selections and one request, sent once.
 	want := []string{
 		fmt.Sprintf("%d-%d", scenarioNow.Add(-30*time.Minute).UnixMilli(), scenarioNow.UnixMilli()),
 		fmt.Sprintf("%d-%d", scenarioNow.Add(-2*time.Hour).UnixMilli(), scenarioNow.UnixMilli()),
 	}
-	want = append(want, want[1], want[1])
 	if strings.Join(asked, " ") != strings.Join(want, " ") {
 		t.Errorf("asked the environment for %v, want %v", asked, want)
 	}
@@ -465,7 +464,7 @@ type blockingProfiler struct {
 	finished chan error
 }
 
-func (b *blockingProfiler) Eligible(string) bool { return true }
+func (b *blockingProfiler) Subject(id string) (string, bool) { return dtctlProfiler{}.Subject(id) }
 
 func (b *blockingProfiler) Hotspots(ctx context.Context, _ profileQuery) (hotspotReading, error) {
 	b.mu.Lock()
@@ -610,5 +609,329 @@ func TestAnalysisProgressNotes(t *testing.T) {
 	}
 	if got := prog.note(http.StatusOK, ""); got != "" {
 		t.Errorf("a result needs no note, got %q", got)
+	}
+}
+
+// recordingProfiler answers every analysis at once and records what it was
+// asked for.
+type recordingProfiler struct {
+	mu      sync.Mutex
+	queries []profileQuery
+	err     error
+}
+
+func (p *recordingProfiler) Subject(id string) (string, bool) { return dtctlProfiler{}.Subject(id) }
+
+func (p *recordingProfiler) Hotspots(_ context.Context, q profileQuery) (hotspotReading, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.queries = append(p.queries, q)
+	if p.err != nil {
+		return nil, p.err
+	}
+	return emptyHotspots{}, nil
+}
+
+func (p *recordingProfiler) Allocations(context.Context, profileQuery) (allocationReading, error) {
+	return nil, errors.New("unused")
+}
+
+func (p *recordingProfiler) asked() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return len(p.queries)
+}
+
+// pendingTimers stands in for the grace timers of a profileRuns: the test
+// fires them when it wants the grace to be over.
+type pendingTimers struct {
+	mu sync.Mutex
+	fs []func()
+}
+
+func (p *pendingTimers) after(_ time.Duration, f func()) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.fs = append(p.fs, f)
+}
+
+func (p *pendingTimers) fire(i int) {
+	p.mu.Lock()
+	f := p.fs[i]
+	p.mu.Unlock()
+	f()
+}
+
+func (p *pendingTimers) count() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return len(p.fs)
+}
+
+// The grace runs from when the last watcher left. The timer of an earlier
+// leave, from before somebody joined again, ends nothing.
+func TestProfilingGraceRestartsWhenAWatcherRejoins(t *testing.T) {
+	p := &blockingProfiler{release: make(chan struct{}), finished: make(chan error, 1)}
+	timers := &pendingTimers{}
+	runs := newProfileRuns()
+	runs.now = func() time.Time { return scenarioNow }
+	runs.after = timers.after
+	hotspots := hotspotsSource(p, runs, "")
+	scope := catalog.Scope{Entity: shopProcess, Timeframe: timeframe(t, "2h")}
+	watch := func() (leave func()) {
+		t.Helper()
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan error, 1)
+		before := timers.count()
+		go func() {
+			_, err := hotspots(ctx, scope, "")
+			done <- err
+		}()
+		return func() {
+			t.Helper()
+			cancel()
+			if err := <-done; !errors.Is(err, context.Canceled) {
+				t.Fatalf("a watcher that left got %v", err)
+			}
+			if timers.count() != before+1 {
+				t.Fatalf("leaving armed %d timers, want 1", timers.count()-before)
+			}
+		}
+	}
+	waiting := func(n int) {
+		t.Helper()
+		deadline := time.Now().Add(5 * time.Second)
+		for {
+			runs.mu.Lock()
+			got := 0
+			for _, run := range runs.runs {
+				got += len(run.waiters)
+			}
+			runs.mu.Unlock()
+			if got == n {
+				return
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("%d watchers, want %d", got, n)
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}
+
+	leaveA := watch()
+	waiting(1)
+	leaveA() // timer 0
+	leaveB := watch()
+	waiting(1)
+	leaveB() // timer 1
+
+	timers.fire(0)
+	if n := cachedRuns(runs); n != 1 {
+		t.Fatalf("the first leave's timer ended the analysis although the grace of the second had not passed (%d runs left)", n)
+	}
+	timers.fire(1)
+	select {
+	case err := <-p.finished:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("the abandoned analysis ended with %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the grace of the last leave passed and the analysis still runs")
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.started != 1 {
+		t.Errorf("%d analyses ran, want 1", p.started)
+	}
+}
+
+// A call that was cancelled before it got here starts nothing.
+func TestProfilingStartsNothingForACancelledCall(t *testing.T) {
+	p := &recordingProfiler{}
+	runs := newProfileRuns()
+	hotspots := hotspotsSource(p, runs, "")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := hotspots(ctx, catalog.Scope{Entity: shopProcess, Timeframe: timeframe(t, "2h")}, "")
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("a cancelled call returned %v", err)
+	}
+	if n := cachedRuns(runs); n != 0 {
+		t.Errorf("a cancelled call left %d analyses running or cached", n)
+	}
+	if n := p.asked(); n != 0 {
+		t.Errorf("a cancelled call started %d analyses", n)
+	}
+}
+
+// cachedRuns counts the analyses a profileRuns holds, running or finished.
+func cachedRuns(runs *profileRuns) int {
+	runs.mu.Lock()
+	defer runs.mu.Unlock()
+	return len(runs.runs)
+}
+
+// An analysis is reused for two minutes from when it arrived, however long it
+// took: one that ran for 90s is not already stale 30s later.
+func TestProfilingCacheAgesFromCompletion(t *testing.T) {
+	p := &blockingProfiler{release: make(chan struct{}), finished: make(chan error, 4)}
+	now := scenarioNow
+	var clock sync.Mutex
+	runs := newProfileRuns()
+	runs.now = func() time.Time {
+		clock.Lock()
+		defer clock.Unlock()
+		return now
+	}
+	advance := func(d time.Duration) {
+		clock.Lock()
+		now = now.Add(d)
+		clock.Unlock()
+	}
+	hotspots := hotspotsSource(p, runs, "")
+	scope := catalog.Scope{Entity: shopProcess, Timeframe: timeframe(t, "2h")}
+	read := func() map[string]any {
+		t.Helper()
+		records, err := hotspots(context.Background(), scope, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		summary, _ := catalog.SplitSummary(records)
+		return summary
+	}
+	started := func() int {
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		return p.started
+	}
+
+	first := make(chan map[string]any, 1)
+	go func() { first <- read() }()
+	for started() == 0 {
+		time.Sleep(time.Millisecond)
+	}
+	advance(90 * time.Second) // the analysis takes 90s
+	p.release <- struct{}{}
+	if got := (<-first)[catalog.ProfSumTo]; got != "2026-07-15T12:00:00Z" {
+		t.Fatalf("the first reading covers up to %v", got)
+	}
+
+	// A read that the cache does not answer starts an analysis, which the
+	// test has to release: within reports whether one was needed.
+	within := func() (map[string]any, bool) {
+		t.Helper()
+		got := make(chan map[string]any, 1)
+		go func() { got <- read() }()
+		select {
+		case summary := <-got:
+			return summary, false
+		case p.release <- struct{}{}:
+			return <-got, true
+		}
+	}
+	advance(119 * time.Second)
+	if summary, fresh := within(); fresh || summary[catalog.ProfSumTo] != "2026-07-15T12:00:00Z" {
+		t.Fatalf("119s after it arrived: a new analysis=%v, window to %v; want the first one reused", fresh, summary[catalog.ProfSumTo])
+	}
+	advance(2 * time.Second)
+	if summary, fresh := within(); !fresh || summary[catalog.ProfSumTo] != "2026-07-15T12:03:31Z" || started() != 2 {
+		t.Errorf("121s after it arrived: a new analysis=%v, window to %v, %d analyses; want a second one up to 12:03:31",
+			fresh, summary[catalog.ProfSumTo], started())
+	}
+}
+
+// What is asked for decides whether two views share an analysis: the request,
+// not how the selection was spelled.
+func TestProfilingSharesAnAnalysisPerRequest(t *testing.T) {
+	at := func(ms int) time.Time { return time.Date(2026, 7, 15, 9, 0, 0, ms*int(time.Millisecond), time.UTC) }
+	closed := func(from, to time.Time) catalog.Timeframe {
+		return catalog.Timeframe{From: from, To: to, Dur: to.Sub(from)}
+	}
+	instance := &catalog.Entity{ID: "PROCESS_GROUP_INSTANCE-000000000000A001", Type: "PROCESS_GROUP_INSTANCE"}
+	for _, tc := range []struct {
+		name   string
+		scopes []catalog.Scope
+		want   int
+	}{
+		{"24h and 7d are the same last 2h", []catalog.Scope{
+			{Entity: shopProcess, Timeframe: timeframe(t, "24h")},
+			{Entity: shopProcess, Timeframe: timeframe(t, "7d")},
+			{Entity: shopProcess, Timeframe: timeframe(t, "2h")},
+		}, 1},
+		{"30m is not 2h", []catalog.Scope{
+			{Entity: shopProcess, Timeframe: timeframe(t, "30m")},
+			{Entity: shopProcess, Timeframe: timeframe(t, "2h")},
+		}, 2},
+		{"windows that differ within one second", []catalog.Scope{
+			{Entity: shopProcess, Timeframe: closed(at(100), at(100).Add(time.Hour))},
+			{Entity: shopProcess, Timeframe: closed(at(900), at(900).Add(time.Hour))},
+		}, 2},
+		{"one closed window asked for twice", []catalog.Scope{
+			{Entity: shopProcess, Timeframe: closed(at(100), at(100).Add(time.Hour))},
+			{Entity: shopProcess, Timeframe: closed(at(100), at(100).Add(time.Hour))},
+		}, 1},
+		{"two spellings of one process", []catalog.Scope{
+			{Entity: shopProcess, Timeframe: timeframe(t, "2h")},
+			{Entity: instance, Timeframe: timeframe(t, "2h")},
+		}, 1},
+		{"two processes", []catalog.Scope{
+			{Entity: shopProcess, Timeframe: timeframe(t, "2h")},
+			{Entity: &catalog.Entity{ID: "PROCESS-000000000000A002", Type: "PROCESS"}, Timeframe: timeframe(t, "2h")},
+		}, 2},
+	} {
+		p := &recordingProfiler{}
+		hotspots, _ := sourcesAt(p, "")
+		for _, scope := range tc.scopes {
+			if _, err := hotspots(context.Background(), scope, ""); err != nil {
+				t.Fatalf("%s: %v", tc.name, err)
+			}
+		}
+		if got := p.asked(); got != tc.want {
+			t.Errorf("%s: %d analyses, want %d", tc.name, got, tc.want)
+		}
+	}
+}
+
+// At most profileCacheSize finished analyses are kept, however many ran at
+// once, and a failed one is not kept at all.
+func TestProfilingKeepsAtMostFourAnalyses(t *testing.T) {
+	kept := cachedRuns
+	process := func(i int) *catalog.Entity {
+		return &catalog.Entity{ID: fmt.Sprintf("PROCESS-00000000000000%02d", i), Type: "PROCESS"}
+	}
+
+	p := &blockingProfiler{release: make(chan struct{}), finished: make(chan error, 12)}
+	runs := newProfileRuns()
+	runs.now = func() time.Time { return scenarioNow }
+	hotspots := hotspotsSource(p, runs, "")
+	var wg sync.WaitGroup
+	for i := range 12 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if _, err := hotspots(context.Background(), catalog.Scope{Entity: process(i), Timeframe: timeframe(t, "2h")}, ""); err != nil {
+				t.Error(err)
+			}
+		}()
+	}
+	for kept(runs) != 12 {
+		time.Sleep(time.Millisecond)
+	}
+	close(p.release)
+	wg.Wait()
+	if got := kept(runs); got != 4 {
+		t.Errorf("12 analyses that ran at once left %d cached, want %d", got, profileCacheSize)
+	}
+
+	failing := &recordingProfiler{err: errors.New("boom")}
+	runs = newProfileRuns()
+	hotspots = hotspotsSource(failing, runs, "")
+	for i := range 4 {
+		if _, err := hotspots(context.Background(), catalog.Scope{Entity: process(i), Timeframe: timeframe(t, "2h")}, ""); err == nil {
+			t.Fatal("the analysis must fail")
+		}
+	}
+	if got := kept(runs); got != 0 {
+		t.Errorf("4 failed analyses left %d cached, want none", got)
 	}
 }
