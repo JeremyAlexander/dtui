@@ -84,14 +84,15 @@ nothing about the format.
   narrow it, and an entry that holds only segments narrows the list and not
   the analysis. The facet value query (`f`) takes the list's outcome, applied
   or not, and is not decided again from its own text: it leaves out the facet
-  being edited, so on a bound field it would get the entry's filter and hide
-  the values the user came to choose from. The `:exceptions` list of ADR-0022,
-  once it exists, is a second list over the spans and its query is rewritten
-  as that of `:traces` is. The entry's filter is not applied to the trace
-  waterfall, the home panels, `:agentlogs`, `:records` or a segment's variable
-  query. An entry's segments are sent with the waterfall's query as with
-  every query, so a trace opened under them can show only the spans they
-  admit, and a span whose parent they exclude is drawn as a root.
+  being edited, so decided alone it would get the entry's filter while the
+  user edits a facet on a bound field, and hide the values they came for. The
+  `:exceptions` list of ADR-0022, once it exists, is a second list over the
+  spans and its query is rewritten as that of `:traces` is. The entry's filter
+  is not applied to the trace waterfall, the home panels, `:agentlogs`,
+  `:records` or a segment's variable query. An entry's segments are sent with
+  the waterfall's query as with every query, so a trace opened under them can
+  show only the spans they admit, and a span whose parent they exclude is
+  drawn as a root.
 - **DQL the user hands to dtui is scoped as dtctl scopes it.** `:query`,
   `dtui query <dql>`, `--dql` and `-f` go through the same rewrite, with the
   claim or the reason for no claim in the header. An agent hands off the text
@@ -305,12 +306,15 @@ This record stays Proposed, and its pull request open, until this list is
 empty.
 
 - **Does the owner of the `.dtui.yaml` segments feature agree with how an
-  entry's segments sit beside it?** The proposal touches that feature in four
+  entry's segments sit beside it?** The proposal touches that feature in six
   places: the entry's segments appear in the picker as locked rows, `alt+s`
   does not pause them, a segment both files name is sent with the user's
-  variables, and the limit of ten is enforced over the union by not applying
-  the entry. dtctl's design document describes the same composition from its
-  side. None of it is agreed.
+  variables and with the entry's while `alt+s` pauses the user's, the limit of
+  ten is enforced over the union by not applying the entry, the first query of
+  a scoped view waits where the workspace's segments let it go out, and the
+  pattern analysis says in its header that segments, the user's included, do
+  not narrow it. dtctl's design document describes the same composition from
+  its side. None of it is agreed.
 - **Which dtctl release does dtui build against?** Nothing here can be
   implemented before a release carries `pkg/reposcope`, and the package may
   change before then. The rules above that quote dtctl (the host form, the
