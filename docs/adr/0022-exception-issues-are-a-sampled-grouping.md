@@ -29,14 +29,15 @@ rest how the view uses it.
   function per frame), so no two inputs can run together. It depends on no
   locale and no map order. It does depend on the Go toolchain's Unicode
   tables, which decide what the stack readers take for an identifier; a Go
-  release that changes them is treated as a change to a table. `e1` is frozen by the first dtui release that shows
-  a key. From then on a change that can move an exception to another key ships
-  as `e2`, and a change to a table the key reads is such a change: the vendor
-  prefixes, the pass-through names, the message rules. Until that release `e1`
-  may be repinned. Two golden files make the step a conscious one: the `e1`
-  keys of a corpus, and one digest per table, expression and limit the key is
-  computed from. The digests cover declarations; the code of a function is
-  covered by the corpus and the tests alone. The readers and the corpus are
+  release that changes them is treated as a change to a table. `e1` is frozen
+  by the first dtui release that shows a key. From then on a change that can
+  move an exception to another key ships as `e2`, and a change to a table the
+  key reads is such a change: the vendor prefixes, the pass-through names, the
+  message rules. Until that release `e1` may be repinned. Two golden files
+  make the step a conscious one: the `e1` keys of a corpus, and one digest per
+  table, expression and limit the key is computed from. The digests cover
+  declarations; the code of a function is covered by the corpus and the tests
+  alone. The readers and the corpus are
   the specification; this record names the rules and does not replace them.
   One vector for another implementation: an event with the type `é` and
   nothing else hashes the bytes `1:42:é` to `e1:c7bd5892e50a`.
@@ -83,8 +84,9 @@ rest how the view uses it.
   the throw site stays in the key, and an application's pass-through throw
   site with no other application frame below it still gives an app-frames key
   of that one frame. The lists are per notation, match a function name whole
-  or without the type it is a method of, and leave out names an application commonly gives its own entry point
-  (`invoke`, `step`, `dispatch`, `__call__`).
+  or without the type it is a method of, and leave out names an application
+  commonly gives its own entry point (`invoke`, `step`, `dispatch`,
+  `__call__`).
 - **What counts as application code is built in and part of the key version.**
   There is no setting that replaces the rules and no second classifier, so
   every user computes the same key for the same event.
@@ -116,11 +118,11 @@ rest how the view uses it.
 - **One query, with a bounded response.** One query per open meets the count
   of [ADR-0013](0013-query-budget.md); that ADR also bounds a query's shape,
   and an unprojected span comes with all of its `span.events` and full stack
-  traces. So the query is projected to the fields the key and a row read and three
-  more that the facet picker offers, it has a row limit, and the request sets an explicit result size limit. The
-  mechanism is decided here. The numbers, 1000 rows and 8 MB, are provisional
-  (see the open list). 1000 rows is the upper bound whatever the measurement
-  says.
+  traces. So the query is projected to the fields the key and a row read and
+  three more that the facet picker offers, it has a row limit, and the request
+  sets an explicit result size limit. The mechanism is decided here. The
+  numbers, 1000 rows and 8 MB, are provisional (see the open list). 1000 rows
+  is the upper bound whatever the measurement says.
 - **A group row is small, and the counts add up.** A row keeps its key, its
   rung, its count, its times, its services and the display fields of its
   newest member, not the member spans or their stack text. The view builds no
