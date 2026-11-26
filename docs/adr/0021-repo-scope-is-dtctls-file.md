@@ -45,7 +45,7 @@ nothing about the format.
   `pkg/reposcope` crosses into `internal/tui`. The main package locates and
   loads the file from the launch directory and resolves it for the host of the
   selected context, derived as dtctl derives it (the lowercase hostname,
-  without port or path), not with dtui's own `envKey`. It hands `internal/tui`
+  without port, path or a trailing dot), not with dtui's own `envKey`. It hands `internal/tui`
   a value of a type `internal/tui` declares: the entry's name, its segments as
   `exec.FilterSegmentRef`, a function from a composed query to the rewritten
   query with an outcome and a reason, and the warning to show. The value is
@@ -275,6 +275,7 @@ empty.
   implemented before a release carries `pkg/reposcope`, and the package may
   change before then. The rules above that quote dtctl (the host form, the
   bound fields, the refusals, how the variable is read, the segment check) are
-  read again against that release. Two things dtui would otherwise copy are
-  asked of dtctl: an exported reading of `DTCTL_NO_REPO_SCOPE`, and reasons
-  that do not name a dtctl flag.
+  read again against that release. Three things dtui would otherwise copy are
+  asked of dtctl: an exported derivation of the host key, which today is an
+  unexported function of dtctl's `cmd` package, an exported reading of
+  `DTCTL_NO_REPO_SCOPE`, and reasons that do not name a dtctl flag.
