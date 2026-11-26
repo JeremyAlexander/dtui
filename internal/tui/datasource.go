@@ -229,9 +229,12 @@ type dataMsg struct {
 // cancels (tableView.fetch), and one built by withProgress to hear how a slow
 // call is going.
 func (d *dataSource) call(ctx context.Context, owner any, seq int, name string, scope catalog.Scope, dql string) tea.Cmd {
+	// Read now, on the update loop, not when the command runs: a context
+	// switch replaces the sources, and a call issued for this environment
+	// must not reach the next one's source with this one's ids.
+	src := d.sources[name]
 	return func() tea.Msg {
 		start := time.Now()
-		src := d.sources[name]
 		if src == nil {
 			return dataMsg{owner: owner, seq: seq, dql: dql, elapsed: time.Since(start),
 				err: fmt.Errorf("data source %q is not wired", name)}
