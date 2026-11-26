@@ -109,18 +109,30 @@ func FingerprintExceptions(excs []SpanException, classify FrameClassifier) (Exce
 		fp.Rung, evidence = RungMessage, []string{fp.Message}
 	}
 	for _, f := range fp.Frames {
-		evidence = append(evidence, f.Module+"\x1f"+f.Function)
+		evidence = append(evidence, f.Module, f.Function)
 	}
 	fp.Key = fingerprintKey(fp.Rung, fp.Type, evidence)
 	return fp, true
 }
 
 // fingerprintKey hashes the canonical form of a fingerprint: the rung's
-// number, the type and the evidence, NUL-separated, in order.
+// number, the type and the evidence fields in order (a message, or a module
+// and a function per frame). Each field is written behind its length in
+// bytes ("7:addItem"), so no field can run into the next whatever it holds.
 func fingerprintKey(rung FingerprintRung, typ string, evidence []string) string {
-	canonical := strings.Join(append([]string{strconv.Itoa(int(rung)), typ}, evidence...), "\x00")
-	sum := sha256.Sum256([]byte(canonical))
+	canonical := appendKeyField(nil, strconv.Itoa(int(rung)))
+	canonical = appendKeyField(canonical, typ)
+	for _, field := range evidence {
+		canonical = appendKeyField(canonical, field)
+	}
+	sum := sha256.Sum256(canonical)
 	return ExceptionKeyVersion + ":" + hex.EncodeToString(sum[:])[:fingerprintKeyLen]
+}
+
+func appendKeyField(b []byte, field string) []byte {
+	b = strconv.AppendInt(b, int64(len(field)), 10)
+	b = append(b, ':')
+	return append(b, field...)
 }
 
 // rootException picks the event a span's fingerprint is computed from: the

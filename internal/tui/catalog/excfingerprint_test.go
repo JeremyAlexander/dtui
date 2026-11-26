@@ -93,10 +93,10 @@ func TestFingerprintKeyShape(t *testing.T) {
 	if !regexp.MustCompile(`^e1:[0-9a-f]{12}$`).MatchString(fp.Key) {
 		t.Errorf("key = %q, want e1: and 12 hex characters", fp.Key)
 	}
-	// The hash input: rung number, type, then module\x1ffunction per frame,
-	// joined by NUL.
-	sum := sha256.Sum256([]byte("1\x00java.lang.IllegalStateException" +
-		"\x00com.acme.shop.CartService\x1faddItem\x00com.acme.shop.CartController\x1fpost"))
+	// The hash input: rung number, type, then module and function per frame,
+	// each field behind its length.
+	sum := sha256.Sum256([]byte("1:1" + "31:java.lang.IllegalStateException" +
+		"25:com.acme.shop.CartService" + "7:addItem" + "28:com.acme.shop.CartController" + "4:post"))
 	if want := "e1:" + hex.EncodeToString(sum[:])[:12]; fp.Key != want {
 		t.Errorf("key = %s, want %s", fp.Key, want)
 	}
@@ -114,6 +114,33 @@ func TestFingerprintKeyShape(t *testing.T) {
 	}
 	if fingerprintKey(RungFrames, "a", []string{"b", "c"}) == fingerprintKey(RungFrames, "a", []string{"c", "b"}) {
 		t.Error("frame order must matter")
+	}
+}
+
+// No two different inputs may write the same canonical string: a separator
+// that can also occur inside a field lets one field run into the next.
+func TestFingerprintKeyFieldsCannotRunTogether(t *testing.T) {
+	a := mustFingerprint(t, SpanException{Type: "T\x00a.b\x1fc", StackTrace: javaStack("d.e.f")})
+	b := mustFingerprint(t, SpanException{Type: "T", StackTrace: javaStack("a.b.c", "d.e.f")})
+	if a.Rung != RungAppFrames || b.Rung != RungAppFrames || len(a.Frames) != 1 || len(b.Frames) != 2 {
+		t.Fatalf("frames %+v and %+v", a.Frames, b.Frames)
+	}
+	if a.Key == b.Key {
+		t.Errorf("a type that spells out a frame shares key %s with the frame", a.Key)
+	}
+	keys := map[string][]string{}
+	for _, fields := range [][]string{
+		{"ab", "c"}, {"a", "bc"}, {"abc"}, {"abc", ""}, {"", "abc"}, {"a", "b", "c"},
+		{"1:a"}, {"a", "1:b"}, {"a1:b"}, {"a\x00b"}, {"a", "\x00b"}, {"2:ab", "c"}, {"12:ab"},
+	} {
+		key := fingerprintKey(RungFrames, "T", fields)
+		if other, dup := keys[key]; dup {
+			t.Errorf("%q and %q share key %s", fields, other, key)
+		}
+		keys[key] = fields
+	}
+	if fingerprintKey(RungFrames, "T1", []string{"a"}) == fingerprintKey(RungFrames, "T", []string{"1a"}) {
+		t.Error("the type runs into the evidence")
 	}
 }
 
