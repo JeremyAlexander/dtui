@@ -1413,6 +1413,9 @@ func TestProfilingCaptionWordsTheReadersSelection(t *testing.T) {
 		{"an open window that starts where the analysis does",
 			[]catalog.Timeframe{open(10), open(10)},
 			[]string{"selected window" + clock, "selected window" + clock}, 1},
+		{"an open window of five hours, then the last 2h",
+			[]catalog.Timeframe{open(7), timeframe(t, "2h")},
+			[]string{"last 2h of the selected window" + clock, "last 2h" + clock}, 1},
 	} {
 		p := &recordingProfiler{}
 		hotspots, _ := sourcesAt(p)
@@ -1488,5 +1491,30 @@ func TestProfilingRunsInFlightDoNotEvictAResult(t *testing.T) {
 	wg.Wait()
 	if got := cachedRuns(runs); got != profileCacheSize {
 		t.Errorf("%d analyses kept once all had finished, want %d", got, profileCacheSize)
+	}
+}
+
+// An open window that began more than two hours ago is analysed for its last
+// two hours, which is what "last 2h" asks for: one request, not two.
+func TestProfilingOpenWindowSharesTheLastTwoHours(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		start time.Duration // of the open window, before now
+		want  int
+	}{
+		{"an open window of five hours", 5 * time.Hour, 1},
+		{"an open window of exactly two hours", 2 * time.Hour, 2},
+		{"an open window of one hour", time.Hour, 2},
+	} {
+		p := &recordingProfiler{}
+		hotspots, _ := sourcesAt(p)
+		for _, tf := range []catalog.Timeframe{{From: scenarioNow.Add(-tc.start)}, timeframe(t, "2h")} {
+			if _, err := hotspots(context.Background(), catalog.Scope{Entity: shopProcess, Timeframe: tf}, ""); err != nil {
+				t.Fatalf("%s: %v", tc.name, err)
+			}
+		}
+		if got := p.asked(); got != tc.want {
+			t.Errorf("%s, then the last 2h: %d analyses, want %d", tc.name, got, tc.want)
+		}
 	}
 }

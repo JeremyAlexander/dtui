@@ -408,16 +408,21 @@ func profileTarget(p profiler, scope catalog.Scope, now time.Time) (entity catal
 	return *scope.Entity, subject, nil
 }
 
-// profileKey names the analysis a view of the timeframe reads, so that two
-// views share one exactly when they would send the same request: the kind,
-// the process as the environment knows it, and the window. A relative
+// profileKey names the analysis a view of the timeframe reads at now, so that
+// two views share one exactly when they would send the same request: the
+// kind, the process as the environment knows it, and the window. A relative
 // timeframe is its length, capped like the request ("last 24h" and "last 7d"
-// both analyse the last 2h); an absolute one is its bounds as they are sent.
-func profileKey(kind, subject string, tf catalog.Timeframe) string {
+// both analyse the last 2h), and so is an open window that began longer ago
+// than one analysis covers; any other absolute one is its bounds as they are
+// sent.
+func profileKey(kind, subject string, tf catalog.Timeframe, now time.Time) string {
 	if !tf.Absolute() {
 		return fmt.Sprintf("%s|%s|last %s", kind, subject, min(tf.Dur, catalog.ProfileMaxWindow))
 	}
 	if tf.To.IsZero() {
+		if catalog.ProfileWindowOf(tf, now).Clamped {
+			return fmt.Sprintf("%s|%s|last %s", kind, subject, catalog.ProfileMaxWindow)
+		}
 		return fmt.Sprintf("%s|%s|from %d", kind, subject, tf.From.UnixMilli())
 	}
 	w := catalog.ProfileWindowOf(tf, tf.To)
@@ -462,11 +467,12 @@ func stampProcess(rec map[string]any, e catalog.Entity) map[string]any {
 // a function (Scope.Arg).
 func hotspotsSource(p profiler, runs *profileRuns) tui.Source {
 	return func(ctx context.Context, scope catalog.Scope, _ string) ([]map[string]any, error) {
-		entity, subject, err := profileTarget(p, scope, runs.now())
+		now := runs.now()
+		entity, subject, err := profileTarget(p, scope, now)
 		if err != nil {
 			return nil, err
 		}
-		result, window, err := runs.get(ctx, profileKey("hotspots", subject, scope.Timeframe), scope.Timeframe,
+		result, window, err := runs.get(ctx, profileKey("hotspots", subject, scope.Timeframe, now), scope.Timeframe,
 			func(ctx context.Context, w catalog.ProfileWindow) (any, error) {
 				return p.Hotspots(ctx, profileQuery{Entity: entity.ID, From: w.From, To: w.To})
 			})
@@ -548,11 +554,12 @@ func hotspotsSource(p profiler, runs *profileRuns) tui.Source {
 // and call path.
 func allocationsSource(p profiler, runs *profileRuns) tui.Source {
 	return func(ctx context.Context, scope catalog.Scope, _ string) ([]map[string]any, error) {
-		entity, subject, err := profileTarget(p, scope, runs.now())
+		now := runs.now()
+		entity, subject, err := profileTarget(p, scope, now)
 		if err != nil {
 			return nil, err
 		}
-		result, window, err := runs.get(ctx, profileKey("allocations", subject, scope.Timeframe), scope.Timeframe,
+		result, window, err := runs.get(ctx, profileKey("allocations", subject, scope.Timeframe, now), scope.Timeframe,
 			func(ctx context.Context, w catalog.ProfileWindow) (any, error) {
 				return p.Allocations(ctx, profileQuery{Entity: entity.ID, From: w.From, To: w.To})
 			})
