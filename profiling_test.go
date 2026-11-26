@@ -16,13 +16,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/spf13/pflag"
+
 	"github.com/Dynatrace/dtctl/pkg/resources/profiling"
 	"github.com/Dynatrace/dtctl/sdk/api/codelevelanalysis"
 	"github.com/Dynatrace/dtctl/sdk/httpclient"
 	"github.com/Dynatrace/dtctl/sdk/session"
 	"github.com/dynatrace-oss/dtui/internal/tui"
 	"github.com/dynatrace-oss/dtui/internal/tui/catalog"
-	"github.com/spf13/pflag"
 )
 
 var updateScenarios = flag.Bool("update", false, "rewrite internal/tui/testdata/profiling/*.json with the sources' current output")
