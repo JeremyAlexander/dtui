@@ -72,9 +72,16 @@ nothing about the format.
   carries no segments. On a list narrowed by segments, the entry's or the
   user's, the analysis therefore says in its header that segments do not
   narrow it, and an entry that holds only segments narrows the list and not
-  the analysis. The rewrite is also applied to the facet value query (`f`).
-  It is not applied to the trace waterfall (a trace is shown whole), the home
-  panels, `:agentlogs`, `:records` or a segment's variable query.
+  the analysis. The facet value query (`f`) takes the list's outcome, applied
+  or not, and is not decided again from its own text: it leaves out the facet
+  being edited, so on a bound field it would get the entry's filter and hide
+  the values the user came to choose from. The `:exceptions` list of ADR-0022,
+  once it exists, is a second list over the spans and its query is rewritten
+  as that of `:traces` is. The entry's filter is not applied to the trace
+  waterfall, the home panels, `:agentlogs`, `:records` or a segment's variable
+  query. An entry's segments are sent with the waterfall's query as with
+  every query, so a trace opened under them can show only the spans they
+  admit, and a span whose parent they exclude is drawn as a root.
 - **DQL the user hands to dtui is scoped as dtctl scopes it.** `:query`,
   `dtui query <dql>`, `--dql` and `-f` go through the same rewrite, with the
   claim or the reason for no claim in the header. An agent hands off the text
@@ -112,7 +119,8 @@ nothing about the format.
   trace's entry service, so `roots` ANDed with the entry is empty for most
   services (`DefaultSpanLens` records this for entity scopes). When the filter
   applies and no lens was named, `:traces` opens on the lens `DefaultSpanLens`
-  gives a service. `--lens` and a lens the user picks are kept.
+  gives a service. `--lens` and a lens the user picks are kept. An entry that
+  holds only segments inserts no filter and leaves the default lens as it is.
 - **An entry's segments are part of the repo scope.** They are sent with every
   DQL query of the session, as the segments of `.dtui.yaml` and of the picker
   are; an entry that holds only segments inserts no filter and narrows every
