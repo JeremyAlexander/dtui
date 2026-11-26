@@ -125,6 +125,12 @@ carries no line numbers, so the line is never the line sampled. Fix: take
 file and line from the analysis once dtctl exports them per frame, and keep
 the scan as the fallback.
 
+A Go frame is matched by the last element of its import path and the
+package clause, not by the module: `go.mod` is not read, so a library's
+`example.org/lib/cart.Total` opens the application's `internal/cart` when
+that declares a `Total` too. Fix: read the module path of each `go.mod` in
+the index and require the import path to start with one.
+
 ## Flame graph: the editor is named by the environment only
 
 `O` picks the editor from `DTUI_EDITOR`, the terminal or `VISUAL`/`EDITOR`;

@@ -132,11 +132,11 @@ it must never do, is in ADR-0023; this is how it behaves.
    | Frame | File |
    |---|---|
    | JVM `com.example.shop.CartService$Line.total` | `CartService.java`, `.kt`, `.scala` or `.groovy` in a directory ending in `com/example/shop`; nested, anonymous and lambda classes map to the outer class, `FooKt` to `Foo.kt`; a Kotlin or Scala file anywhere that declares the package |
-   | Go `example.com/shop/internal/cart.(*Service).AddItem` | the Go files of the directory the import path ends in that declare the function (with its receiver); `main.main` is looked for in every Go file |
+   | Go `example.com/shop/internal/cart.(*Service).AddItem` | the Go files of the directory the import path ends in that declare the frame's package and the function (with its receiver); `main.main`, and a path no directory fits, is looked for in every Go file, under the same two conditions |
    | Python `shop.reports.daily.render` | `shop/reports/daily.py`, also for `…daily.Report.render` |
-   | Script `/app/src/server/handler.ts:resolve` | the file whose path shares the longest tail with the frame's |
-   | .NET `Shop.Services.CartService.AddItem` | `CartService.cs`, `.fs` or `.vb` that declares the namespace |
-   | `java.`, `javax.`, `jdk.`, `sun.`, `kotlin.`, `scala.`, `System.`, `Microsoft.`, `node:`, the Go standard library | not searched: the status line names the runtime |
+   | Script `/app/src/server/handler.ts:resolve` | the file whose path shares the longest tail with the frame's; a path through `node_modules`, `bower_components`, `site-packages`, `dist-packages` or `vendor` is a dependency's and is not searched |
+   | .NET `Shop.Services.CartService.AddItem` | `CartService.cs`, `.fs` or `.vb` that declares the namespace; a constructor (`CartService..ctor`) lands on the type |
+   | `java.`, `javax.`, `jdk.`, `sun.`, `kotlin.`, `scala.`, `System.`, `Microsoft.`, `node:`, the Go standard library (told by the list of its packages, `runtime.main` and `sync.(*Mutex).Lock` included) | not searched: the status line names the runtime |
 
 4. **The line.** The analysis carries no file and no line for a class-based
    frame (a label is `package.Type.method`), and no line for a script's
@@ -162,6 +162,10 @@ it must never do, is in ADR-0023; this is how it behaves.
 6. **The answer.** One file opens. Several (the same class in two modules)
    are offered in a short list: `enter` or a digit opens, `y` copies. None
    says so, and that the frame is a library's or another repository's.
+   At most 400 files are read for one frame. Where more could hold it, the
+   status line says how many were not read, on a miss and on the one file
+   that opens, which is then the first found and not known to be the only
+   one.
 
 The footer shows `O open source` only on a frame that may have a file: not on
 the root, not on a runtime's frame, and, once the directory has been walked,
@@ -260,7 +264,7 @@ Measured on a synthetic profile of 50,000 stacks, each 100 frames deep (about
 half a million frames), on an Apple M5 Pro: building the tree once takes
 about 155 ms and runs off the update loop; a layout for 250 columns 0.44 ms;
 a search 1.8 ms; adding a function up over the whole
-tree 0.5 ms; a cursor key or a zoom with the screen and the details drawn
+tree 0.6 ms; a cursor key or a zoom with the screen and the details drawn
 again in full colour about 1.5 ms
 (`BenchmarkBuild`, `BenchmarkLayout`, `BenchmarkSearch`, `BenchmarkFunction`,
 `BenchmarkFlameGraphKey`, `BenchmarkFlameGraphZoom`).
