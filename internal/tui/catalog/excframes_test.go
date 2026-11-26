@@ -81,6 +81,32 @@ func TestParseStackFramesJava(t *testing.T) {
 				"jdk.internal.reflect.<auto>", "newInstance",
 				"com.sun.proxy.<auto>", "addItem",
 				"jdk.proxy.<auto>", "addItem")},
+		{"proxies named at run time collapse", `	at com.example.shop.Cart$HibernateProxy$kL2x9A.getId(Unknown Source)
+	at com.example.shop.Cart$HibernateProxy$Zq81mB.getId(Unknown Source)
+	at com.example.shop.CartService$ByteBuddy$Ab12Cd.addItem(Unknown Source)
+	at com.example.shop.CartService$MockitoMock$1190.addItem(Unknown Source)
+	at com.example.shop.CartService$$SpringCGLIB$$0.addItem(<generated>)
+	at com.example.shop.CartService$$SpringCGLIB$$FastClass$$1.invoke(<generated>)
+	at com.example.shop.CartService$$EnhancerByGuice$$7f3a.addItem(<generated>)
+	at com.example.shop.Cart_$$_jvst3c0_1f.getId(Cart_$$_jvst3c0_1f.java)`,
+			frames(StackJava,
+				"com.example.shop.Cart<auto>", "getId",
+				"com.example.shop.CartService<auto>", "addItem",
+				"com.example.shop.CartService<auto>", "invoke",
+				"com.example.shop.CartService<auto>", "addItem",
+				"com.example.shop.Cart<auto>", "getId")},
+		{"scala closures unwrap to the method", `	at com.example.shop.Cart$$anonfun$total$1.apply(Cart.scala:30)
+	at com.example.shop.Cart$$anonfun$total$1$$anonfun$apply$2.apply$mcV$sp(Cart.scala:31)
+	at com.example.shop.Cart.$anonfun$total$3(Cart.scala:30)
+	at com.example.shop.Cart.$anonfun$total$3$adapted(Cart.scala:30)
+	at com.example.shop.Cart$.$anonfun$apply$1(Cart.scala:9)
+	at com.example.shop.Cart$$anon$1.run(Cart.scala:40)
+	at com.example.shop.Cart$$inlined$map$1.invoke(Cart.kt:12)`,
+			frames(StackJava,
+				"com.example.shop.Cart", "total",
+				"com.example.shop.Cart$", "apply",
+				"com.example.shop.Cart$$anon$1", "run",
+				"com.example.shop.Cart$$inlined$map$1", "invoke")},
 		{"lambda frames", `	at com.acme.shop.CartService.lambda$addItem$3(CartService.java:51)
 	at com.acme.shop.CartService$$Lambda$214/0x0000000800d1a840.accept(Unknown Source)
 	at com.acme.shop.CartService$$Lambda/0x0000000800d1a840.accept(Unknown Source)
@@ -175,6 +201,26 @@ func TestParseStackFramesDotNet(t *testing.T) {
    at Acme.Shop.CartService.<>c.<Total>b__9(Item item)`,
 			frames(StackDotNet,
 				"Acme.Shop.CartService", "AddItem", "Acme.Shop.CartService", "Total")},
+		{"local functions unwrap to their name", `   at Example.Shop.CartService.<Run>g__Validate|5_0(Int32 quantity)
+   at Example.Shop.CartService.<Run>g__Validate|7_1(Int32 quantity)
+   at Example.Shop.CartService.<<Run>g__Reserve|5_2>d.MoveNext()
+   at Example.Shop.CartService.<>c__DisplayClass5_0.<Run>g__Check|3()
+   at Program.<<Main>$>g__Handle|0_0(String[] args)
+   at Program.<Main>$(String[] args)`,
+			frames(StackDotNet,
+				"Example.Shop.CartService", "Validate",
+				"Example.Shop.CartService", "Reserve",
+				"Example.Shop.CartService", "Check",
+				"Program", "Handle",
+				"Program", "Main")},
+		{"compiled delegates lose their number", `   at lambda_method42(Closure, Object)
+   at lambda_method7(Closure, Object)
+   at System.Linq.Expressions.Compiled.lambda_method9(Closure)
+   at Example.Shop.Cart.lambda_method42x(Int32 n)`,
+			frames(StackDotNet,
+				"", "lambda_method",
+				"System.Linq.Expressions.Compiled", "lambda_method",
+				"Example.Shop.Cart", "lambda_method42x")},
 		{"a name that starts with a dot", "   at .Run()", frames(StackDotNet, "", "Run")},
 		{"mono writes a space before the parameters", `System.InvalidOperationException: Cart 7 is locked
   at Example.Shop.CartService.AddItem (System.String sku, System.Int32 quantity) [0x0001a] in <3f2b8c1e9d4a4b7c8e210a1b2c3d4e5f>:0
@@ -463,6 +509,7 @@ func TestDefaultFrameClassifier(t *testing.T) {
 		{StackFrame{Module: "System.Threading.Tasks.Task", Syntax: StackDotNet}, false},
 		{StackFrame{Module: "Microsoft.AspNetCore.Routing.Endpoint", Syntax: StackDotNet}, false},
 		{StackFrame{Module: "com.acme.shop.CartService<auto>", Syntax: StackJava}, false},
+		{StackFrame{Module: "com.example.shop.Cart$$anon$1", Syntax: StackJava}, true},
 		{StackFrame{Module: "", Function: "lambda_method", Syntax: StackDotNet}, false},
 
 		{StackFrame{Module: "main", Syntax: StackGo}, true},

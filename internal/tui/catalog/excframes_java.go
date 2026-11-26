@@ -19,13 +19,21 @@ var (
 		`^(?:at )?([\w$.<>/@-]+\.[\w$<>]+) ?\((?:[\w$-]+\.\w+(?::\d+)?|Native Method|Unknown Source|<generated>)\)`)
 	javaMoreRe = regexp.MustCompile(`^\.\.\. (\d+) (?:more|common frames omitted)`)
 
-	// Generated names: CGLIB subclasses ("$$EnhancerBy…$$1a2b",
-	// "$$FastClassBy…$$3c4d"), reflection accessors, dynamic proxies, and
-	// the numbered package the JDK puts proxies in.
-	javaCGLIBRe     = regexp.MustCompile(`\$\$.*$`)
+	// Classes generated at run time are named after the class they stand in
+	// for plus a suffix that differs in every process: CGLIB subclasses
+	// ("$$EnhancerBy…$$1a2b", "$$FastClassBy…$$3c4d", "$$SpringCGLIB$$0"),
+	// Hibernate, ByteBuddy and Mockito proxies ("$HibernateProxy$kL2x9A"),
+	// javassist ("_$$_jvst3c0_1f"); then reflection accessors, dynamic
+	// proxies, and the numbered package the JDK puts proxies in.
+	javaProxyRe = regexp.MustCompile(
+		`(?:\$\$(?:Enhancer|FastClass|SpringCGLIB)|\$(?:HibernateProxy|ByteBuddy|MockitoMock)\$|_\$\$_).*$`)
 	javaGeneratedRe = regexp.MustCompile(`(?:Generated(?:Method|Constructor)Accessor|\$Proxy)\d+`)
 	javaProxyPkgRe  = regexp.MustCompile(`^jdk\.proxy\d+\.`)
 	javaLambdaRe    = regexp.MustCompile(`^lambda\$(.+)\$\d+$`)
+	// A Scala closure is a class "Owner$$anonfun$method$1" up to 2.11 and a
+	// method "$anonfun$method$1" since; either way it is code of the method.
+	javaScalaClassRe  = regexp.MustCompile(`^(.*?)\$\$anonfun\$(\w+)\$\d+`)
+	javaScalaMethodRe = regexp.MustCompile(`^\$anonfun\$(\w+)\$\d+(?:\$adapted)?$`)
 )
 
 // javaVendorPrefixes are the runtime and framework packages that are never
@@ -54,7 +62,11 @@ func javaFrame(line string) (StackFrame, bool) {
 	dot := strings.LastIndexByte(name, '.')
 	module, function := name[:dot], name[dot+1:]
 	function = javaLambdaRe.ReplaceAllString(function, "$1")
-	module = javaCGLIBRe.ReplaceAllString(module, FrameAuto)
+	function = javaScalaMethodRe.ReplaceAllString(function, "$1")
+	if m := javaScalaClassRe.FindStringSubmatch(module); m != nil {
+		module, function = m[1], m[2]
+	}
+	module = javaProxyRe.ReplaceAllString(module, FrameAuto)
 	module = javaGeneratedRe.ReplaceAllString(module, FrameAuto)
 	module = javaProxyPkgRe.ReplaceAllString(module, "jdk.proxy.")
 	return StackFrame{Module: module, Function: function, Syntax: StackJava}, true

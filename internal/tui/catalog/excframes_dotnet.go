@@ -18,11 +18,16 @@ var (
 	// a type name.
 	dotnetMonoParamsRe = regexp.MustCompile("^(?:[A-Z][\\w.`\\[\\]<>&*+]*(?: \\w+)?(?:, |$))*$")
 	dotnetTypeArgsRe   = regexp.MustCompile(`\[[^\]]*\]`)
-	// Compiler-generated names: async state machines, closure classes and
-	// the lambdas in them.
-	dotnetAsyncRe   = regexp.MustCompile(`<(\w+)>d__\d+\.MoveNext$`)
+	// Compiler-generated names: the method of top-level statements
+	// ("<Main>$"), local functions ("<Run>g__Validate|5_0"), async state
+	// machines, closure classes and the lambdas in them.
+	dotnetMainRe    = regexp.MustCompile(`<(\w+)>\$`)
+	dotnetLocalRe   = regexp.MustCompile(`<\w+>g__(\w+)\|\d+(?:_\d+)?`)
+	dotnetAsyncRe   = regexp.MustCompile(`<(\w+)>d(?:__\d+)?\.MoveNext$`)
 	dotnetClosureRe = regexp.MustCompile(`<>c(?:__DisplayClass\d+_\d+)?\.`)
 	dotnetLambdaRe  = regexp.MustCompile(`<(\w+)>b__\d+(?:_\d+)?`)
+	// A delegate compiled from an expression tree is numbered per process.
+	dotnetDelegateRe = regexp.MustCompile(`^lambda_method\d+$`)
 )
 
 // dotnetVendorPrefixes are the runtime and framework namespaces. Matching is
@@ -43,6 +48,8 @@ func dotnetFrame(line string) (StackFrame, bool) {
 		return StackFrame{}, false
 	}
 	name = dotnetTypeArgsRe.ReplaceAllString(name, "")
+	name = dotnetMainRe.ReplaceAllString(name, "$1")
+	name = dotnetLocalRe.ReplaceAllString(name, "$1")
 	name = dotnetAsyncRe.ReplaceAllString(name, "$1")
 	name = dotnetClosureRe.ReplaceAllString(name, "")
 	name = dotnetLambdaRe.ReplaceAllString(name, "$1")
@@ -58,6 +65,7 @@ func dotnetFrame(line string) (StackFrame, bool) {
 	if function == "" {
 		return StackFrame{}, false
 	}
+	function = dotnetDelegateRe.ReplaceAllString(function, "lambda_method")
 	return StackFrame{Module: module, Function: function, Syntax: StackDotNet}, true
 }
 
