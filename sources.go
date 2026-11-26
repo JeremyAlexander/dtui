@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"maps"
 	"sort"
 	"strconv"
 	"strings"
@@ -24,14 +25,15 @@ import (
 // resource handlers. All sources are read-only; construction here keeps
 // internal/tui free of HTTP, mirroring how main.go passes the DQL executor.
 func tuiSources(c *session.Client) map[string]tui.Source {
-	return map[string]tui.Source{
-		"hotspots":          profilingSourceFor(c),
+	sources := map[string]tui.Source{
 		"slos":              sloSource(slo.NewHandler(c)),
 		"anomaly-detectors": detectorSource(anomalydetector.NewHandler(c)),
 		"log-patterns":      logPatternSource(analyzer.NewHandler(c)),
 		"dashboards":        dashboardSource(document.NewHandler(c), c.CurrentUserID),
 		"resolve-users":     userSource(iam.NewHandler(c)),
 	}
+	maps.Copy(sources, profilingSourcesFor(c))
+	return sources
 }
 
 // The source constructors take the slice of their handler they actually

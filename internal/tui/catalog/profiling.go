@@ -65,6 +65,31 @@ const (
 	ProfEntityName = "__process.name"
 )
 
+// The flame graph of the profiling view reads the hotspots analysis whole, as
+// its call stacks, through sources of its own: the main package serves both
+// names from the analyses the functions table reads.
+const (
+	// HotspotStacksAPI reads the analysis the functions table holds, however
+	// long ago it arrived, so that the graph and the table show one analysis
+	// and opening the graph asks the environment for nothing. Only when none
+	// is held does it run one.
+	HotspotStacksAPI = "hotspot-stacks"
+	// HotspotStacksFreshAPI is the same reading as the table's refresh makes
+	// it: an analysis that arrived longer ago than it is reused for is run
+	// again.
+	HotspotStacksFreshAPI = "hotspot-stacks-fresh"
+)
+
+// Row keys of a call stack. Next to ProfStack a row carries the samples that
+// ended in the stack's last frame, per thread state, under the state's name
+// (HotspotStates).
+const (
+	ProfStack = "stack" // frames joined by ProfStackSep, outermost caller first
+	// ProfStackSep separates the frames of ProfStack. A frame label that
+	// contains it reads as two frames.
+	ProfStackSep = ";"
+)
+
 // Summary keys of the profiling view.
 const (
 	ProfSumFrom     = "from"    // RFC3339: start of the window analysed
@@ -110,6 +135,26 @@ var HotspotLenses = []Lens{
 	{Name: "disk_io", Desc: "samples blocked on disk I/O"},
 	{Name: "wait", Desc: "samples of parked or sleeping threads"},
 	{Name: profAllocations, Desc: "allocated bytes per allocation site and call path", Columns: allocationColumns},
+}
+
+// HotspotStates are the thread states of a hotspots analysis, in the order of
+// their lenses: every lens but the allocations one.
+func HotspotStates() []string {
+	states := make([]string, 0, len(HotspotLenses)-1)
+	for _, l := range HotspotLenses {
+		if l.Name != profAllocations {
+			states = append(states, l.Name)
+		}
+	}
+	return states
+}
+
+// HotspotStacksEcho is the command that prints the call stacks a flame graph
+// is drawn from: every stack of the process in the window, with its samples
+// per thread state.
+func HotspotStacksEcho(s Scope) string {
+	return fmt.Sprintf("dtctl exec profiling hotspots %s --view stacks --show-waiting --limit 0 %s",
+		profileEntityArg(s), profileEchoWindow(s.Timeframe))
 }
 
 // HotspotState is the thread state a hotspots scope counts. It is not one on

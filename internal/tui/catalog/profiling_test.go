@@ -2,6 +2,7 @@ package catalog
 
 import (
 	"math"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -445,5 +446,30 @@ func TestAllocationBarIsAShareOfAllBytes(t *testing.T) {
 	}
 	if k := bar.Sort(rows[0]); k != 0.25 {
 		t.Errorf("the bar sorts as %v, want 0.25", k)
+	}
+}
+
+// The flame graph's command prints every stack with its samples in every
+// thread state, for the window the view analyses.
+func TestHotspotStacksEcho(t *testing.T) {
+	tf, _ := ParseTimeframe("24h")
+	got := HotspotStacksEcho(Scope{Entity: &Entity{ID: "PROCESS-000000000000A001", Type: "PROCESS"}, Timeframe: tf})
+	want := "dtctl exec profiling hotspots PROCESS-000000000000A001 --view stacks --show-waiting --limit 0 --default-timeframe-start 'now()-2h'"
+	if got != want {
+		t.Errorf("got  %s\nwant %s", got, want)
+	}
+}
+
+// The thread states are the lenses of the view but the allocations one, in
+// the order of the strip.
+func TestHotspotStates(t *testing.T) {
+	got := HotspotStates()
+	if want := []string{"running", "lock", "net_io", "disk_io", "wait"}; !slices.Equal(got, want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+	for i, state := range got {
+		if HotspotLenses[i].Name != state {
+			t.Errorf("state %d is %s, its lens %s", i, state, HotspotLenses[i].Name)
+		}
 	}
 }

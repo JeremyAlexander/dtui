@@ -132,13 +132,19 @@ func recordedProfiler(t *testing.T) dtctlProfiler {
 // sourcesAt builds the view's source with the analysis clock pinned, as its
 // two readings: the thread states, and the allocations lens.
 func sourcesAt(p profiler) (hotspots, allocations tui.Source) {
-	runs := newProfileRuns()
-	runs.now = func() time.Time { return scenarioNow }
-	src := profileSource(p, runs)
+	src := allSourcesAt(p)["hotspots"]
 	return src, func(ctx context.Context, scope catalog.Scope, query string) ([]map[string]any, error) {
 		scope.Lens = len(catalog.HotspotLenses) - 1
 		return src(ctx, scope, query)
 	}
+}
+
+// allSourcesAt builds every source of the view, the flame graph's included,
+// over one set of analyses with the clock pinned.
+func allSourcesAt(p profiler) map[string]tui.Source {
+	runs := newProfileRuns()
+	runs.now = func() time.Time { return scenarioNow }
+	return profileSources(p, runs)
 }
 
 func lensIndex(t *testing.T, name string) int {
@@ -196,11 +202,17 @@ func TestProfilingScenarios(t *testing.T) {
 		{"service-refused", fixture, profilingScenario{View: "hotspots", Timeframe: "2h", Lens: "running",
 			Entity: &scenarioEntity{ID: "SERVICE-000000000000B001", Name: "shop-frontend", Type: "SERVICE"}}},
 		{"no-process", fixture, profilingScenario{View: "hotspots", Timeframe: "2h", Lens: "running"}},
+		// What the flame graph is drawn from.
+		{"stacks", fixture, profilingScenario{View: catalog.HotspotStacksAPI, Entity: shop, Timeframe: "2h", Lens: "running"}},
+		{"stacks-no-data", profilerOver(t, answering(200, nil, `{"dataRootNodeId":"0","dataNodes":[]}`)),
+			profilingScenario{View: catalog.HotspotStacksAPI, Entity: shop, Timeframe: "2h", Lens: "running"}},
+		{"stacks-forbidden", profilerOver(t, answering(403, nil, apiError(403, "Forbidden"))),
+			profilingScenario{View: catalog.HotspotStacksAPI, Entity: shop, Timeframe: "2h", Lens: "running"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			sc := tc.sc
-			src, _ := sourcesAt(tc.p)
+			src := allSourcesAt(tc.p)[sc.View]
 			scope := catalog.Scope{Entity: sc.Entity.entity(), Timeframe: timeframe(t, sc.Timeframe), Arg: sc.Arg, Lens: lensIndex(t, sc.Lens)}
 			records, err := src(context.Background(), scope, "")
 			if err != nil {
@@ -457,6 +469,7 @@ func (emptyHotspots) Functions(string) ([]functionRow, int, string, error) {
 	return nil, 0, catalog.ProfEmptyNoSamples, nil
 }
 func (emptyHotspots) Focus(string, string) ([]focusRow, string, error) { return nil, "", nil }
+func (emptyHotspots) Stacks() ([]stackRow, string)                     { return nil, catalog.ProfEmptyNoSamples }
 
 // Lenses and focus drills read one analysis: a call joins the one in flight,
 // a later one gets the cached result, and the analysis is cancelled only once

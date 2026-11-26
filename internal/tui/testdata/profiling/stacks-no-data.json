@@ -1,0 +1,4 @@
+{"view":"hotspot-stacks","entity":{"id":"PROCESS-000000000000A001","name":"shop-backend","type":"PROCESS"},"timeframe":"2h","lens":"running",
+"records":[
+{"__summary":true,"empty":"no_samples","from":"2026-07-15T10:00:00Z","rows":0,"to":"2026-07-15T12:00:00Z"}
+]}

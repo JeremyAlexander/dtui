@@ -47,6 +47,10 @@ type hotspotReading interface {
 	// its callees. function is an exact frame label; one the state has no
 	// samples of reads as empty, not as an error.
 	Focus(state, function string) (rows []focusRow, empty string, err error)
+	// Stacks is one row per unique call stack, with the samples that ended
+	// in its last frame in every thread state at once. A reading without
+	// rows says why in empty.
+	Stacks() (rows []stackRow, empty string)
 }
 
 // allocationReading is one allocations analysis.
@@ -61,6 +65,13 @@ type functionRow struct {
 	Self, Total       int
 	SelfPct, TotalPct float64
 	Paths             int
+}
+
+type stackRow struct {
+	// Stack is the frames from the outermost caller to the one that was
+	// running, joined by catalog.ProfStackSep.
+	Stack                              string
+	Running, Lock, NetIO, DiskIO, Wait int
 }
 
 type focusRow struct {
@@ -284,6 +295,19 @@ func (r *profileRuns) get(ctx context.Context, key string, tf catalog.Timeframe,
 	}
 }
 
+// held returns the analysis that arrived for key, however long ago: what a
+// view that read it is still showing. It starts nothing, and an analysis
+// that failed or is still running is not held.
+func (r *profileRuns) held(key string) (any, catalog.ProfileWindow, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	run := r.runs[key]
+	if run == nil || !run.finished() || run.err != nil {
+		return nil, catalog.ProfileWindow{}, false
+	}
+	return run.result, run.window, true
+}
+
 // abandon cancels a run that nobody has waited for since the leave numbered
 // left: a later leave has a grace, and a timer, of its own.
 func (r *profileRuns) abandon(run *profileRun, left int) {
@@ -366,6 +390,17 @@ func (run *profileRun) finished() bool {
 	}
 }
 
+// profileSources are the sources of the profiling view over one profiler, by
+// the names the catalog asks for them. They share the analyses: the flame
+// graph's stacks are read from the analysis the functions table holds.
+func profileSources(p profiler, runs *profileRuns) map[string]tui.Source {
+	return map[string]tui.Source{
+		"hotspots":                    profileSource(p, runs),
+		catalog.HotspotStacksAPI:      stacksSource(p, runs, true),
+		catalog.HotspotStacksFreshAPI: stacksSource(p, runs, false),
+	}
+}
+
 // profileSource builds the source of the profiling view over one profiler:
 // the allocations analysis for its allocations lens, the hotspots analysis
 // for every other.
@@ -440,25 +475,85 @@ func stampProcess(rec map[string]any, e catalog.Entity) map[string]any {
 	return rec
 }
 
+// readHotspots is the hotspots analysis of a scope and the window it covers.
+// With held set, an analysis that has arrived is read however long ago that
+// was, and nothing is asked of the environment; otherwise, and when none is
+// held, the analysis is shared, reused and run as profileRuns.get says.
+func readHotspots(ctx context.Context, p profiler, runs *profileRuns, scope catalog.Scope, held bool,
+) (hotspotReading, catalog.ProfileWindow, catalog.Entity, error) {
+	entity, subject, err := profileTarget(p, scope, runs.now())
+	if err != nil {
+		return nil, catalog.ProfileWindow{}, entity, err
+	}
+	key := profileKey("hotspots", subject, scope.Timeframe)
+	var (
+		result any
+		window catalog.ProfileWindow
+		have   bool
+	)
+	if held {
+		result, window, have = runs.held(key)
+	}
+	if !have {
+		result, window, err = runs.get(ctx, key, scope.Timeframe,
+			func(ctx context.Context, w catalog.ProfileWindow) (any, error) {
+				return p.Hotspots(ctx, profileQuery{Entity: entity.ID, From: w.From, To: w.To})
+			})
+		if err != nil {
+			return nil, window, entity, err
+		}
+	}
+	reading, ok := result.(hotspotReading)
+	if !ok || reading == nil {
+		return nil, window, entity, errors.New("the hotspots analysis returned nothing to read")
+	}
+	return reading, window, entity, nil
+}
+
+// stacksSource serves the flame graph: every call stack of the hotspots
+// analysis, with its samples per thread state (catalog.HotspotStates), under
+// a summary that says which window they are from.
+func stacksSource(p profiler, runs *profileRuns, held bool) tui.Source {
+	return func(ctx context.Context, scope catalog.Scope, _ string) ([]map[string]any, error) {
+		reading, window, _, err := readHotspots(ctx, p, runs, scope, held)
+		if err != nil {
+			return nil, err
+		}
+		rows, empty := reading.Stacks()
+		summary := profileSummary(window)
+		summary[catalog.ProfSumRows] = float64(len(rows))
+		if len(rows) == 0 {
+			summary[catalog.ProfSumEmpty] = empty
+		}
+		records := make([]map[string]any, 0, len(rows)+1)
+		records = append(records, summary)
+		for _, row := range rows {
+			rec := map[string]any{catalog.ProfStack: row.Stack}
+			for _, state := range []struct {
+				name    string
+				samples int
+			}{
+				{"running", row.Running}, {"lock", row.Lock}, {"net_io", row.NetIO},
+				{"disk_io", row.DiskIO}, {"wait", row.Wait},
+			} {
+				if state.samples > 0 {
+					rec[state.name] = float64(state.samples)
+				}
+			}
+			records = append(records, rec)
+		}
+		return records, nil
+	}
+}
+
 // hotspotsSource serves the hotspots view: the functions table of the lens'
 // thread state, or one function's callers and callees when the scope carries
 // a function (Scope.Arg).
 func hotspotsSource(p profiler, runs *profileRuns) tui.Source {
 	return func(ctx context.Context, scope catalog.Scope, _ string) ([]map[string]any, error) {
-		entity, subject, err := profileTarget(p, scope, runs.now())
+		reading, window, entity, err := readHotspots(ctx, p, runs, scope, false)
 		if err != nil {
 			return nil, err
-		}
-		result, window, err := runs.get(ctx, profileKey("hotspots", subject, scope.Timeframe), scope.Timeframe,
-			func(ctx context.Context, w catalog.ProfileWindow) (any, error) {
-				return p.Hotspots(ctx, profileQuery{Entity: entity.ID, From: w.From, To: w.To})
-			})
-		if err != nil {
-			return nil, err
-		}
-		reading, ok := result.(hotspotReading)
-		if !ok || reading == nil {
-			return nil, errors.New("the hotspots analysis returned nothing to read")
 		}
 		summary := profileSummary(window)
 		state := catalog.HotspotState(scope)

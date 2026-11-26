@@ -156,6 +156,15 @@ func (h dtctlHotspots) Focus(state, function string) ([]focusRow, string, error)
 	return rows, profilingEmpty(view.Empty), nil
 }
 
+func (h dtctlHotspots) Stacks() ([]stackRow, string) {
+	view := h.a.Stacks(false)
+	rows := make([]stackRow, len(view.Rows))
+	for i, r := range view.Rows {
+		rows[i] = stackRow{Stack: r.Stack, Running: r.Running, Lock: r.Lock, NetIO: r.NetIO, DiskIO: r.DiskIO, Wait: r.Wait}
+	}
+	return rows, profilingEmpty(view.Empty)
+}
+
 type dtctlAllocations struct{ a *profiling.Allocations }
 
 func (a dtctlAllocations) Paths() ([]allocationRow, int64, int64, string) {
@@ -245,8 +254,8 @@ func (p *analysisProgress) note(status int, retryAfter string) string {
 	return ""
 }
 
-// profilingSourceFor builds the source of the profiling view over the
+// profilingSourcesFor builds the sources of the profiling view over the
 // environment c talks to.
-func profilingSourceFor(c *session.Client) tui.Source {
-	return profileSource(newDtctlProfiler(c), newProfileRuns())
+func profilingSourcesFor(c *session.Client) map[string]tui.Source {
+	return profileSources(newDtctlProfiler(c), newProfileRuns())
 }

@@ -37,6 +37,9 @@ func tuiSources(c *session.Client) map[string]tui.Source {
 		"dashboards":        dashboardSource(document.NewHandler(c), c.CurrentUserID),
 		"resolve-users":     userSource(iam.NewHandler(c)),
 		"hotspots":          profilingUnavailable,
+		// The flame graph of the profiling view.
+		catalog.HotspotStacksAPI:      profilingUnavailable,
+		catalog.HotspotStacksFreshAPI: profilingUnavailable,
 	}
 }
 
