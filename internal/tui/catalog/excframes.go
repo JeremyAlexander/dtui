@@ -66,6 +66,10 @@ type stackNotation struct {
 	// where the trace is a chain and names it; a trace of one exception
 	// does not have to say what it is, so its type is "".
 	rootCause func(lines []string) (frames []StackFrame, typ string)
+	// atFault reports whether the frames of a trace lead to where the
+	// exception arose. nil where they always do: a runtime that throws
+	// records the stack at the throw.
+	atFault func(lines []string) bool
 	// inApp reports whether a frame is application code rather than the
 	// runtime's or a framework's.
 	inApp func(f StackFrame) bool
@@ -88,7 +92,7 @@ var stackNotations = [...]stackNotation{
 		passThrough: jsPassThrough},
 	StackPython: {frame: pythonFrame, owns: pythonOwns, rootCause: pythonRootCause, inApp: pythonInApp,
 		passThrough: pythonPassThrough},
-	StackGo: {frame: goFrame, owns: goOwns, rootCause: goRootCause, inApp: goInApp,
+	StackGo: {frame: goFrame, owns: goOwns, rootCause: goRootCause, atFault: goAtFault, inApp: goInApp,
 		passThrough: goPassThrough},
 }
 
@@ -99,20 +103,22 @@ var stackNotations = [...]stackNotation{
 // one where it ends in "... N more"), the innermost .NET exception, the
 // first Python traceback, the first goroutine. Unparseable text yields nil.
 func ParseStackFrames(stack string) []StackFrame {
-	frames, _ := parseStack(stack)
+	frames, _, _ := parseStack(stack)
 	return frames
 }
 
 // parseStack is ParseStackFrames plus the type of the root cause, where the
-// trace is a chain of exceptions and names it.
-func parseStack(stack string) (frames []StackFrame, typ string) {
+// trace is a chain of exceptions and names it, and whether the frames lead
+// to where the exception arose (stackNotation.atFault). Where they do not,
+// they are no evidence of which exception this is.
+func parseStack(stack string) (frames []StackFrame, typ string, atFault bool) {
 	lines := stackLines(stack)
 	notation := stackNotationOf(lines)
 	if notation == nil {
-		return nil, ""
+		return nil, "", false
 	}
 	frames, typ = notation.rootCause(lines)
-	return collapseFrames(frames), typ
+	return collapseFrames(frames), typ, notation.atFault == nil || notation.atFault(lines)
 }
 
 // stackNotationOf picks the notation a trace is written in: the one with

@@ -489,7 +489,8 @@ func TestFingerprintSkipsPassThroughFrames(t *testing.T) {
   File "/app/shop/cart.py", line 42, in add_item
     raise ValueError("locked")`, RungAppFrames,
 			frames(StackPython, "shop/cart.py", "add_item", "shop/views.py", "post")},
-		{"go: handlers that wrap handlers", `shop/internal/cart.(*Service).AddItem(0xc000010000)
+		{"go: handlers that wrap handlers", `panic: cart locked
+shop/internal/cart.(*Service).AddItem(0xc000010000)
 shop/internal/api.(*Handler).Post(0xc000020000)
 shop/internal/web.(*Auth).ServeHTTP(0xc000020000)
 shop/internal/web.Tracing.ServeHTTP(0xc000020000)
@@ -617,6 +618,70 @@ func TestFingerprintKeysCarryTheClassifier(t *testing.T) {
 	b, _ := FingerprintExceptions([]SpanException{{Type: "T"}}, namedBuiltin("ab"))
 	if a.Key == b.Key {
 		t.Error("the classifier id runs into the type")
+	}
+}
+
+// A Go error has no stack of its own: a trace recorded with one
+// (debug.Stack in a middleware) says where the error was seen, not where it
+// arose, and every error that passes there has the same. Only a panic's
+// trace starts at the fault. So without a panic entry the key is the type
+// and the message.
+func TestGoTraceWithoutPanicIsKeyedOnTheMessage(t *testing.T) {
+	const recorded = `goroutine 34 [running]:
+runtime/debug.Stack()
+	/usr/local/go/src/runtime/debug/stack.go:26 +0x5e
+shop/internal/api.(*Recorder).Record(0xc000012345, {0x7b2a40, 0xc0000a2000})
+	/app/internal/api/recorder.go:31 +0x45
+shop/internal/api.(*Handler).ServeHTTP(0xc000012345, {0x7b2a40, 0xc0000a2000}, 0xc0000b4000)
+	/app/internal/api/handler.go:58 +0x1a5
+net/http.serverHandler.ServeHTTP({0xc0000a2000?}, {0x7b2a40, 0xc0000a2000}, 0xc0000b4000)
+	/usr/local/go/src/net/http/server.go:3137 +0x8e
+`
+	seen := func(msg string) ExceptionFingerprint {
+		return mustFingerprint(t, SpanException{Type: "*errors.errorString", Message: msg, StackTrace: recorded})
+	}
+	locked, lockedAgain, missing := seen("cart 7 is locked"), seen("cart 9 is locked"), seen("sku kettle not found")
+	if locked.Rung != RungMessage || locked.Frames != nil || locked.Message != "cart <n> is locked" {
+		t.Errorf("rung %v, frames %+v, message %q", locked.Rung, locked.Frames, locked.Message)
+	}
+	if locked.Key != lockedAgain.Key {
+		t.Errorf("one error with two values: %s, %s", locked.Key, lockedAgain.Key)
+	}
+	if locked.Key == missing.Key {
+		t.Errorf("two errors seen at one place share the key %s", locked.Key)
+	}
+	if bare := mustFingerprint(t, SpanException{Type: "*errors.errorString", Message: "cart 7 is locked"}); bare.Key != locked.Key {
+		t.Errorf("the same error without a trace: %s, with one %s", bare.Key, locked.Key)
+	}
+	if got := mustFingerprint(t, SpanException{Type: "*errors.errorString", StackTrace: recorded}); got.Rung != RungType {
+		t.Errorf("no message: rung %v, want the type alone", got.Rung)
+	}
+
+	// A panic is keyed on its frames, however its entry is printed: the
+	// runtime's frames in a recovered trace, the header of a crash.
+	const fault = `shop/internal/cart.(*Service).AddItem(0xc000012345, {0xc00001a0c0, 0x6})
+	/app/internal/cart/service.go:42 +0x1d
+shop/internal/api.(*Handler).PostItem(0xc000012345, {0x7b2a40, 0xc0000a2000}, 0xc0000b4000)
+	/app/internal/api/handler.go:17 +0x25
+`
+	want := frames(StackGo, "shop/internal/cart", "Service.AddItem", "shop/internal/api", "Handler.PostItem")
+	for name, stack := range map[string]string{
+		"recovered":     "goroutine 34 [running]:\npanic({0x6a1e20?, 0x7d5c10?})\n\t/usr/local/go/src/runtime/panic.go:770 +0x132\n" + fault,
+		"a crash":       "panic: cart locked\n\ngoroutine 34 [running]:\n" + fault,
+		"a fatal error": "fatal error: concurrent map writes\n\ngoroutine 34 [running]:\n" + fault,
+		"a signal": "panic: runtime error: invalid memory address or nil pointer dereference\n" +
+			"[signal SIGSEGV: segmentation violation code=0x1 addr=0x0 pc=0x48a2bd]\n\ngoroutine 34 [running]:\n" + fault,
+	} {
+		got := mustFingerprint(t, SpanException{Type: "panic", Message: "cart 7 is locked", StackTrace: stack})
+		if got.Rung != RungAppFrames || !reflect.DeepEqual(got.Frames, want) {
+			t.Errorf("%s: rung %v, frames %+v", name, got.Rung, got.Frames)
+		}
+	}
+
+	// Other runtimes throw where the fault is: their frames stay the key.
+	java := mustFingerprint(t, SpanException{Type: "java.lang.IllegalStateException", Message: "Cart 7 is locked", StackTrace: cartStack})
+	if java.Rung != RungAppFrames {
+		t.Errorf("java: rung %v", java.Rung)
 	}
 }
 

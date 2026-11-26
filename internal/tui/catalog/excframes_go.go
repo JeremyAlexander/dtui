@@ -138,6 +138,29 @@ func goRootCause(lines []string) ([]StackFrame, string) {
 	return goThrowSite(goFirstGoroutine(lines)), ""
 }
 
+// goPanicHeaders start the first line of a crash: a panic, or an error the
+// runtime does not let a program recover from.
+var goPanicHeaders = []string{"panic: ", "fatal error: "}
+
+// goAtFault reports whether a trace is a panic's. A Go error carries no
+// stack: a trace recorded next to one (debug.Stack in a handler that logs
+// it) says where the error was seen, and every error that passes there has
+// the same. A panic's trace starts where the fault is. It shows by a panic
+// entry: a frame of the runtime's (isGoPanic), as a recovered trace has
+// them, or the line a crash starts with (goPanicHeaders).
+func goAtFault(lines []string) bool {
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if hasAnyPrefix(line, goPanicHeaders) {
+			return true
+		}
+		if f, ok := goFrame(line); ok && isGoPanic(f) {
+			return true
+		}
+	}
+	return false
+}
+
 // goThrowSite drops the frames above the throw site: the deferred calls that
 // ran while panicking, which are printed first, and the runtime's entry into
 // the panic. A trace that ends there is kept whole.

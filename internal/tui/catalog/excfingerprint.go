@@ -113,7 +113,11 @@ func FingerprintExceptions(excs []SpanException, classify FrameClassifier) (Exce
 
 	// The type and the frames of a key come from one exception. Below the
 	// frame rungs that is the event's, which the message belongs to as well.
-	all, rootType := parseStack(root.StackTrace)
+	all, rootType, atFault := parseStack(root.StackTrace)
+	if !atFault {
+		// A Go trace that is not a panic's: where the error was seen.
+		all = nil
+	}
 	if rootType != "" && len(all) > 0 {
 		fp.Type = rootType
 	}

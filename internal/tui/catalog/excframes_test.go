@@ -803,7 +803,7 @@ Traceback (most recent call last):
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, typ := parseStack(tc.stack)
+			got, typ, _ := parseStack(tc.stack)
 			if !reflect.DeepEqual(got, tc.want) || typ != tc.typ {
 				t.Errorf("frames %+v type %q\nwant %+v %q", got, typ, tc.want, tc.typ)
 			}
@@ -1106,7 +1106,7 @@ Caused by: java.lang.IllegalStateException: Cart 7 is locked
 		"compressed":  "\t... 2 more\n",
 		"written out": "\tat com.example.shop.Checkout$$Lambda$14/0x0000000800c03000.run(Unknown Source)\n\tat com.example.shop.Main.run(Main.java:5)\n",
 	} {
-		got, typ := parseStack(head + tail)
+		got, typ, _ := parseStack(head + tail)
 		if !reflect.DeepEqual(got, want) || typ != "java.lang.IllegalStateException" {
 			t.Errorf("%s: frames %+v type %q, want %+v", name, got, typ, want)
 		}
@@ -1178,7 +1178,7 @@ Caused by: shop.Größenfehler: zu groß
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, typ := parseStack(tc.stack)
+			got, typ, _ := parseStack(tc.stack)
 			if !reflect.DeepEqual(got, tc.want) || typ != tc.typ {
 				t.Errorf("frames %+v type %q\nwant %+v %q", got, typ, tc.want, tc.typ)
 			}
@@ -1321,7 +1321,7 @@ ValueError: locked
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, typ := parseStack(tc.stack)
+			got, typ, _ := parseStack(tc.stack)
 			if !reflect.DeepEqual(got, tc.want) || typ != tc.typ {
 				t.Errorf("frames %+v type %q\nwant %+v %q", got, typ, tc.want, tc.typ)
 			}
@@ -1373,7 +1373,7 @@ func TestDotNetInnerExceptionTypes(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, typ := parseStack(tc.stack)
+			got, typ, _ := parseStack(tc.stack)
 			if !reflect.DeepEqual(got, tc.want) || typ != tc.typ {
 				t.Errorf("frames %+v type %q\nwant %+v %q", got, typ, tc.want, tc.typ)
 			}
@@ -1416,7 +1416,7 @@ func TestDotNetGeneratedNames(t *testing.T) {
 // at the first one.
 func TestGoRuntimeDumpForms(t *testing.T) {
 	dump := func(header, background string) string {
-		return header + `
+		return "panic: cart locked\n\n" + header + `
 main.process(0xc000012345, 0x2)
 	/app/main.go:42 +0x1d
 main.main()
@@ -1431,7 +1431,7 @@ goroutine 2 gp=0xc000002a80 m=nil [force gc (idle)]:
 	for name, header := range map[string]string{
 		"plain header":  "goroutine 1 [running]:",
 		"system header": "goroutine 1 gp=0xc000002380 m=0 mp=0x5a3c20 [running]:",
-		"no header":     "panic: cart locked\n",
+		"no header":     "",
 	} {
 		if got := ParseStackFrames(dump(header, "main.background")); !reflect.DeepEqual(got, want) {
 			t.Errorf("%s: %+v, want %+v", name, got, want)
@@ -1586,7 +1586,7 @@ func TestRootCauseBoundaries(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, typ := parseStack(tc.stack)
+			got, typ, _ := parseStack(tc.stack)
 			if !reflect.DeepEqual(got, tc.want) || typ != tc.typ {
 				t.Errorf("frames %+v type %q\nwant %+v %q", got, typ, tc.want, tc.typ)
 			}
