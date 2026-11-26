@@ -54,6 +54,42 @@ func TestFunction(t *testing.T) {
 	}
 }
 
+// A function that is called again by what it called (a calls b calls a) has
+// each stack counted for one callee only: the frame under its innermost call,
+// which is what the function was waiting for. The callees and the function's
+// own samples then add up to its total, as they do in the functions table's
+// callers and callees.
+func TestFunctionCalleesCountAStackOnce(t *testing.T) {
+	tree := build(t, 1, "main;a;b;a;c 5", "main;a;b 2", "main;a 1", "main;a;b;a 4", "main;a;b;a;b;d 3")
+	got := tree.Function(find(t, tree, "main", "a"), 0)
+	want := Function{
+		Paths: 2, Self: 5, Total: 15,
+		Callers: []Share{{"main", 15}},
+		Callees: []Share{{"b", 5}, {"c", 5}},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("got  %+v\nwant %+v", got, want)
+	}
+	var sum int64
+	for _, c := range got.Callees {
+		sum += c.Weight
+	}
+	if sum+got.Self != got.Total {
+		t.Errorf("callees %d and self %d do not add up to the total %d", sum, got.Self, got.Total)
+	}
+	// b is under a at two depths, and weighs under each of its own calls
+	// what is not under a deeper call of b.
+	got = tree.Function(find(t, tree, "main", "a", "b"), 0)
+	want = Function{
+		Paths: 2, Self: 2, Total: 14,
+		Callers: []Share{{"a", 14}},
+		Callees: []Share{{"a", 9}, {"d", 3}},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("got  %+v\nwant %+v", got, want)
+	}
+}
+
 // Equal shares are in the order of their names, so that a screen is the same
 // each time it is drawn.
 func TestFunctionSharesAreOrdered(t *testing.T) {

@@ -92,7 +92,7 @@ needed to see them. All of it is read off the tree in memory.
 | `self/total` | the frame's samples in every thread state, not only the one drawn |
 | `depth` | its level and the deepest level of the graph |
 | `paths` | how many call paths reach the function in the whole graph, and its total and self over all of them, each stack counted once: the number the functions table calls PATHS |
-| `callers` `callees` | the three heaviest of each over all those paths, with their share of the function's total, and how many more there are |
+| `callers` `callees` | the three heaviest of each over all those paths, with their share of the function's total, and how many more there are; a stack counts for one caller and one callee, as on the table's callers and callees page, so a function that calls itself is not counted twice |
 | `stack` | the callers from the outermost down to the frame, shortened and wrapped |
 
 On the root the details are the samples per thread state, the depth and the

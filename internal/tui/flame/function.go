@@ -16,9 +16,11 @@ type Function struct {
 	// however often the function calls itself.
 	Self, Total int64
 	// Callers and Callees are the functions that called it and that it
-	// called, the heaviest first and equals by name. A caller weighs what
-	// the function's frames under it weigh, a callee what its frames under
-	// the function weigh.
+	// called, the heaviest first and equals by name. Each stack counts for
+	// one caller and at most one callee, as in the functions table's callers
+	// and callees: the caller is the frame above the function's outermost
+	// call on the stack, and the callee the frame under its innermost one.
+	// So the callers add up to Total, and the callees with Self do.
 	Callers, Callees []Share
 }
 
@@ -41,17 +43,36 @@ func (t *Tree) Function(n NodeID, lens int) Function {
 	// inside is the end of the outermost frame of the function the walk is
 	// under: a frame before it is the function calling itself.
 	inside := NodeID(0)
+	// under are the subtrees the walk is in that decide whose weight a
+	// deeper call of the function is: a callee of the function, which loses
+	// what a deeper call of the function takes over, and such a deeper call
+	// (callee -1), under which nothing is taken from that callee again.
+	type subtree struct {
+		callee int32
+		end    NodeID
+	}
+	var under []subtree
 	for i := NodeID(1); int(i) < len(t.nodes); i++ {
+		for len(under) > 0 && i >= under[len(under)-1].end {
+			under = under[:len(under)-1]
+		}
 		nd := t.nodes[i]
 		total := t.Total(i, lens)
 		if total < 1 {
 			continue
 		}
-		if parent := t.nodes[nd.parent]; parent.label == label && nd.parent != Root && nd.label != label {
-			callees[nd.label] = satAdd(callees[nd.label], total)
-		}
 		if nd.label != label {
+			if nd.parent != Root && t.nodes[nd.parent].label == label {
+				callees[nd.label] = satAdd(callees[nd.label], total)
+				under = append(under, subtree{callee: nd.label, end: nd.end})
+			}
 			continue
+		}
+		if len(under) > 0 {
+			if callee := under[len(under)-1].callee; callee >= 0 {
+				callees[callee] = max(callees[callee]-total, 0)
+			}
+			under = append(under, subtree{callee: -1, end: nd.end})
 		}
 		f.Paths++
 		f.Self = satAdd(f.Self, t.Self(i, lens))
@@ -59,6 +80,11 @@ func (t *Tree) Function(n NodeID, lens int) Function {
 			f.Total = satAdd(f.Total, total)
 			inside = nd.end
 			callers[t.nodes[nd.parent].label] = satAdd(callers[t.nodes[nd.parent].label], total)
+		}
+	}
+	for callee, weight := range callees {
+		if weight < 1 {
+			delete(callees, callee) // all of it was a deeper call's
 		}
 	}
 	f.Callers, f.Callees = t.shares(callers), t.shares(callees)
