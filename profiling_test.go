@@ -1432,3 +1432,61 @@ func TestProfilingCaptionWordsTheReadersSelection(t *testing.T) {
 		}
 	}
 }
+
+// gatedProfiler holds the analyses of the processes in held open until
+// release is closed and answers every other at once, recording all of them.
+type gatedProfiler struct {
+	recordingProfiler
+	held    map[string]bool
+	release chan struct{}
+}
+
+func (p *gatedProfiler) Hotspots(ctx context.Context, q profileQuery) (hotspotReading, error) {
+	reading, err := p.recordingProfiler.Hotspots(ctx, q)
+	if p.held[q.Entity] {
+		select {
+		case <-p.release:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	return reading, err
+}
+
+// The four kept analyses are four finished ones. Those still running do not
+// count, or the only result there is would be dropped the moment it arrived
+// and the next lens of its view would run it again.
+func TestProfilingRunsInFlightDoNotEvictAResult(t *testing.T) {
+	process := func(i int) *catalog.Entity {
+		return &catalog.Entity{ID: fmt.Sprintf("PROCESS-00000000000000%02d", i), Type: "PROCESS"}
+	}
+	p := &gatedProfiler{held: map[string]bool{}, release: make(chan struct{})}
+	runs := newProfileRuns()
+	runs.now = func() time.Time { return scenarioNow }
+	hotspots := hotspotsSource(p, runs)
+	read := func(i int) {
+		if _, err := hotspots(context.Background(), catalog.Scope{Entity: process(i), Timeframe: timeframe(t, "2h")}, ""); err != nil {
+			t.Error(err)
+		}
+	}
+
+	var wg sync.WaitGroup
+	for i := range profileCacheSize {
+		p.held[process(i).ID] = true
+		wg.Go(func() { read(i) })
+	}
+	for p.asked() != profileCacheSize {
+		time.Sleep(time.Millisecond)
+	}
+	read(profileCacheSize)
+	read(profileCacheSize)
+	if got := p.asked(); got != profileCacheSize+1 {
+		t.Errorf("%d analyses with %d in flight and one more process read twice, want %d: its result must be kept",
+			got, profileCacheSize, profileCacheSize+1)
+	}
+	close(p.release)
+	wg.Wait()
+	if got := cachedRuns(runs); got != profileCacheSize {
+		t.Errorf("%d analyses kept once all had finished, want %d", got, profileCacheSize)
+	}
+}

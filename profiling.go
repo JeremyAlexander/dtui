@@ -340,17 +340,23 @@ func (r *profileRuns) start(key string, tf catalog.Timeframe,
 }
 
 // evict drops the oldest finished analyses beyond the cache size; the caller
-// holds r.mu. One still running is never dropped, so more than the cache size
-// can be held while that many run at once.
+// holds r.mu. One still running neither counts nor is dropped: a result is
+// megabytes only once it has arrived, and counting the runs in flight would
+// drop the one result there is while four others run.
 func (r *profileRuns) evict() {
-	for len(r.runs) > profileCacheSize {
+	for {
 		var oldest *profileRun
+		finished := 0
 		for _, run := range r.runs {
-			if run.finished() && (oldest == nil || run.seq < oldest.seq) {
+			if !run.finished() {
+				continue
+			}
+			finished++
+			if oldest == nil || run.seq < oldest.seq {
 				oldest = run
 			}
 		}
-		if oldest == nil {
+		if finished <= profileCacheSize {
 			return
 		}
 		delete(r.runs, oldest.key)
