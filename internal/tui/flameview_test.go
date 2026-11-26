@@ -706,7 +706,7 @@ func TestFlameGraphFitsEveryTerminal(t *testing.T) {
 	odd := stackRecords("2026-07-15T12:00:00Z", "日本語のメソッド;e\u0301te\u0301;a\x1b[31mb\nc 40,0", "日本語のメソッド;👨\u200d👩\u200d👧.run 30,0", "ab\u2764\ufe0f;x 30,0")
 	check := func(what string) {
 		t.Helper()
-		for _, size := range []struct{ w, h int }{{40, 10}, {41, 11}, {57, 13}, {80, 24}, {120, 40}, {200, 60}, {400, 100}, {20, 5}} {
+		for _, size := range []struct{ w, h int }{{40, 10}, {41, 11}, {57, 13}, {80, 24}, {120, 40}, {200, 60}, {400, 100}, {20, 5}, {4, 8}, {1, 8}} {
 			a.Update(tea.WindowSizeMsg{Width: size.w, Height: size.h})
 			out := a.View()
 			lines := strings.Split(out, "\n")
@@ -735,6 +735,9 @@ func TestFlameGraphFitsEveryTerminal(t *testing.T) {
 	if out := screen(a); strings.Contains(out, "\x1b") {
 		t.Error("a control sequence of a label reached the terminal")
 	}
+	press(a, key("r"))
+	answerFlame(a, fv, nil, errors.New(strings.Repeat("the environment failed on the analysis; ", 30)))
+	check("a failed analysis")
 }
 
 // Without colour the first cell of a frame says what it is; with colour the

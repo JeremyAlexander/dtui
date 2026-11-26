@@ -1238,7 +1238,7 @@ func (v *tableView) loadingText() []string {
 // short line to the left margin.
 func placeNote(text string, width int) string {
 	if lipgloss.Width(text) > width-4 {
-		text = wrap(text, width-4)
+		text = wrap(text, max(width-4, 1))
 	}
 	return lipgloss.PlaceHorizontal(width, lipgloss.Center, theme.Dim.Render(text))
 }

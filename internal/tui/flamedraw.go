@@ -115,8 +115,14 @@ func (v *flameView) View(width, height int) string {
 	switch {
 	case v.err != nil:
 		// It may repeat tenant data: one safe line, wrapped under itself.
-		text := strings.ReplaceAll(wrap(oneLine(v.err.Error()), width-2), "\n", "\n  ")
-		b.WriteString("\n\n" + theme.Error.Render("✗ "+text))
+		b.WriteString("\n")
+		for i, line := range flameWrap(oneLine(v.err.Error()), width-2, " ") {
+			lead := "  "
+			if i == 0 {
+				lead = "✗ "
+			}
+			b.WriteString("\n" + ansi.Truncate(theme.Error.Render(lead+line), width, ""))
+		}
 	case v.graph == nil:
 		b.WriteString("\n")
 		for _, line := range v.waitLines() {
