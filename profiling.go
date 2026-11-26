@@ -132,8 +132,8 @@ const profileCacheTTL = 2 * time.Minute
 
 // profileAbandonGrace is how long an analysis nobody waits for keeps running.
 // A lens switch cancels the view's call and issues the next one a moment
-// later, and that gap must not restart a minute-long analysis; a view that was
-// really left stops holding its slot after the grace.
+// later, and that gap must not restart a minute-long analysis; for a view that
+// was really left, dtui stops polling after the grace.
 const profileAbandonGrace = 2 * time.Second
 
 // profileCacheSize bounds the analyses kept: a hotspots result is megabytes.
@@ -142,8 +142,9 @@ const profileCacheSize = 4
 // profileRuns shares analyses between the calls of the views. A call for an
 // analysis that is cached gets it at once; one for an analysis in flight
 // joins it. The analysis is cancelled shortly after the last call waiting for
-// it was (the view was left), so an abandoned one does not keep holding one of
-// the environment's few concurrent analyses.
+// it was (the view was left): dtui then stops asking for its result. No
+// request tells the environment so; what it does with an analysis nobody
+// polls is not known.
 type profileRuns struct {
 	now   func() time.Time
 	grace time.Duration

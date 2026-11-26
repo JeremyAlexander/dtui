@@ -297,12 +297,14 @@ func (a *app) applySegments(sel []SegmentOption) tea.Cmd {
 }
 
 // refreshAllViews refetches every live view on both stacks (deduped) so a
-// dataSource-level scope change reaches covered views too.
+// dataSource-level scope change reaches covered views too. A view that auto
+// refresh skips is skipped here as well: its source is an API analysis the
+// segments do not reach, and a refetch would only replace its call.
 func (a *app) refreshAllViews() tea.Cmd {
 	seen := map[viewModel]bool{}
 	var cmds []tea.Cmd
 	for _, v := range append(append([]viewModel{}, a.stack...), a.prev...) {
-		if seen[v] {
+		if seen[v] || !autoRefreshes(v) {
 			continue
 		}
 		seen[v] = true

@@ -34,9 +34,11 @@ type tableView struct {
 
 	loading bool
 	err     error
-	// cancel ends the in-flight API call of a CancelOnLeave spec; interrupted
-	// marks a call ended by leaving the view, fetched again on the way back.
+	// cancel ends the in-flight API call of a CancelOnLeave spec. Such a view
+	// fetches only while it is on the breadcrumb trail: parked says it is off
+	// it, and interrupted that it owes a fetch for when it comes back.
 	cancel      context.CancelFunc
+	parked      bool
 	interrupted bool
 	// started is when the view began to wait, and progress what the source
 	// said last about the call in flight. Both last as long as the wait does,
@@ -335,6 +337,13 @@ func (v *tableView) composeRosterDQL() string {
 }
 
 func (v *tableView) Refresh() tea.Cmd {
+	if v.parked {
+		// Nobody watches a view that is off the trail: it fetches when it
+		// is back on it (Returned).
+		v.interrupted = true
+		return nil
+	}
+	v.interrupted = false
 	v.seq++
 	if !v.loading {
 		v.started, v.progress = catalog.Now(), &callProgress{}
@@ -409,8 +418,8 @@ func (v *tableView) fetch() tea.Cmd {
 	if v.spec.API != "" {
 		ctx := context.Background()
 		if v.spec.CancelOnLeave {
-			// A newer fetch supersedes the one in flight: end it, so it does
-			// not keep its server-side slot for a result nobody will read.
+			// A newer fetch supersedes the one in flight: end it, so nothing
+			// keeps polling for a result nobody will read.
 			if v.cancel != nil {
 				v.cancel()
 			}
@@ -439,11 +448,16 @@ func (v *tableView) hopCmd() tea.Cmd {
 	return v.ds.query(hopOwner{v}, v.seq, q)
 }
 
-// Left ends the in-flight call of a CancelOnLeave spec when the view drops off
-// the breadcrumb trail. The result would be dropped anyway; cancelling frees
-// what the call holds on the server while it runs.
+// Left parks a CancelOnLeave view that dropped off the breadcrumb trail and
+// ends its in-flight call. The result would be dropped anyway; cancelling
+// stops the source from polling for it. Whether the environment then frees
+// anything is the environment's business: no request tells it.
 func (v *tableView) Left() {
-	if !v.spec.CancelOnLeave || !v.loading || v.cancel == nil {
+	if !v.spec.CancelOnLeave {
+		return
+	}
+	v.parked = true
+	if !v.loading || v.cancel == nil {
 		return
 	}
 	v.cancel()
@@ -453,15 +467,21 @@ func (v *tableView) Left() {
 	v.interrupted = true
 }
 
-// Returned fetches again when the view comes back onto the trail after Left
-// interrupted its call.
+// Returned puts the view back on the trail and makes up for what it missed
+// while parked: the call Left interrupted, or a refresh it was asked for.
 func (v *tableView) Returned() tea.Cmd {
+	v.parked = false
 	if !v.interrupted {
 		return nil
 	}
-	v.interrupted = false
 	return v.Refresh()
 }
+
+// AutoRefreshes reports whether the periodic refresh ('R') applies to the
+// view. It does not where a fetch is an analysis the view cancels on leaving:
+// a tick would replace the call in flight every interval, and submit a new
+// analysis each time the source's cached one expired.
+func (v *tableView) AutoRefreshes() bool { return !v.spec.CancelOnLeave }
 
 func (v *tableView) SetTimeframe(tf catalog.Timeframe) tea.Cmd {
 	v.scope.Timeframe = tf

@@ -543,6 +543,9 @@ func (a *app) dispatch(msg tea.Msg) tea.Cmd {
 		if msg.gen != a.refreshGen || refreshIntervals[a.refreshIdx] == 0 {
 			return nil
 		}
+		if !autoRefreshes(a.top()) {
+			return a.scheduleRefresh()
+		}
 		return tea.Batch(a.top().Refresh(), a.scheduleRefresh())
 
 	case spinnerTickMsg:
@@ -599,8 +602,9 @@ func (a *app) navigate(view viewModel, replace bool) tea.Cmd {
 	)
 }
 
-// trailLeaver is implemented by views that hold something only while they are
-// on the breadcrumb trail: an API call that occupies a server-side slot.
+// trailLeaver is implemented by views that fetch only while they are on the
+// breadcrumb trail: an API call that runs for a minute is not left running,
+// or started, for a view nobody can see.
 type trailLeaver interface {
 	// Left tells the view it dropped off the trail.
 	Left()
@@ -633,6 +637,15 @@ func (a *app) trailChanged(before []viewModel) tea.Cmd {
 		}
 	}
 	return tea.Batch(cmds...)
+}
+
+// autoRefreshes reports whether the periodic refresh applies to a view: every
+// view, unless it says otherwise.
+func autoRefreshes(v viewModel) bool {
+	if r, ok := v.(interface{ AutoRefreshes() bool }); ok {
+		return r.AutoRefreshes()
+	}
+	return true
 }
 
 func (a *app) handleKey(msg tea.KeyMsg) tea.Cmd {
@@ -739,10 +752,11 @@ func (a *app) handleKey(msg tea.KeyMsg) tea.Cmd {
 			if refreshIntervals[a.refreshIdx] == 0 {
 				return status("auto-refresh off")
 			}
-			return tea.Batch(
-				status(fmt.Sprintf("auto-refresh every %s", refreshIntervals[a.refreshIdx])),
-				a.scheduleRefresh(),
-			)
+			note := fmt.Sprintf("auto-refresh every %s", refreshIntervals[a.refreshIdx])
+			if !autoRefreshes(top) {
+				note += " — not on this view, where r asks for a new analysis"
+			}
+			return tea.Batch(status(note), a.scheduleRefresh())
 		case "-":
 			if a.prev != nil {
 				a.stack, a.prev = a.prev, a.stack

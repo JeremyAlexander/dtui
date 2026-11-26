@@ -421,8 +421,9 @@ type Spec struct {
 	// needs the width.
 	NoPreview bool
 	// CancelOnLeave cancels the view's in-flight API call when the view leaves
-	// the breadcrumb trail, and fetches again if the user comes back to it. For
-	// sources whose call holds a scarce server-side slot while it runs.
+	// the breadcrumb trail, and fetches again if the user comes back to it;
+	// off the trail the view fetches nothing, and auto refresh skips it. For
+	// sources whose call is a slow analysis the environment runs few of.
 	CancelOnLeave bool
 	// Caption renders the line under the status line that says what the rows
 	// are a reading of: the window actually analysed, the totals, a cap. It

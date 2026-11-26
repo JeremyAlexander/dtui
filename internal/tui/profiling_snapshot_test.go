@@ -426,3 +426,141 @@ func TestProfilingLoadingLineWrapsAtEightyColumns(t *testing.T) {
 		t.Errorf("the loading text is not whole, want %q in:\n%s", want, out)
 	}
 }
+
+// profilingCalls opens :hotspots over a source that records every call and
+// never answers, as an analysis that is still running.
+func profilingCalls(t *testing.T) (a *app, tv *tableView, calls *[]context.Context, scopes *[]catalog.Scope) {
+	t.Helper()
+	a = testApp(t, "home")
+	calls, scopes = &[]context.Context{}, &[]catalog.Scope{}
+	a.ds.sources = map[string]Source{
+		"hotspots": func(ctx context.Context, scope catalog.Scope, _ string) ([]map[string]any, error) {
+			*calls = append(*calls, ctx)
+			*scopes = append(*scopes, scope)
+			return nil, nil
+		},
+	}
+	_, cmd := a.Update(NavigateMsg{Target: "hotspots", Filter: "PROCESS-000000000000A001"})
+	deliver(a, cmd)
+	return a, a.top().(*tableView), calls, scopes
+}
+
+// A view parked on the '-' stack is off the trail: nothing that happens while
+// it is there may start an analysis nobody watches. It takes the new window
+// along and asks once, when '-' brings it back.
+func TestProfilingParkedViewAsksForNothing(t *testing.T) {
+	a, tv, calls, scopes := profilingCalls(t)
+	// Segments do not reach an analysis: applying one leaves the call alone.
+	deliver(a, a.refreshAllViews())
+	if len(*calls) != 1 || (*calls)[0].Err() != nil {
+		t.Fatalf("a segment change on the view itself: %d calls, first cancelled=%v", len(*calls), (*calls)[0].Err() != nil)
+	}
+	_, cmd := a.Update(NavigateMsg{Target: "problems"})
+	deliver(a, cmd)
+	if len(*calls) != 1 || (*calls)[0].Err() == nil {
+		t.Fatalf("leaving: %d calls, first cancelled=%v", len(*calls), (*calls)[0].Err() != nil)
+	}
+
+	half := catalog.Timeframe{Label: "30m", Dur: 30 * time.Minute}
+	deliver(a, a.setTimeframe(half))
+	if len(*calls) != 1 {
+		t.Fatalf("a timeframe change started call %d on a parked view", len(*calls))
+	}
+	deliver(a, a.refreshAllViews())
+	if len(*calls) != 1 {
+		t.Fatalf("a segment change started call %d on a parked view", len(*calls))
+	}
+	deliver(a, tv.Refresh())
+	if len(*calls) != 1 || tv.loading {
+		t.Fatalf("a refresh of a parked view started call %d (loading=%v)", len(*calls), tv.loading)
+	}
+
+	_, cmd = a.Update(key("-"))
+	deliver(a, cmd)
+	if a.top() != tv || len(*calls) != 2 {
+		t.Fatalf("'-' must ask exactly once: top is the view=%v, %d calls", a.top() == tv, len(*calls))
+	}
+	if (*calls)[1].Err() != nil || (*scopes)[1].Timeframe.Label != "30m" {
+		t.Errorf("the call on return: cancelled=%v, window %q, want it live on 30m",
+			(*calls)[1].Err() != nil, (*scopes)[1].Timeframe.Label)
+	}
+
+	// Parked again with its call cancelled, then back: one more call, and
+	// the one before it is the only one that was cancelled for it.
+	_, cmd = a.Update(key("-"))
+	deliver(a, cmd)
+	_, cmd = a.Update(key("-"))
+	deliver(a, cmd)
+	if len(*calls) != 3 || (*calls)[1].Err() == nil || (*calls)[2].Err() != nil {
+		t.Errorf("second round trip: %d calls, want 3 with only the last one live", len(*calls))
+	}
+}
+
+// A parked view that already had its result shows none of it on return when
+// the window changed meanwhile.
+func TestProfilingParkedViewReturnsOnTheNewWindow(t *testing.T) {
+	pinSnapshotClock(t)
+	sc := loadProfilingScenario(t, "hotspots-running")
+	a, tv := openProfiling(t, sc)
+	sc.answer(tv)
+	_, cmd := a.Update(NavigateMsg{Target: "problems"})
+	deliver(a, cmd)
+	deliver(a, a.setTimeframe(catalog.Timeframe{Label: "30m", Dur: 30 * time.Minute}))
+	if tv.loading {
+		t.Fatal("a parked view must not fetch")
+	}
+	_, cmd = a.Update(key("-"))
+	deliver(a, cmd)
+	if !tv.loading || len(tv.rows) != 0 || tv.scope.Timeframe.Label != "30m" {
+		t.Errorf("on return: loading=%v, %d rows, window %q; want a fresh wait on 30m",
+			tv.loading, len(tv.rows), tv.scope.Timeframe.Label)
+	}
+}
+
+// Auto refresh is for views a refetch costs a query. An analysis is asked for
+// by hand: a tick neither replaces the call in flight nor, once the cached
+// analysis expired, submits a new one every interval.
+func TestAutoRefreshLeavesAnAnalysisAlone(t *testing.T) {
+	a, tv, calls, _ := profilingCalls(t)
+	press(a, key("R"))
+	if a.status != "auto-refresh every 10s — not on this view, where r asks for a new analysis" {
+		t.Errorf("R on a profiling view said %q", a.status)
+	}
+	a.Update(refreshTickMsg{gen: a.refreshGen})
+	a.Update(refreshTickMsg{gen: a.refreshGen})
+	if len(*calls) != 1 || (*calls)[0].Err() != nil || !tv.loading {
+		t.Errorf("two ticks: %d calls, first cancelled=%v, loading=%v; want the one call untouched",
+			len(*calls), (*calls)[0].Err() != nil, tv.loading)
+	}
+
+	// Every other view is refreshed by the tick, API-backed ones included.
+	n := 0
+	a.ds.sources["slos"] = func(context.Context, catalog.Scope, string) ([]map[string]any, error) {
+		n++
+		return nil, nil
+	}
+	_, cmd := a.Update(NavigateMsg{Target: "slos"})
+	deliver(a, cmd)
+	_, cmd = a.Update(refreshTickMsg{gen: a.refreshGen})
+	collectMsgs(cmd)
+	if n != 2 {
+		t.Errorf("slos was fetched %d times after one tick, want 2 (open, tick)", n)
+	}
+	press(a, key("R"))
+	if a.status != "auto-refresh every 30s" {
+		t.Errorf("R on slos said %q", a.status)
+	}
+}
+
+// A dataSource-level change still reaches an ordinary view parked on '-'.
+func TestRefreshAllViewsReachesParkedOrdinaryViews(t *testing.T) {
+	a := testApp(t, "logs")
+	logs := a.top().(*tableView)
+	_, cmd := a.Update(NavigateMsg{Target: "problems"})
+	deliver(a, cmd)
+	seq := logs.seq
+	deliver(a, a.refreshAllViews())
+	if logs.seq != seq+1 || !logs.loading {
+		t.Errorf("parked logs view: seq %d → %d, loading=%v; want one refetch", seq, logs.seq, logs.loading)
+	}
+}
