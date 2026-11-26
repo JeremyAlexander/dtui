@@ -128,6 +128,56 @@ var (
 	StackLoc    = lipgloss.NewStyle().Foreground(Sky)
 )
 
+// The flame graph. A frame is a run of cells in one of the Flame colours,
+// picked by its function's name (FlameStep) so that a function has one colour
+// wherever it is called: a warm ramp, which is what makes the picture read as
+// a flame graph and not as a chart of categories. The ramp and its ink are
+// the same on a dark and on a light terminal; the marks laid over it follow
+// the palette.
+var (
+	flameInk = dual("#1e1e2e", "234", "0", "#1e1e2e", "234", "0")
+
+	Flame = func() []lipgloss.Style {
+		steps := []lipgloss.CompleteColor{
+			{TrueColor: "#e05a47", ANSI256: "167", ANSI: "1"},
+			{TrueColor: "#e8703a", ANSI256: "166", ANSI: "3"},
+			{TrueColor: "#ee8a35", ANSI256: "172", ANSI: "9"},
+			{TrueColor: "#f39c3d", ANSI256: "208", ANSI: "11"},
+			{TrueColor: "#f7b24a", ANSI256: "214", ANSI: "3"},
+			{TrueColor: "#f9c85e", ANSI256: "220", ANSI: "11"},
+			{TrueColor: "#f4d87a", ANSI256: "221", ANSI: "3"},
+			{TrueColor: "#eb9b6c", ANSI256: "173", ANSI: "9"},
+		}
+		styles := make([]lipgloss.Style, len(steps))
+		for i, c := range steps {
+			styles[i] = lipgloss.NewStyle().Foreground(flameInk).
+				Background(lipgloss.CompleteAdaptiveColor{Dark: c, Light: c})
+		}
+		return styles
+	}()
+
+	// FlameSelected is the frame the cursor is on: the loudest surface there
+	// is, with the gutter bar of a selected table row as its first cell.
+	FlameSelected = lipgloss.NewStyle().Bold(true).Foreground(Ink).Background(Text)
+	// FlameHit is a frame a search matched.
+	FlameHit = lipgloss.NewStyle().Bold(true).Foreground(Ink).Background(Accent)
+	// FlameSame is another call of the function the cursor is on: quieter
+	// than a search hit, so the two can be told apart.
+	FlameSame = lipgloss.NewStyle().Foreground(Text).Background(SelBg)
+	// FlameCaller is a caller of the zoomed frame: it is context, not part
+	// of the picture.
+	FlameCaller = lipgloss.NewStyle().Foreground(Muted).Background(ChipBg)
+	// FlameMore marks callees narrower than a cell.
+	FlameMore = lipgloss.NewStyle().Foreground(Faint)
+)
+
+// FlameStep is the index into Flame of a function's colour.
+func FlameStep(function string) int {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(function))
+	return int(h.Sum32() % uint32(len(Flame)))
+}
+
 // brandStops are the Dynatrace logo gradient colors, lime → green → teal →
 // blue → purple — the header wordmark runs through them.
 var brandStops = []string{"#B4DC00", "#73BE28", "#00B9B4", "#1496FF", "#6F2DA8"}
