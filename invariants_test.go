@@ -303,19 +303,50 @@ func TestDtctlModulePathIsWiredEverywhere(t *testing.T) {
 		t.Errorf("makefile stamps %s, go.mod builds %s", makeVar[1], versionPkg)
 	}
 
-	stamped := map[string]bool{}
-	for _, m := range regexp.MustCompile(`-X (\S+)\.(\w+)=`).FindAllStringSubmatch(read(".goreleaser.yaml"), -1) {
-		if m[1] == "main" {
-			continue
+	// The variable being right proves nothing about the flags that are meant
+	// to use it, so every -X is checked where it is written: its package is
+	// main, the variable, or the path go.mod builds.
+	for _, file := range []string{"makefile", ".goreleaser.yaml"} {
+		stamped := map[string]bool{}
+		for _, m := range regexp.MustCompile(`-X (\S+)\.(\w+)=`).FindAllStringSubmatch(read(file), -1) {
+			pkg, name := m[1], m[2]
+			if pkg == "main" {
+				continue
+			}
+			if file == "makefile" && pkg == "$(DTCTL_VERSION_PKG)" {
+				stamped[name] = true
+				continue
+			}
+			if pkg != versionPkg {
+				t.Errorf("%s stamps %s.%s, go.mod builds %s", file, pkg, name, versionPkg)
+				continue
+			}
+			stamped[name] = true
 		}
-		if m[1] != versionPkg {
-			t.Errorf(".goreleaser.yaml stamps %s.%s, go.mod builds %s", m[1], m[2], versionPkg)
+		for _, name := range []string{"Version", "Commit", "Date"} {
+			if !stamped[name] {
+				t.Errorf("%s does not stamp %s.%s", file, versionPkg, name)
+			}
 		}
-		stamped[m[2]] = true
 	}
-	for _, name := range []string{"Version", "Commit", "Date"} {
-		if !stamped[name] {
-			t.Errorf(".goreleaser.yaml does not stamp %s.%s", versionPkg, name)
+
+	// wasm/build.sh copies dtctl's two modules out of the module cache and
+	// replaces them in a scoped workspace. No workflow runs it, so a stale
+	// path there fails only when someone next builds the extension.
+	wasm := read("wasm/build.sh")
+	for _, want := range []string{
+		"copy_mod " + required[1] + " dtctl\n",
+		"copy_mod " + required[1] + "/sdk dtctl-sdk\n",
+		"replace " + required[1] + " => ./.deps/dtctl\n",
+		"replace " + required[1] + "/sdk => ./.deps/dtctl-sdk\n",
+	} {
+		if !strings.Contains(wasm, want) {
+			t.Errorf("wasm/build.sh lacks %q", strings.TrimSpace(want))
+		}
+	}
+	for _, m := range regexp.MustCompile(`(?m)^(?:copy_mod|replace) (\S+/dtctl(?:/\S+)?) `).FindAllStringSubmatch(wasm, -1) {
+		if m[1] != required[1] && m[1] != required[1]+"/sdk" {
+			t.Errorf("wasm/build.sh names %s, go.mod requires %s", m[1], required[1])
 		}
 	}
 }
