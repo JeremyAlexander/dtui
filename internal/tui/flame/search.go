@@ -34,6 +34,8 @@ func (g *Graph) Search(pattern string) error {
 	for i, label := range g.tree.labels {
 		s.labels[i] = re.MatchString(label)
 	}
+	// A remainder is no function, whatever its label is spelled like.
+	s.labels[restLabelID] = false
 	g.search, g.shareValid = s, false
 	return nil
 }
@@ -41,7 +43,7 @@ func (g *Graph) Search(pattern string) error {
 // SearchSelected searches for exactly the selected frame's label. The root
 // is no function: on it nothing happens, and the result says so.
 func (g *Graph) SearchSelected() bool {
-	if g.sel == Root {
+	if g.sel == Root || g.tree.IsRest(g.sel) {
 		return false
 	}
 	return g.SearchLabel(g.tree.Label(g.sel))

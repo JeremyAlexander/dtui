@@ -918,3 +918,50 @@ func TestFlameGraphDetailsKeyWithTheDetailsOff(t *testing.T) {
 		t.Error("d with the details off gave them the room for when they come back")
 	}
 }
+
+// A graph that is full says so under its title, and the frame that holds
+// what was not kept says what it is: it is no function to search for or to
+// add up, and every sample is still counted.
+func TestFlameGraphSaysWhenItIsFull(t *testing.T) {
+	flameMaxFrames = 3 // the root, main and a
+	t.Cleanup(func() { flameMaxFrames = flame.MaxFrames })
+	a, fv := walkFlame(t)
+	a.Update(tea.WindowSizeMsg{Width: 160, Height: 40})
+	tree := fv.graph.Tree()
+	if got := tree.Total(flame.Root, 0); got != 200 {
+		t.Errorf("the root counts %d samples, want all 200", got)
+	}
+	words := func() string { return strings.Join(strings.Fields(screen(a)), " ") } // a line may wrap
+	out := words()
+	if want := "the graph is full: it keeps 3 frames, the deeper frames of 5 stacks are folded into (frames not kept)"; !strings.Contains(out, want) {
+		t.Errorf("the caption does not say %q:\n%s", want, out)
+	}
+	press(a, flameKey("down"))
+	press(a, flameKey("down"))
+	if sel := fv.graph.Selected(); !tree.IsRest(sel) || tree.Total(sel, 0) != 70 {
+		t.Fatalf("selected %v with %d samples, want the remainder under main with 70", tree.Path(sel), tree.Total(sel, 0))
+	}
+	out = words()
+	if want := "not a function: the samples of the frames under main that the full graph did not keep"; !strings.Contains(out, want) {
+		t.Errorf("the details do not say %q:\n%s", want, out)
+	}
+	if strings.Contains(out, "call paths reach this function") {
+		t.Errorf("the remainder is added up as a function:\n%s", out)
+	}
+	press(a, key("#"))
+	if a.status != "frames that were not kept are not a function to search for" || fv.graph.Searching() {
+		t.Errorf("# on the remainder: status %q, searching %v", a.status, fv.graph.Searching())
+	}
+	press(a, key("O"))
+	if a.status != "frames that were not kept have no source file" {
+		t.Errorf("O on the remainder: status %q", a.status)
+	}
+	press(a, key("/"))
+	for _, r := range "kept" {
+		press(a, key(string(r)))
+	}
+	press(a, key("enter"))
+	if fv.graph.Matches(fv.graph.Selected()) {
+		t.Error("a search marks the remainder")
+	}
+}

@@ -269,6 +269,18 @@ again in full colour about 1.5 ms
 (`BenchmarkBuild`, `BenchmarkLayout`, `BenchmarkSearch`, `BenchmarkFunction`,
 `BenchmarkFlameGraphKey`, `BenchmarkFlameGraphZoom`).
 
+The tree keeps at most 1,000,000 frames (`flame.MaxFrames`), twice the
+profile above; at five thread states that is about 93 MB, where the same
+50,000 stacks with nearly every frame distinct (4.4 million frames) held
+403 MB without the bound. A stack that needs a frame the full tree has no
+room for ends in a remainder frame, `(frames not kept)`, under the deepest
+frame it reached: one per caller at most. So every sample is still counted,
+a kept frame's self and total are what they are in the whole tree, and no
+frame shows another's samples as its own (`TestBoundedTreeReconciles`). The
+caption says when a graph is full and how many stacks were folded; a
+remainder is not a function, so it is not searched, added up or opened, and
+the functions a full graph did not keep are missing from `paths`.
+
 ## Parity with flamelens
 
 Against flamelens 0.4.0. **done**: behaves the same, or better in the way

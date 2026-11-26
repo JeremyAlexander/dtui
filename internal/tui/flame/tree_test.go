@@ -3,6 +3,7 @@ package flame
 import (
 	"fmt"
 	"math"
+	"math/rand"
 	"slices"
 	"strconv"
 	"strings"
@@ -287,8 +288,9 @@ func TestTreeWeightsSaturate(t *testing.T) {
 	}
 }
 
-// A tree that is full keeps counting: what no longer gets a frame of its own
-// weighs on the deepest frame it reached.
+// A tree that is full keeps counting: the frames a stack no longer gets are
+// folded into one remainder frame under the deepest frame it reached, which
+// says what it is, so no frame claims samples as its own that were another's.
 func TestTreeIsBounded(t *testing.T) {
 	b := NewBuilder(1)
 	b.maxNodes = 3 // the root and two frames
@@ -296,9 +298,85 @@ func TestTreeIsBounded(t *testing.T) {
 	b.Add([]string{"a", "x"}, []int64{2})
 	b.Add([]string{"y"}, []int64{4})
 	b.Add([]string{"a", "b"}, []int64{8})
-	want := "all 4/15\n  a 2/11\n    b 9/9\n"
-	if got := dump(b.Tree()); got != want {
+	b.Add([]string{"a", "z", "q"}, []int64{16})
+	tree := b.Tree()
+	want := "all 0/31\n  (frames not kept) 4/4\n  a 0/27\n    (frames not kept) 18/18\n    b 8/9\n      (frames not kept) 1/1\n"
+	if got := dump(tree); got != want {
 		t.Errorf("got:\n%swant:\n%s", got, want)
+	}
+	if got := tree.Folded(); got != 4 {
+		t.Errorf("%d stacks folded, want 4", got)
+	}
+	// A function spelled like the remainder is a function.
+	b = NewBuilder(1)
+	b.Add([]string{RestLabel}, []int64{1})
+	if tree := b.Tree(); tree.Folded() != 0 || tree.IsRest(1) || tree.Label(1) != RestLabel {
+		t.Errorf("a function named like the remainder:\n%s", dump(tree))
+	}
+}
+
+// At the bound, whatever the stacks: every frame that is kept has the self
+// and total it has in the whole tree, a frame's total is its self and its
+// callees' (the remainder among them), a frame has one remainder at most and
+// a remainder has no callees, and the root still counts every sample.
+func TestBoundedTreeReconciles(t *testing.T) {
+	for seed := range int64(300) {
+		rng := rand.New(rand.NewSource(seed))
+		whole, bounded := NewBuilder(2), NewBuilder(2)
+		bounded.maxNodes = 1 + rng.Intn(40)
+		for range 1 + rng.Intn(60) {
+			frames := make([]string, rng.Intn(7))
+			for i := range frames {
+				frames[i] = string(rune('a' + rng.Intn(5)))
+			}
+			weights := []int64{int64(rng.Intn(9)), int64(rng.Intn(3))}
+			whole.Add(frames, weights)
+			bounded.Add(frames, weights)
+		}
+		w, c := whole.Tree(), bounded.Tree()
+		at := map[string]NodeID{}
+		for n := NodeID(0); int(n) < w.Len(); n++ {
+			at[strings.Join(w.Path(n), ";")] = n
+		}
+		kept := 0
+		for n := NodeID(0); int(n) < c.Len(); n++ {
+			rests := 0
+			for lens := range 2 {
+				sum := c.Self(n, lens)
+				for k := c.FirstChild(n); k != None; k = c.NextSibling(k) {
+					sum += c.Total(k, lens)
+					if lens == 0 && c.IsRest(k) {
+						rests++
+					}
+				}
+				if sum != c.Total(n, lens) {
+					t.Fatalf("seed %d: %v totals %d, its self and callees %d", seed, c.Path(n), c.Total(n, lens), sum)
+				}
+			}
+			if rests > 1 {
+				t.Fatalf("seed %d: %v has %d remainders", seed, c.Path(n), rests)
+			}
+			if c.IsRest(n) {
+				if c.FirstChild(n) != None {
+					t.Fatalf("seed %d: the remainder %v has callees", seed, c.Path(n))
+				}
+				continue
+			}
+			kept++
+			in, ok := at[strings.Join(c.Path(n), ";")]
+			if !ok {
+				t.Fatalf("seed %d: %v is in no stack", seed, c.Path(n))
+			}
+			for lens := range 2 {
+				if c.Self(n, lens) != w.Self(in, lens) || c.Total(n, lens) != w.Total(in, lens) {
+					t.Fatalf("seed %d: %v is %d/%d, in the whole tree %d/%d", seed, c.Path(n),
+						c.Self(n, lens), c.Total(n, lens), w.Self(in, lens), w.Total(in, lens))
+				}
+			}
+		}
+		if kept > bounded.maxNodes || (w.Len() <= bounded.maxNodes) != (c.Folded() == 0) {
+			t.Fatalf("seed %d: %d frames kept of %d with room for %d, %d stacks folded", seed, kept, w.Len(), bounded.maxNodes, c.Folded())
+		}
 	}
 }
 

@@ -102,6 +102,9 @@ type flameHandOver struct {
 // flameOpenMsg puts a table's flame graph on top of it.
 type flameOpenMsg struct{ view *flameView }
 
+// flameMaxFrames is the most frames a graph keeps; a test lowers it.
+var flameMaxFrames = flame.MaxFrames
+
 // flameBuiltMsg is the tree of the stacks a view asked for with call seq.
 type flameBuiltMsg struct {
 	view    *flameView
@@ -419,6 +422,7 @@ func (v *flameView) arrived(msg dataMsg) tea.Cmd {
 func flameTree(rows []map[string]any, lenses int) *flame.Tree {
 	states := catalog.HotspotStates()
 	b := flame.NewBuilder(lenses)
+	b.Limit(flameMaxFrames)
 	weights := make([]int64, lenses)
 	for _, row := range rows {
 		for i := range weights {
@@ -511,6 +515,9 @@ func (v *flameView) handleKey(msg tea.KeyMsg) tea.Cmd {
 	case "enter":
 		g.ZoomIn()
 	case "O":
+		if g.Tree().IsRest(g.Selected()) {
+			return status("frames that were not kept have no source file")
+		}
 		fn, _ := v.selectedFunction()
 		return func() tea.Msg { return sourceAskMsg{view: v, label: fn} }
 	case "d":
@@ -543,7 +550,10 @@ func (v *flameView) handleKey(msg tea.KeyMsg) tea.Cmd {
 		v.resize(v.width, v.height)
 		return textinput.Blink
 	case "#":
-		if !g.SearchSelected() {
+		switch {
+		case g.Tree().IsRest(g.Selected()):
+			return status("frames that were not kept are not a function to search for")
+		case !g.SearchSelected():
 			return status("the root is every stack, not a function to search for")
 		}
 		v.resize(v.width, v.height)

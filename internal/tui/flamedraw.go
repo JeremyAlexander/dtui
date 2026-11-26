@@ -251,6 +251,10 @@ func (v *flameView) captionLines() []string {
 		}
 		text = strings.Join(v.spec.Caption(v.scope, summary), " · ")
 	}
+	if tree := v.graph.Tree(); !v.loading && tree.Folded() > 0 {
+		text += fmt.Sprintf(" · the graph is full: it keeps %s frames, the deeper frames of %s stacks are folded into %s",
+			catalog.GroupInt(int64(flameMaxFrames)), catalog.GroupInt(int64(tree.Folded())), flame.RestLabel)
+	}
 	lines := flameWrap(oneLine(text), v.width-2, " ")
 	if len(lines) > 2 {
 		lines = append(lines[:1], ansi.Truncate(strings.Join(lines[1:], " "), v.width-2, "…"))

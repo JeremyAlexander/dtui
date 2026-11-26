@@ -43,12 +43,33 @@ const (
 	flameTopShares = 3
 )
 
+// restDetails are the details of a remainder frame: what it stands for and
+// how much, and nothing that is said of a function.
+func (v *flameView) restDetails(w int) []string {
+	tree, sel := v.graph.Tree(), v.graph.Selected()
+	under := "the root"
+	if p := tree.Parent(sel); p != flame.Root {
+		under = catalog.ShortFrame(oneLine(tree.Label(p)), 48)
+	}
+	what := fmt.Sprintf("not a function: the samples of the frames under %s that the full graph did not keep (it keeps %s frames; a narrower timeframe or thread state leaves fewer)",
+		under, catalog.GroupInt(int64(flameMaxFrames)))
+	lines := flameField("remainder", what, w, " ")
+	states := make([]string, 0, len(catalog.HotspotStates()))
+	for i, state := range catalog.HotspotStates() {
+		states = append(states, state+" "+catalog.GroupInt(tree.Total(sel, i)))
+	}
+	return append(lines, flameField("samples", strings.Join(states, " · "), w, " ")...)
+}
+
 // detailLines are the details of the selected frame for a body of w cells.
 func (v *flameView) detailLines(w int) []string {
 	g := v.graph
 	tree, sel, lens := g.Tree(), g.Selected(), g.Lens()
 	if sel == flame.Root {
 		return v.rootDetails(w)
+	}
+	if tree.IsRest(sel) {
+		return v.restDetails(w)
 	}
 	fn := v.function()
 	all := tree.Total(flame.Root, lens)

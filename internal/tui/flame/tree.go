@@ -26,6 +26,23 @@ const (
 // RootLabel is the label of the root frame: all stacks.
 const RootLabel = "all"
 
+// RestLabel is the label of a remainder frame: what a full tree could not
+// give frames of their own, folded under the deepest frame a stack reached.
+const RestLabel = "(frames not kept)"
+
+// MaxFrames is the most frames a tree keeps, the remainders aside. A frame
+// costs about 90 bytes: the analysis of a process at the most stacks dtctl
+// returns stays far below this, and a tree that reaches it holds about
+// 90 MB instead of growing with whatever arrives.
+const MaxFrames = 1_000_000
+
+// The labels a function cannot have: a function spelled the same is another
+// label, so that a search and IsRest can tell the two apart.
+const (
+	rootLabelID int32 = iota
+	restLabelID
+)
+
 // Tree is a call tree with a self and a total weight per frame and lens. A
 // lens is one way of counting the same stacks (a thread state); all lenses
 // share the frames, so a frame keeps its NodeID from one lens to the next.
@@ -39,6 +56,7 @@ type Tree struct {
 	// self and total hold lenses values per node, node by node.
 	self, total []int64
 	levels      int
+	folded      int
 }
 
 type node struct {
@@ -59,6 +77,9 @@ type Builder struct {
 	children map[edge]int32
 	nodes    []pending
 	self     []int64
+	// rests is the number of remainder frames among nodes, folded the
+	// number of stacks that ended in one.
+	rests, folded int
 }
 
 type edge struct{ parent, label int32 }
@@ -71,11 +92,9 @@ func NewBuilder(lenses int) *Builder {
 	lenses = max(lenses, 1)
 	b := &Builder{
 		lenses:   lenses,
-		maxNodes: math.MaxInt32,
+		maxNodes: MaxFrames,
 		labelIDs: map[string]int32{},
-		// The root's label is its own: a function that is spelled the same
-		// is another label, so that a search can tell the two apart.
-		labels:   []string{RootLabel},
+		labels:   []string{rootLabelID: RootLabel, restLabelID: RestLabel},
 		children: map[edge]int32{},
 		nodes:    []pending{{parent: -1}},
 		self:     make([]int64, lenses),
@@ -83,11 +102,19 @@ func NewBuilder(lenses int) *Builder {
 	return b
 }
 
+// Limit sets the most frames the tree keeps, the remainders aside, in place
+// of MaxFrames. A limit below one keeps the root alone.
+func (b *Builder) Limit(frames int) { b.maxNodes = max(frames, 1) }
+
 // Add counts one stack: frames from the outermost caller to the frame that
 // was running, and that frame's own weight per lens. A weight below zero
 // counts as zero and weights beyond the lenses are ignored; a stack without
 // any weight adds nothing. Frames without a label are skipped, and a stack
 // without frames weighs on the root.
+//
+// Once the tree holds MaxFrames frames, a stack that needs a new one ends in
+// the remainder frame of the deepest frame it reached. Totals stay those of
+// the stacks; which frames were kept then depends on the order of the stacks.
 func (b *Builder) Add(frames []string, weights []int64) {
 	if len(weights) > b.lenses {
 		weights = weights[:b.lenses]
@@ -107,16 +134,21 @@ func (b *Builder) Add(frames []string, weights []int64) {
 			b.labels = append(b.labels, frame)
 		}
 		child, known := b.children[edge{at, label}]
-		if !known {
-			if len(b.nodes) >= b.maxNodes {
-				// The tree is full: what is left of the stack weighs on
-				// the deepest frame there is room for, so no weight is lost.
-				break
+		if !known && len(b.nodes)-b.rests >= b.maxNodes {
+			// The tree is full: what is left of the stack weighs on the
+			// remainder of the deepest frame it reached. A frame has one
+			// remainder at most, so they at most double the tree.
+			rest, known := b.children[edge{at, restLabelID}]
+			if !known {
+				rest = b.child(at, restLabelID)
+				b.rests++
 			}
-			child = int32(len(b.nodes))
-			b.children[edge{at, label}] = child
-			b.nodes = append(b.nodes, pending{parent: at, label: label})
-			b.self = append(b.self, make([]int64, b.lenses)...)
+			at = rest
+			b.folded++
+			break
+		}
+		if !known {
+			child = b.child(at, label)
 		}
 		at = child
 	}
@@ -128,8 +160,17 @@ func (b *Builder) Add(frames []string, weights []int64) {
 	}
 }
 
-// Tree is the tree of the stacks added so far. The same stacks give the same
-// tree in whatever order they were added.
+// child adds a frame under parent.
+func (b *Builder) child(parent, label int32) int32 {
+	id := int32(len(b.nodes))
+	b.children[edge{parent, label}] = id
+	b.nodes = append(b.nodes, pending{parent: parent, label: label})
+	b.self = append(b.self, make([]int64, b.lenses)...)
+	return id
+}
+
+// Tree is the tree of the stacks added so far. Below MaxFrames the same
+// stacks give the same tree in whatever order they were added.
 func (b *Builder) Tree() *Tree {
 	n := len(b.nodes)
 	// The children of each frame, by label: first[i] is where frame i's
@@ -160,6 +201,7 @@ func (b *Builder) Tree() *Tree {
 	}
 
 	t := &Tree{
+		folded: b.folded,
 		lenses: b.lenses,
 		labels: slices.Clone(b.labels),
 		nodes:  make([]node, 0, n),
@@ -216,6 +258,14 @@ func satAdd(a, b int64) int64 {
 
 // Len is the number of frames, the root included.
 func (t *Tree) Len() int { return len(t.nodes) }
+
+// Folded is the number of stacks that did not get all their frames, because
+// the tree was full: each ends in a remainder frame. 0 for a whole tree.
+func (t *Tree) Folded() int { return t.folded }
+
+// IsRest says whether the frame is a remainder: not a function, but the
+// samples of the frames a full tree did not keep under its caller.
+func (t *Tree) IsRest(n NodeID) bool { return t.has(n) && t.nodes[n].label == restLabelID }
 
 // Lenses is the number of ways the stacks are weighed.
 func (t *Tree) Lenses() int { return t.lenses }
