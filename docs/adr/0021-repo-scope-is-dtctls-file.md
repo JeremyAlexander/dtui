@@ -6,78 +6,174 @@
 
 dtctl is adding an experimental repo scope: a committed
 `.dtctl-repo-scope.yaml` at the git root, never looked up past `.git`, keyed
-by environment host. An entry binds a directory of the repository to the
-services, process groups, Kubernetes namespace and workload, and service
-names that run its code. The file holds bindings only, never DQL: dtctl
-renders the filter itself, with every literal validated and quoted, so a
-cloned repository can narrow a query but cannot widen it or inject text into
-it.
+by environment host. An entry binds a directory of the repository to what runs
+its code: Kubernetes workloads (a namespace and a name, optionally one
+cluster), service names, process groups and services. An entry may also
+reference existing filter segments by id, with values for their variables, and
+may hold nothing else. The file holds bindings and references, never DQL:
+dtctl renders the filter itself, with every literal validated and quoted, and
+segment ids and values travel in the request body. A cloned repository can
+narrow a query but cannot widen it or put text into it.
 
 A user who launches dtui inside such a repository expects the same narrowing
 dtctl gives them there. dtui already has one committed narrowing, the
 `segments` of `.dtui.yaml`, and one rule for claiming any of them
-([ADR-0007](0007-scope-honesty.md)). dtctl exports the pieces: `pkg/reposcope`
-(`Locate`, `Load`, `Resolve`, `Filters`) and `pkg/dql` (`InsertFilter`, whose
-outcome says whether the filter was applied or why not). They only read,
-apart from `Save`.
+([ADR-0007](0007-scope-honesty.md)). dtctl exports the read path:
+`pkg/reposcope` locates, loads and resolves the file and renders an entry's
+filter, and `InsertFilter` of `pkg/dql` puts that filter into a query and says
+whether it did or why not. None of this writes or reaches an environment. The
+same package also exports what dtui does not use: functions that change the
+file, discovery, which runs queries, and a rendering for the Live Debugger.
+
+dtctl's package is experimental and may still change. This record therefore
+states the rules dtui follows and names a dtctl function or field only where a
+rule needs one. Where a detail here and dtctl later differ, what dtctl does
+with the same file in the same directory is the reference.
+
+The scope file sits beside `.dtui.yaml`, whose segments are another
+maintainer's feature. What this record says about how the two meet is a
+proposal to the owner of that feature, not an agreement; see "Open questions".
 
 ## Decision
 
 The scope file is dtctl's. dtui applies the entry dtctl resolves and owns
 nothing about the format.
 
-- **Read and rewrite in the main package.** `internal/tui` may import only
-  dtctl's `pkg/exec` and `pkg/output` (`TestTUIHasNoDirectTenantAccess`), and
-  that allowlist stays as it is. The main package reads the file with
-  `pkg/reposcope`, resolved for the selected context's environment host and
-  the launch directory, and builds the rewrite there: a function from a
-  view's DQL to `InsertFilter`'s result for the resolved entry. It injects
-  that function into `internal/tui` the way `sources.go` injects a `Source`.
-  dtui does not re-implement the lookup, the renderer or the insertion.
-- **Narrow logs and spans.** The entry narrows the catalog views over logs
-  and spans (`:logs`, `:traces`) through dtctl's own `InsertFilter`.
-- **Applied only where `InsertFilter` applies it.** `InsertFilter` leaves a
-  query unchanged when one of its own `filter` or `filterOut` stages names a
-  field the entry binds for that data object: `dt.entity.process_group` on
-  logs, `dt.entity.service` on spans, and `service.name`,
-  `k8s.namespace.name` and `k8s.workload.name` on both, each only when the
-  entry has a binding of that kind. The user's own filter wins. dtui writes
-  such stages itself:
-  - a pin of a process group, a Kubernetes namespace or a workload on
-    `:logs` (`SignalFilter` compares `dt.entity.process_group`,
-    `k8s.namespace.name` and `k8s.workload.name`);
-  - a facet on one of the bound fields, on either view.
-
-  On those pages the scope is not applied and the page runs with the pin or
-  facet alone. A pin on `:traces` compares `dt.smartscape.*` fields, which
-  no entry binds, so the scope is ANDed with it; so is a lens, a `/` search
-  and a facet on any other field. `InsertFilter` also refuses a query that
-  fetches logs or spans again in a subquery, an entry that binds nothing
-  the data object is filtered by, and text with a single quote outside
-  every string literal and comment. The catalog's log and span queries
-  quote with double quotes, so the last does not arise from a facet value.
-- **Segments are independent.** `.dtui.yaml` segments travel beside the
-  query, not in its text, so they are ANDed with whatever the query does,
-  scoped or not. Neither narrowing takes precedence over the other.
-- **Claim it only where it applied.** The header shows the scope only on a
-  view whose query actually took it (ADR-0007). A view that refused it says
-  why, from `InsertFilter`'s outcome, and that covers the pinned and faceted
-  pages above.
+- **Read in the main package, once per context.** `internal/tui` may import
+  only dtctl's `pkg/exec` and `pkg/output` (`TestTUIHasNoDirectTenantAccess`),
+  and that allowlist stays as it is, so no type of `pkg/dql` or
+  `pkg/reposcope` crosses into `internal/tui`. The main package locates and
+  loads the file from the launch directory and resolves it for the host of the
+  selected context, derived as dtctl derives it (the lowercase hostname,
+  without port or path), not with dtui's own `envKey`. It hands `internal/tui`
+  a value of a type `internal/tui` declares: the entry's name, its segments as
+  `exec.FilterSegmentRef`, a function from a composed query to the rewritten
+  query with an outcome and a reason, and the warning to show. The value is
+  built again on every context switch and travels on `ContextWiring`, so a
+  scope and the executor it belongs to are replaced together, and a context
+  whose host has no entry clears it. A switch-off chosen at launch survives
+  the switch. Resolving can walk the repository (dtctl reads a Gradle build's
+  modules for a file with a path entry), so it runs once per launch and once
+  per context switch, never per query, and not on the UI goroutine: the shell
+  paints first, and a view the scope can narrow sends its first query when the
+  scope is known, so no unscoped rows are shown first. The browser build
+  (`cmd/web`) has no file system and passes no scope. dtui does not
+  re-implement the lookup, the renderer or the insertion.
+- **The entry's filter narrows the logs and spans lists.** The rewrite is
+  applied to the composed query of `:logs` and `:traces`, after the lens, the
+  facets and the searches are in it, and to the two queries derived from that
+  list, the facet value query (`f`) and the pattern analysis (`a`), so both
+  describe the rows on screen. It is not applied to the trace waterfall (a
+  trace is shown whole), the home panels, `:agentlogs`, `:records` or a
+  segment's variable query.
+- **DQL the user hands to dtui is scoped as dtctl scopes it.** `:query`,
+  `dtui query <dql>`, `--dql` and `-f` go through the same rewrite, with the
+  claim or the reason for no claim in the header. An agent hands off the text
+  it ran through `dtctl query` in the same checkout, and dtctl scoped that
+  text; dtui showing other rows for it would break the handoff of
+  [ADR-0018](0018-launch-flags-are-a-handoff-contract.md). Text revealed with
+  `ctrl+q` is not rewritten: it is the page's own query made visible, it
+  already holds the filter where one was inserted, and it runs as shown.
+- **A page the user scoped is not narrowed again.** A `:logs` or `:traces`
+  page that carries an entity (a pin, a drill from a row, a tab of an entity
+  or problem page) or a trace id runs without the entry's filter, and its
+  header says so. The entity or the trace is the user's own narrowing and
+  wins, as their filter on a bound field does. Left to the field names in the
+  query, the outcome would depend on which fields a pin happens to write: a
+  pinned process group and a named workload would refuse the filter while a
+  pinned process, a namespace without a resolved name and every `:traces` pin
+  would be ANDed with it, mostly to an empty page. Nobody can predict that
+  from the screen.
+- **Otherwise `InsertFilter` decides.** It leaves a query unchanged when one
+  of the query's own `filter` or `filterOut` stages names a field the entry
+  binds for that data object, such as `service.name` or `k8s.workload.name`;
+  dtctl's design document lists the fields per data object, and a field counts
+  only when the entry has a binding of that kind. A facet on one of those
+  fields therefore runs alone, and so does a map facet whose key is such a
+  name. A lens, a `/` search and a facet on any other field are ANDed with the
+  entry's filter. dtctl's other refusals leave the query unchanged too and are
+  reported the same way: a first stage that does not fetch logs or spans, an
+  entry without a binding for the data object, a subquery that fetches logs or
+  spans again, and text dtctl's scanner cannot vouch for.
+- **`:traces` opens on `all` under an applied filter.** Root spans belong to a
+  trace's entry service, so `roots` ANDed with the entry is empty for most
+  services (`DefaultSpanLens` records this for entity scopes). When the filter
+  applies and no lens was named, `:traces` opens on the lens `DefaultSpanLens`
+  gives a service. `--lens` and a lens the user picks are kept.
+- **An entry's segments are part of the repo scope.** They are sent with every
+  DQL query of the session, as the segments of `.dtui.yaml` and of the picker
+  are; an entry that holds only segments inserts no filter and narrows every
+  such view. This is dtctl's rule: one entry, one switch. They are sent
+  together with the user's: a segment both name is sent once, with the user's
+  variables, because what the user chose wins over what is committed. More
+  than ten in total is the platform's limit; the entry is then not applied at
+  all and the header says why, since dropping some segments would change the
+  rows unseen. They belong to the scope, not to the selection: `alt+s` pauses
+  the user's segments only, the picker shows the entry's as locked rows, and
+  the switch for the scope switches them with the filter. Before a scoped
+  query is sent dtui checks, once per context, that the environment returns
+  each of the entry's segments to this user. If one is missing or not
+  readable, the whole entry is not applied, filter included: half a scope
+  shows rows that look scoped. If the check itself fails, the entry is not
+  applied either, the header says the check failed, and a refresh tries again.
+  dtctl fails the command in that last case; dtui shows the page, because a
+  header is read on every page where a script reads only an exit code.
+- **The workspace's segments stay independent.** `.dtui.yaml` segments and the
+  entry's filter are ANDed and neither replaces the other.
+- **Claim what was sent.** The header names the entry on every view whose
+  request carried its filter, its segments or both, and says which
+  ([ADR-0007](0007-scope-honesty.md)). A `:logs` or `:traces` page whose
+  filter was not inserted says why for as long as the page is shown, not in
+  the status line, which the next key clears. The claim is taken from the
+  request that produced the rows on screen.
 - **On by default, never fatal.** When an entry resolves, the scope is on.
-  `DTCTL_NO_REPO_SCOPE` or a `--no-repo-scope` launch flag turns it off for
-  the session. A broken file, no covering entry or a tie between entries is
-  a warning, never a failed launch, like a broken `.dtui.yaml`.
+  dtctl applies it by default in the same directory, and two tools that
+  disagree about one query are worse than a default. Nothing is said when the
+  directory is in no git repository, the repository has no scope file, or the
+  file has no entry for this host. A file that does not load (an unknown key
+  inside an entry is one such case), a directory no entry covers, a tie
+  between entries and an unknown key of the document are one warning each,
+  never a failed launch, like a broken `.dtui.yaml`. dtui words the warnings
+  itself from the resolved status: dtctl's reasons name `--repo-scope <name>`,
+  a flag dtui does not have.
+- **One switch for the whole entry, and it is session state.** A
+  `--no-repo-scope` launch flag, or `DTCTL_NO_REPO_SCOPE` read as dtctl reads
+  it (empty, `0`, `false`, `no` and `off` do not switch anything off), turns
+  the entry off for the session, segments included. While dtui runs, a
+  command-bar command switches it and refetches the views it reaches. It gets
+  no key: under [ADR-0008](0008-one-owner-per-key.md) a key has one owner, and
+  an experimental feature of another tool is not worth one. The command's name
+  is the implementing pull request's to choose. A page pushed by `dtui send`
+  takes the scope of the listening session, on or off, and the wire format
+  gains no field for it: a request never changes what the user chose for the
+  session ([ADR-0019](0019-agents-may-navigate-a-listening-tui.md)), and the
+  scope is replaced with the context, which a request cannot change either.
+- **Not in the first version: naming an entry.** dtui has no
+  `--repo-scope <name>`. A directory that no entry covers, or that two entries
+  tie on, has no scope in dtui, and the warning says which directories the
+  entries cover.
+- **dtctl's stability floor is not read.** The floor governs which flags a
+  dtctl command accepts. dtui is not a dtctl command and has its own switch.
+  The cost is in Consequences.
+- **`--no-repo-scope` is outside the launch-flag contract.**
+  [ADR-0018](0018-launch-flags-are-a-handoff-contract.md) makes the flags it
+  lists stable, and dtctl's feature, its flag and its variable are
+  experimental. Promising the flag there would promise more than dtctl does.
+  It joins the contract, or not, when dtctl's feature is stable.
 - **It never selects the environment.** `.dtui.yaml`'s `environment` and
   `--context` keep that job; the scope file is only consulted for the host
   they selected.
-- **Read-only.** dtui never calls `Save`, discovery or the Live Debugger
-  rendering ([ADR-0011](0011-strictly-read-only.md)). Creating and editing
-  entries stays in dtctl.
+- **Read-only.** dtui never calls the functions that change the file, never
+  runs discovery and does not use the Live Debugger rendering. It reads
+  segments, as it already does ([ADR-0011](0011-strictly-read-only.md)).
+  Creating and editing entries stays in dtctl.
 
 For example, a repository whose file has an entry `checkout` for
-`abc12345.apps.example.invalid` covering `services/checkout`: dtui launched
-in that directory on that environment opens `:logs` and `:traces` narrowed
-to `checkout`'s bindings, and every other view with no scope in its header.
+`abc12345.apps.example.invalid` covering `services/checkout`: dtui launched in
+that directory on that environment opens `:logs` and `:traces` narrowed to
+`checkout`'s bindings, `:traces` on the `all` lens. If the entry also
+references segments, every DQL view carries them and names the entry in its
+header. A view that carries neither shows no scope.
 
 ## Rejected alternatives
 
@@ -85,54 +181,95 @@ to `checkout`'s bindings, and every other view with no scope in its header.
   security-relevant, and a second copy would drift from dtctl's.
 - **Rendering the entry as facets.** An entry is an OR across fields; facets
   are single-field and ANDed.
-- **Shelling out to `dtctl repo-scope current`.** dtui links dtctl's
-  packages and never invokes the binary
-  ([ADR-0005](0005-dtctl-owns-configuration.md)).
+- **Shelling out to `dtctl repo-scope current`.** dtui links dtctl's packages
+  and never invokes the binary ([ADR-0005](0005-dtctl-owns-configuration.md)).
 - **Opt-in only.** dtctl applies the scope by default in the same directory,
-  so the two tools would disagree about the same query until the user found
-  a flag.
-- **Merging the entries into `.dtui.yaml`.** That file walks to the
-  filesystem root and ignores unknown keys; the scope file stops at `.git`
-  and refuses to rewrite keys it does not know.
+  so the two tools would disagree about the same query until the user found a
+  flag.
+- **Merging the entries into `.dtui.yaml`.** That file walks to the filesystem
+  root and ignores unknown keys; the scope file stops at `.git`, is not
+  applied at all when an entry holds a key dtctl does not know, and is not
+  rewritten by dtctl when the document does.
 - **dtctl reading `.dtui.yaml` on its own.** A committed file would then
   choose the environment a mutating CLI talks to.
+- **Treating the entry's segments as workspace segments.** `alt+s` and the
+  picker would then switch them apart from the filter they were written with,
+  and dtctl has one switch for the whole entry.
+- **Letting the field names decide on a pinned page.** See "A page the user
+  scoped is not narrowed again".
+- **`--no-repo-scope` in the command echo.** The flag is refused under a
+  stable floor and unknown to a dtctl older than the feature, and it was only
+  put on scoped views, while an unscoped page's echo pasted in the checkout is
+  the one dtctl would scope.
 
 ## Consequences
 
-- dtui needs a dtctl release that contains `pkg/reposcope` (first planned
-  for 0.47.0) and the move to the `github.com/Dynatrace/dtctl` module path.
+- dtui needs a dtctl release that contains `pkg/reposcope` (first planned for
+  0.47.0) and the move to the `github.com/Dynatrace/dtctl` module path.
 - dtui couples to an experimental dtctl package: its API may change in any
   dtctl release, and a dtctl bump can break the build.
-- The command echo (`c`) carries `--no-repo-scope` on a scoped view. The
-  echoed DQL already contains the filter, so dtctl run in the same directory
-  would not scope it twice: `InsertFilter` sees a filter on a bound field,
-  leaves the query alone and warns that the scope was not applied. The flag
-  avoids that warning and makes the echo run exactly what dtui ran, wherever
-  it is pasted. The flag does not exist in dtctl before 0.47.0, so the echo
-  of a scoped view fails on an older dtctl.
+- The command echo (`c`) of a DQL view is the request dtui sent: the query
+  text, rewritten where the filter was inserted, and one `-S` per segment
+  sent, variables included, in the spelling dtctl's `--segment` takes. Every
+  argument is quoted for a POSIX shell (the catalog's `shellSingleQuote`) and
+  no whitespace inside the query is folded: a service name may hold an
+  apostrophe or two spaces, and a segment's variables are joined with `&`.
+  Today's `echoQuery` wraps the text in bare single quotes and folds
+  whitespace, which would let a committed name end the quoting and run the
+  rest as shell commands. It is corrected before any code reads the scope
+  file.
+- While an entry resolves for the session's context, every `dtctl query` echo
+  starts with `DTCTL_NO_REPO_SCOPE=1 `, whether the view was scoped or not and
+  whether the scope is switched on or off. dtctl run in that directory would
+  otherwise apply the entry to a query dtui ran without it, or add the entry's
+  segments to a command that already names them. The variable works under
+  every stability floor and is ignored by a dtctl older than the feature; the
+  flag does neither. The prefix is POSIX shell syntax, so the echo is not a
+  command for other shells.
+- dtui scopes by default where dtctl, under a stability floor that hides the
+  experimental flags, does not. The header says what dtui sent, and the echo's
+  prefix makes the pasted command return the same rows.
+- The entry's filter narrows rows, not the scan. A filter after `fetch` does
+  not keep a wide timeframe under Grail's scan limit (dtctl's design document
+  records a scoped 15-minute log count that still scanned 341 GB), so a scoped
+  view meets the limit as an unscoped one does, and the existing
+  partial-result notice says so.
+- Presets (`W`, `send --save`), the last filter and history record facets and
+  searches, as they do today with segments active. They do not record the repo
+  scope: a preset saved in one checkout opens under whatever scope the session
+  that opens it has.
+- `ctrl+q` puts the rewritten query into an editor that holds 4096 characters,
+  and an entry with many ids renders a longer filter. The reveal must report a
+  query it cannot hold instead of cutting it.
+- The pull request that implements this owes tests for: the echo of a name
+  with an apostrophe and of one with two spaces, parsed back by a shell into
+  the query that was sent; a context switch from one host to a second and on
+  to a host without an entry, asserting the request each executor receives; an
+  entry that holds only segments; an entry whose filter is refused while its
+  segments are sent; one segment id named by the entry and by the user with
+  different variables; eleven segments in total; a missing segment and a
+  failed check; `:traces` without `--lens` under an applied filter; a pinned
+  `:logs` page.
 - Zero configuration still works
   ([ADR-0010](0010-curated-defaults-runtime-discovery.md)): no scope file
   means no scope, and every view opens as it does today.
 
 ## Open questions
 
-These are maintainer decisions this ADR does not make.
+This record stays Proposed, and its pull request open, until this list is
+empty.
 
-- **Is `--no-repo-scope` part of the launch-flag contract?**
-  [ADR-0018](0018-launch-flags-are-a-handoff-contract.md) makes the flags it
-  lists stable: a rename or a change of meaning breaks every command already
-  handed out. dtctl's repo scope, its flag and `DTCTL_NO_REPO_SCOPE` are
-  experimental and may change in any dtctl release. Adding the flag to that
-  contract would promise more than dtctl does; keeping it outside, as
-  `--listen` is, leaves it free to follow dtctl until the feature is stable.
-- **Is there a toggle while dtui runs, and on which key?** This ADR assigns
-  none. Under [ADR-0008](0008-one-owner-per-key.md) a key has one owner, so
-  a toggle needs a free key or a command-bar command. Until one is chosen,
-  the scope is switched off at launch only.
-- **What does `dtui send` do?**
-  [ADR-0019](0019-agents-may-navigate-a-listening-tui.md) settles two
-  things: a request is a page descriptor in the launch grammar, and it never
-  changes what the user chose for the session, as with the context. It does
-  not say whether the scope is session state, which a pushed `:logs` or
-  `:traces` page would inherit from the listening TUI, or page state, which
-  `send` could carry as a new field of the `NavigateMsg` wire format.
+- **Does the owner of the `.dtui.yaml` segments feature agree with how an
+  entry's segments sit beside it?** The proposal touches that feature in four
+  places: the entry's segments appear in the picker as locked rows, `alt+s`
+  does not pause them, a segment both files name is sent with the user's
+  variables, and the limit of ten is enforced over the union by not applying
+  the entry. dtctl's design document describes the same composition from its
+  side. None of it is agreed.
+- **Which dtctl release does dtui build against?** Nothing here can be
+  implemented before a release carries `pkg/reposcope`, and the package may
+  change before then. The rules above that quote dtctl (the host form, the
+  bound fields, the refusals, how the variable is read, the segment check) are
+  read again against that release. Two things dtui would otherwise copy are
+  asked of dtctl: an exported reading of `DTCTL_NO_REPO_SCOPE`, and reasons
+  that do not name a dtctl flag.
