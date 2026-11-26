@@ -577,6 +577,27 @@ func TestRootException(t *testing.T) {
 			{Type: "A", ID: "1"}, {Type: "B", CausedByID: "1"}, {Type: "C"}}, "A"},
 		{"a cycle has no end", []SpanException{
 			{Type: "A", ID: "1", CausedByID: "2"}, {Type: "B", ID: "2", CausedByID: "1"}}, "B"},
+		{"an event that names itself as its cause", []SpanException{
+			{Type: "A", ID: "1", CausedByID: "1"}, {Type: "B"}}, "B"},
+		{"a cycle with a tail", []SpanException{
+			{Type: "A", ID: "1", CausedByID: "2"}, {Type: "B", ID: "2", CausedByID: "3"},
+			{Type: "C", ID: "3", CausedByID: "2"}, {Type: "D"}}, "D"},
+		{"a cycle next to a chain", []SpanException{
+			{Type: "A", ID: "1", CausedByID: "2"}, {Type: "B", ID: "2", CausedByID: "1"},
+			{Type: "C", ID: "3", CausedByID: "4"}, {Type: "D", ID: "4"}, {Type: "E"}}, "D"},
+		{"an id used twice", []SpanException{
+			{Type: "A", ID: "1", CausedByID: "2"}, {Type: "B", ID: "2"}, {Type: "C", ID: "2"}, {Type: "D"}}, "C"},
+		{"an id used twice, once with a cause", []SpanException{
+			{Type: "A", ID: "1", CausedByID: "2"}, {Type: "B", ID: "2"}, {Type: "C", ID: "2", CausedByID: "1"}}, "B"},
+		{"several flagged roots: the last", []SpanException{
+			{Type: "A", CauseRoot: true}, {Type: "B"}, {Type: "C", CauseRoot: true}, {Type: "D"}}, "C"},
+		{"every event flagged: the last", []SpanException{
+			{Type: "A", CauseRoot: true}, {Type: "B", CauseRoot: true}}, "B"},
+		{"two id chains: the end of the last", []SpanException{
+			{Type: "A", ID: "1", CausedByID: "2"}, {Type: "B", ID: "2"},
+			{Type: "C", ID: "3", CausedByID: "4"}, {Type: "D", ID: "4"}, {Type: "E"}}, "D"},
+		{"a flag and no ids, as live spans carry them", []SpanException{
+			{Type: "A", ID: "a1"}, {Type: "B", ID: "b2", CauseRoot: true}, {Type: "C", ID: "c3"}}, "B"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -590,23 +611,41 @@ func TestRootException(t *testing.T) {
 func TestSpanExceptionCarriesCauseChainFields(t *testing.T) {
 	rec := map[string]any{"span.events": []any{
 		map[string]any{"span_event.name": "exception", "exception.type": "A",
-			"exception.id": "7", "exception.caused_by_id": "8", "exception.is_caused_by_root": false},
+			"exception.id": "00000000000000a7", "exception.caused_by_id": "00000000000000b8", "exception.is_caused_by_root": false},
 		map[string]any{"span_event.name": "exception", "exception.type": "B",
-			"exception.id": float64(8), "exception.is_caused_by_root": true},
+			"exception.id": "00000000000000b8", "exception.is_caused_by_root": true},
 		map[string]any{"span_event.name": "exception", "exception.type": "C",
 			"exception.is_caused_by_root": "true"},
+		// An id is a uid and arrives as a string; a number is not one, and
+		// is not rounded into one.
+		map[string]any{"span_event.name": "exception", "exception.type": "D",
+			"exception.id": 8.126, "exception.caused_by_id": float64(8)},
 	}}
 	excs := SpanExceptions(rec)
 	want := []SpanException{
-		{Type: "A", ID: "7", CausedByID: "8"},
-		{Type: "B", ID: "8", CauseRoot: true},
+		{Type: "A", ID: "00000000000000a7", CausedByID: "00000000000000b8"},
+		{Type: "B", ID: "00000000000000b8", CauseRoot: true},
 		{Type: "C", CauseRoot: true},
+		{Type: "D"},
 	}
 	if !reflect.DeepEqual(excs, want) {
 		t.Errorf("exceptions = %+v\nwant %+v", excs, want)
 	}
-	if fp := mustFingerprint(t, excs...); fp.Type != "B" {
-		t.Errorf("fingerprinted %s, want the flagged root B", fp.Type)
+	if fp := mustFingerprint(t, excs...); fp.Type != "C" {
+		t.Errorf("fingerprinted %s, want the last flagged root C", fp.Type)
+	}
+	// What live spans have carried so far: ids, the flag, no links.
+	live := SpanExceptions(map[string]any{"span.events": []any{
+		map[string]any{"span_event.name": "exception", "exception.type": "Wrapper", "exception.id": "00000000000000a7"},
+		map[string]any{"span_event.name": "exception", "exception.type": "Root",
+			"exception.id": "00000000000000b8", "exception.is_caused_by_root": true},
+	}})
+	if fp := mustFingerprint(t, live...); fp.Type != "Root" {
+		t.Errorf("fingerprinted %s, want the flagged root", fp.Type)
+	}
+	live[1].CauseRoot = false
+	if fp := mustFingerprint(t, live...); fp.Type != "Root" {
+		t.Errorf("fingerprinted %s, want the last event where nothing marks a chain", fp.Type)
 	}
 }
 

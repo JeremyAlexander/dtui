@@ -81,9 +81,10 @@ type ExceptionFingerprint struct {
 
 // FingerprintExceptions computes the grouping key for the exception events
 // of one span (false when there are none). The event is the root of the
-// cause chain, the last one where no chain is marked. classify decides which
-// frames are application code; nil means the built-in rules, the only ones
-// whose keys are the same for everybody (see FrameClassifier).
+// cause chain, the last one where no chain is marked (rootException).
+// classify decides which frames are application code; nil means the built-in
+// rules, the only ones whose keys are the same for everybody (see
+// FrameClassifier).
 func FingerprintExceptions(excs []SpanException, classify FrameClassifier) (ExceptionFingerprint, bool) {
 	if len(excs) == 0 {
 		return ExceptionFingerprint{}, false
@@ -178,14 +179,25 @@ func appendKeyField(b []byte, field string) []byte {
 	return append(b, field...)
 }
 
-// rootException picks the event a span's fingerprint is computed from: the
-// one flagged as the root of the cause chain; else the end of a chain linked
-// by ids (an exception that caused another and has no cause among the
-// events); else the last event.
+// rootException picks the event a span's fingerprint is computed from. The
+// later event wins every tie, as the last one does where nothing marks a
+// chain:
+//
+//  1. the last event flagged exception.is_caused_by_root;
+//  2. else the last event that caused another (its exception.id is some
+//     event's exception.caused_by_id) and has no cause among the events;
+//  3. else the last event.
+//
+// Step 2 is unverified. The live spans seen so far carry exception.id and
+// the root flag but no exception.caused_by_id, so their chains are found by
+// step 1 and everything else by step 3; step 2 is kept for instrumentation
+// that links its events without flagging one. It is a pass over the events,
+// not a walk along the links, so a cycle or an id used twice cannot make it
+// loop: a cycle has no event without a cause and falls through to step 3.
 func rootException(excs []SpanException) SpanException {
-	for _, ex := range excs {
-		if ex.CauseRoot {
-			return ex
+	for i := len(excs) - 1; i >= 0; i-- {
+		if excs[i].CauseRoot {
+			return excs[i]
 		}
 	}
 	ids := map[string]bool{}
@@ -195,8 +207,8 @@ func rootException(excs []SpanException) SpanException {
 		causes[ex.CausedByID] = true
 	}
 	delete(ids, "") // an event without an id is nobody's cause
-	for _, ex := range excs {
-		if ex.ID != "" && causes[ex.ID] && !ids[ex.CausedByID] {
+	for i := len(excs) - 1; i >= 0; i-- {
+		if ex := excs[i]; ex.ID != "" && causes[ex.ID] && !ids[ex.CausedByID] {
 			return ex
 		}
 	}
