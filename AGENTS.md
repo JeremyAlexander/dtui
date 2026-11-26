@@ -72,7 +72,7 @@ belongs in a shared file; a third copy is a bug.
 | Key facts and preview panes | `internal/tui/catalog/detail.go`, `internal/tui/catalog/preview.go` |
 | Timers (tests zero them) | `internal/tui/tick.go` |
 | Text inputs | `internal/tui/input.go` |
-| Group exceptions: issue key, stack frames, message placeholders | `catalog.FingerprintExceptions`, `ParseStackFrames`, `ParameterizeMessage` (`internal/tui/catalog/excfingerprint.go`) |
+| Group exceptions: issue key, stack frames, message placeholders | `catalog.FingerprintExceptions` (`excfingerprint.go`), `ParseStackFrames` (`excframes.go`; one parser per notation in `excframes_<runtime>.go`, listed in `stackNotations`), `ParameterizeMessage` (`excmessage.go`), all in `internal/tui/catalog/`. Changing a table or expression there fails `TestExceptionKeyInputsArePinned` until `ExceptionKeyVersion` is raised |
 | API-backed data | a `Source` in `sources.go` |
 
 Add a row when you create a shared helper.

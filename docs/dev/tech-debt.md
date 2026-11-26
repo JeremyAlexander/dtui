@@ -31,3 +31,25 @@ need a new YAML field and a restore path in `applyNamedPreset`. Fix: add
 `docs/dev/learnings.md` is over 1,700 lines, so an agent looking for one fact
 loads all of it or greps. Fix: keep the section numbering stable and, if it
 keeps growing, split section 1 (DQL facts) by data object.
+
+## Exception keys: what the fingerprint does not read
+
+`internal/tui/catalog/exc*.go` groups exceptions by a key. Known gaps, each
+of which splits or merges issues it should not:
+
+- A JavaScript `[cause]:` chain in one stack text is not followed; all
+  frames of the text are taken as one exception's (`jsRootCause`).
+- A route inside a URL is replaced with the URL (`<url>`), so two failing
+  endpoints of one message merge; a bare route (`GET /cart/7/items`) is kept.
+- A Go dependency counts as application code when its trace has no file
+  lines and its host is not in `goVendorPrefixes`; an application package
+  named like a standard-library one counts as the runtime's.
+- A Windows path with a space in a segment is cut at the space.
+- The pass-through lists (`javaPassThrough` and its siblings) match by
+  method name alone, so an application method named `invoke` or `next`
+  never counts toward a key unless it is the throw site.
+- `rootException` follows `exception.caused_by_id` without that field ever
+  having been seen on a live span.
+
+Fix: each needs a corpus case first, and raises `ExceptionKeyVersion` once
+keys are stored or shared anywhere.
