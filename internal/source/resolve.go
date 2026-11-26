@@ -303,11 +303,8 @@ func declaration(ext string, f Frame) *regexp.Regexp {
 			`|\b(?:const|let|var)\s+` + s + `\s*[:=]` +
 			`|\b` + s + `\s*[:=]\s*(?:async\s*)?(?:function\b|\()` +
 			`|^\s*(?:(?:public|private|protected|static|async|get|set|readonly|override)\s+)*` + s + `\s*(?:<[^>]*>)?\s*\([^)]*\)\s*(?::[^{]+)?\{`
-	default: // .java, .groovy, .cs: a type or a modifier, then the name
+	default: // .java, .groovy, .cs: a type or a modifier (Groovy's def too), then the name
 		pattern = `^\s*(?:[\w@][\w.$<>\[\],?@]*\s+)+` + s + `\s*(?:<[^>]*>)?\s*\(`
-		if ext == ".groovy" {
-			pattern += `|\bdef\s+` + s + `\s*\(`
-		}
 		if symbol == f.OuterType() {
 			pattern = `^\s*(?:(?:public|protected|private|internal)\s+)?` + s + `\s*\(`
 		}
