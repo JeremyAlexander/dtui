@@ -821,6 +821,21 @@ Traceback (most recent call last):
 
 // "at location" alone is how V8 writes a frame without a function, and how
 // Rust, Swift and others write the file line under a frame of their own. It
+// The lines that decide the notation are the first stackVoteLines a
+// notation owns: a long trace is not read twice to find out what it is.
+func TestParseStackVotesOnTheFirstLines(t *testing.T) {
+	java := func(n int) string {
+		return strings.Repeat("\tat com.example.shop.Cart.add(Cart.java:42)\n\tat com.example.shop.Api.post(Api.java:12)\n", n/2)
+	}
+	python := strings.Repeat("  File \"/app/shop/cart.py\", line 42, in add_item\n  File \"/app/shop/api.py\", line 17, in post\n", 50)
+	for lines, want := range map[int]StackSyntax{stackVoteLines/2 + 2: StackJava, stackVoteLines/2 - 2: StackPython} {
+		got := ParseStackFrames(java(lines) + python)
+		if len(got) == 0 || got[0].Syntax != want {
+			t.Errorf("%d Java lines of the first %d: notation %v, want %v", lines, stackVoteLines, got[0].Syntax, want)
+		}
+	}
+}
+
 // makes a trace JavaScript only next to something only JavaScript writes.
 func TestBareLocationsAloneAreNotJavaScript(t *testing.T) {
 	rust := func(fn string) string {

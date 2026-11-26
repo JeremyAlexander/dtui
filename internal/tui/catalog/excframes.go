@@ -123,8 +123,13 @@ func parseStack(stack string) (frames []StackFrame, typ string) {
 // frame of one notation like another's: a .NET parameter list like a Java
 // source location ("(System.String)"), a Java frame like a .NET one. nil
 // when no notation finds a line of its own.
+//
+// The first stackVoteLines such lines decide. The lines that mislead stand
+// above the frames, and are few; reading every line of a long trace twice
+// would only cost.
 func stackNotationOf(lines []string) *stackNotation {
 	var count, first [len(stackNotations)]int
+	owned := 0
 	for at, line := range lines {
 		line = strings.TrimSpace(line)
 		if line == "" {
@@ -136,9 +141,13 @@ func stackNotationOf(lines []string) *stackNotation {
 					first[i] = at
 				}
 				count[i]++
+				owned++
 				// A line two notations own is the stricter one's.
 				break
 			}
+		}
+		if owned == stackVoteLines {
+			break
 		}
 	}
 	best := StackJava
@@ -154,6 +163,9 @@ func stackNotationOf(lines []string) *stackNotation {
 }
 
 const (
+	// stackVoteLines is how many lines that a notation owns decide which
+	// one a trace is in.
+	stackVoteLines = 16
 	// stackTextMax caps how much of a trace is read, far above what a
 	// runtime prints: the text is cut at the last line that ends inside it.
 	stackTextMax = 1 << 20
@@ -406,9 +418,9 @@ func builtinInApp(f StackFrame) bool {
 	return stackNotations[f.Syntax].inApp(f)
 }
 
-// isPassThrough reports whether a frame only hands the call on. The function
-// is compared without the type it is a method of ("Auth.ServeHTTP"), unless
-// the notation lists it with one ("Generator.next").
+// isPassThrough reports whether a frame only hands the call on: its
+// function is one the notation lists, compared whole and without the type
+// it is a method of ("Auth.ServeHTTP" is "ServeHTTP").
 func isPassThrough(f StackFrame) bool {
 	if f.Syntax < StackJava || int(f.Syntax) >= len(stackNotations) {
 		return false

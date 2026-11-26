@@ -63,3 +63,70 @@ func BenchmarkParseStackFramesJavaChain(b *testing.B) {
 		}
 	}
 }
+
+// benchFrames is how many frames the traces of the per-notation benchmarks
+// have, like benchJavaEvent.
+const benchFrames = 70
+
+// benchStack writes a trace of benchFrames frames: a header, then one line
+// or two per frame.
+func benchStack(header string, frame func(i int) string) string {
+	var b strings.Builder
+	b.WriteString(header)
+	for i := range benchFrames {
+		b.WriteString(frame(i))
+	}
+	return b.String()
+}
+
+// One trace per notation, each a few application frames over the
+// framework's, and one in no notation at all: text that every notation has
+// to look at before the event falls to its message.
+func BenchmarkParseStackFrames(b *testing.B) {
+	app := func(i int) bool { return i < 3 }
+	stacks := []struct {
+		name, stack string
+		frames      int
+	}{
+		{"java", benchJavaEvent().StackTrace, benchFrames},
+		{"dotnet", benchStack("System.InvalidOperationException: Cart 7 is locked\n", func(i int) string {
+			if app(i) {
+				return fmt.Sprintf("   at Example.Shop.Cart.CartService.Step%d(String sku, Int32 quantity) in /src/Shop/Cart/CartService.cs:line %d\n", i, 40+i)
+			}
+			return fmt.Sprintf("   at Microsoft.AspNetCore.Mvc.Infrastructure.Invoker%d.Next(State& next, Scope& scope, Object& state, Boolean& isCompleted)\n", i)
+		}), benchFrames},
+		{"javascript", benchStack("Error: Cart 7 is locked\n", func(i int) string {
+			if app(i) {
+				return fmt.Sprintf("    at CartService.step%d (/app/src/cart/service.js:%d:17)\n", i, 40+i)
+			}
+			return fmt.Sprintf("    at Layer.handle%d [as handle_request] (/app/node_modules/express/lib/router/layer.js:%d:5)\n", i, 90+i)
+		}), benchFrames},
+		{"python", benchStack("Traceback (most recent call last):\n", func(i int) string {
+			if !app(benchFrames - 1 - i) {
+				return fmt.Sprintf("  File \"/usr/lib/python3.12/site-packages/django/core/handlers/base.py\", line %d, in step_%d\n"+
+					"    response = wrapped_callback(request, *callback_args, **callback_kwargs)\n", 100+i, i)
+			}
+			return fmt.Sprintf("  File \"/app/shop/cart.py\", line %d, in step_%d\n    self.repo.save(sku)\n", 40+i, i)
+		}) + "ValueError: Cart 7 is locked\n", benchFrames},
+		{"go", benchStack("goroutine 1 [running]:\n", func(i int) string {
+			if app(i) {
+				return fmt.Sprintf("shop.example.invalid/cart.(*Service).Step%d(0xc000012345, {0xc00001a0c0, 0x6})\n\t/app/cart/service.go:%d +0x1d\n", i, 40+i)
+			}
+			return fmt.Sprintf("net/http.(*ServeMux).step%d(0xc000012345, {0x7b2a40, 0xc0000a2000}, 0xc0000b4000)\n\t/usr/local/go/src/net/http/server.go:%d +0x1d\n", i, 2000+i)
+		}), benchFrames},
+		{"no notation", benchStack("The cart could not be saved.\n", func(i int) string {
+			return fmt.Sprintf("step %d of the checkout failed at 10:11:%02d (cart 7, order 12): the order service did not answer\n", i, i%60)
+		}), 0},
+	}
+	for _, s := range stacks {
+		b.Run(s.name, func(b *testing.B) {
+			if got := len(ParseStackFrames(s.stack)); got != s.frames {
+				b.Fatalf("the trace has %d frames, want %d", got, s.frames)
+			}
+			b.ReportAllocs()
+			for b.Loop() {
+				ParseStackFrames(s.stack)
+			}
+		})
+	}
+}

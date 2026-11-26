@@ -10,6 +10,7 @@ a8d17c595d4d967b	const customClassifierField
 ee2ec91e3d4628e8	const dotnetNested, dotnetGenerated
 61a640576f8dd7db	const exceptionMessageInput, ExceptionMessageMax, msgIPv6Max, msgIPv6Colons, msgIPv6WordColons, msgPlaceholderMax
 6511a88fc8d4cab7	const fingerprintKeyLen
+ba46e319ae5dae85	const goGoroutine, goFileSuffix
 13a0afea61cdc2a9	const goVendorDir
 93ff8fef9db5608a	const hexLetters, digits, msgControls
 9753a90bf181f7cc	const javaSyntheticClass
@@ -21,7 +22,7 @@ b29bd30168fc254b	const msgWinPathWord, msgWinPathWords
 f3be678cfc5108c2	const pythonFramePrefix, pythonTraceback, pythonGutter, pythonIndent
 14ebf31c1d78cb21	const pythonStdlibDir
 38572dbe18bb2fa5	const sourceCurrentDir, sourceURL, sourceFileScheme
-eda6f7a2f1efdb7b	const stackTextMax, stackLineMax
+405ee81cc12fde3e	const stackVoteLines, stackTextMax, stackLineMax
 83b5dd168ff56a1b	const stackWordEnds
 f6b370e98019e7df	const wordBytes
 b3635d365a0f43f2	var deployHomes

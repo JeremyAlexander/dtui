@@ -67,6 +67,13 @@ var goVendorPrefixes = []string{
 // goPassThrough: a handler that wraps the next handler.
 var goPassThrough = []string{"ServeHTTP"}
 
+const (
+	// goGoroutine is what goGoroutineRe starts with, and goFileSuffix what
+	// goFileRe holds: most lines of most traces have neither.
+	goGoroutine  = "goroutine "
+	goFileSuffix = ".go:"
+)
+
 // goVendorDir is the directory a module keeps its dependencies' packages in.
 const goVendorDir = "vendor/"
 
@@ -121,7 +128,8 @@ func goOwns(line string) bool {
 	if _, ok := goFrame(line); ok {
 		return true
 	}
-	return goGoroutineRe.MatchString(line) || goFileRe.MatchString(line)
+	return strings.HasPrefix(line, goGoroutine) && goGoroutineRe.MatchString(line) ||
+		strings.Contains(line, goFileSuffix) && goFileRe.MatchString(line)
 }
 
 // goRootCause returns the frames of the first goroutine, the one that
