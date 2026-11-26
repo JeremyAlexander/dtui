@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -254,5 +255,43 @@ func TestOrdinaryViewKeepsItsRowsWhileItRefetches(t *testing.T) {
 	tv.Update(dataMsg{owner: tv, seq: tv.seq, err: errors.New("boom")})
 	if len(tv.all) != 2 {
 		t.Errorf("a failed refresh dropped the rows of an ordinary view: %d left", len(tv.all))
+	}
+}
+
+// An error that wraps continues under its own text, not under the mark, and
+// tenant text in it or in the breadcrumb's entity cannot break a line. One
+// that fits is one line, as before.
+func TestErrorTextHangsUnderItself(t *testing.T) {
+	a := testApp(t, "logs")
+	tv := a.top().(*tableView)
+	// fail answers the view with an error and returns the lines it draws
+	// for it, from the mark on.
+	fail := func(text string) []string {
+		tv.seq++
+		tv.Update(dataMsg{owner: tv, seq: tv.seq, err: errors.New(text)})
+		var out []string
+		for _, line := range strings.Split(ansi.Strip(tv.View(40, 10)), "\n") {
+			if line = strings.TrimRight(line, " "); len(out) > 0 || strings.HasPrefix(line, "✗") {
+				out = append(out, line)
+			}
+		}
+		return out
+	}
+	for text, want := range map[string][]string{
+		"boom": {"✗ boom"},
+		"the environment refused the query because the token lacks a scope": {
+			"✗ the environment refused the query",
+			"  because the token lacks a scope",
+		},
+		"first\nsecond\x1b[31m": {"✗ first second␛[31m"},
+	} {
+		if got := fail(text); !slices.Equal(got, want) {
+			t.Errorf("error %q draws %q, want %q", text, got, want)
+		}
+	}
+
+	tv.scope.Entity = &catalog.Entity{ID: "HOST-000000000000C001", Type: "HOST", Name: "web\n1"}
+	if crumb := tv.Crumb(); crumb != "logs (web 1)" {
+		t.Errorf("crumb = %q, want %q", crumb, "logs (web 1)")
 	}
 }

@@ -535,7 +535,7 @@ func (v *tableView) Crumb() string {
 		if name == "" {
 			name = v.scope.Entity.ID
 		}
-		label += fmt.Sprintf(" (%s)", name)
+		label += fmt.Sprintf(" (%s)", oneLine(name))
 	}
 	if v.scope.Pattern != "" {
 		label += " [pattern]"
@@ -1282,7 +1282,10 @@ func (v *tableView) renderTable(width, height int) string {
 	}
 
 	if v.err != nil {
-		b.WriteString("\n" + theme.Error.Render("✗ "+wrap(v.err.Error(), width-2)))
+		// The text continues under itself, not under the mark; it may
+		// repeat tenant data, so it is made one safe line before wrapping.
+		text := strings.ReplaceAll(wrap(oneLine(v.err.Error()), width-2), "\n", "\n  ")
+		b.WriteString("\n" + theme.Error.Render("✗ "+text))
 		return b.String()
 	}
 	for _, line := range v.captionLines(width) {

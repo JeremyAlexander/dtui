@@ -51,12 +51,13 @@ reads its source when the call is issued; the message route is older and
 applies to every drill. Fix: stamp navigation messages with the context
 sequence and drop the stale ones in `app.Update`.
 
-## Entity names and error text are not flattened in the chrome
+## Wrapped error text is laid out per view
 
-A table's caption, footnote, loading line, argument label and echoed command
-go through `oneLine`. An entity name in the breadcrumb and the text of an
-error do not, in any view, so one with a newline can still shear a frame.
-Fix: `oneLine` in `tableView.Crumb` for the entity and in the error line.
+A table view makes its error one safe line and continues it under its own
+text (`renderTable` in `internal/tui/table.go`). Seven other views wrap the
+raw text with the continuation under the mark: `metrics.go`, `inspector.go`,
+`reader.go`, `navrender.go`, `timeline.go`, `relations.go`, `waterfall.go`.
+Fix: one `errorBlock(err, width)` helper, used by all eight.
 
 ## Profiling view: unmeasured per-key work
 
