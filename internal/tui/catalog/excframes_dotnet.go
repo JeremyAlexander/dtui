@@ -20,16 +20,24 @@ var (
 	// (dotnetMonoOffset) or every parameter starts with a type name.
 	dotnetMonoParamsRe = regexp.MustCompile("^(?:[A-Z][\\w.`\\[\\]<>&*+]*(?: \\w+)?(?:, |$))*$")
 	dotnetTypeArgsRe   = regexp.MustCompile(`\[[^\]]*\]`)
-	// An inner exception's type, after the arrow that introduces it.
-	dotnetInnerRe = regexp.MustCompile("---> (?:\\(Inner Exception #\\d+\\) )?([\\w.+`]+)")
+	// An inner exception's type, after the arrow that introduces it. An
+	// arrow may stand in a message too ("moved Open ---> Pending"), so the
+	// type is qualified and a colon or the end of the line follows it.
+	dotnetInnerRe = regexp.MustCompile(
+		"---> (?:\\(Inner Exception #\\d+\\) )?((?:[\\w+`]+\\.)+[\\w+`]+)(?:\\[[^\\]]*\\])?(?::|$)")
 	// Compiler-generated names: the method of top-level statements
 	// ("<Main>$"), local functions ("<Run>g__Validate|5_0"), async state
-	// machines, closure classes and the lambdas in them.
+	// machines, closure classes and the lambdas in them. Their ordinals
+	// move with every edit of the class, so none stays in a name; a
+	// generic one carries its arity behind them ("d__12`1"). A local
+	// function keeps the method it is declared in, since two methods may
+	// each have one of the same name. The names nest ("<<Run>b__0>d"), so
+	// the method inside the brackets may be one already unwrapped.
 	dotnetMainRe    = regexp.MustCompile(`<(\w+)>\$`)
-	dotnetLocalRe   = regexp.MustCompile(`<\w+>g__(\w+)\|\d+(?:_\d+)?`)
-	dotnetAsyncRe   = regexp.MustCompile(`<(\w+)>d(?:__\d+)?\.MoveNext$`)
-	dotnetClosureRe = regexp.MustCompile(`<>c(?:__DisplayClass\d+_\d+)?\.`)
-	dotnetLambdaRe  = regexp.MustCompile(`<(\w+)>b__\d+(?:_\d+)?`)
+	dotnetClosureRe = regexp.MustCompile("<>c(?:__DisplayClass\\d+_\\d+)?(?:`\\d+)?\\.")
+	dotnetLambdaRe  = regexp.MustCompile("<([\\w.]+)>b__\\d+(?:_\\d+)?(?:`\\d+)?")
+	dotnetLocalRe   = regexp.MustCompile("<([\\w.]+)>g__(\\w+)\\|\\d+(?:_\\d+)?(?:`\\d+)?")
+	dotnetAsyncRe   = regexp.MustCompile("<([\\w.]+)>d(?:__\\d+)?(?:`\\d+)?\\.MoveNext$")
 	// A delegate compiled from an expression tree is numbered per process.
 	dotnetDelegateRe = regexp.MustCompile(`^lambda_method\d+$`)
 )
@@ -45,6 +53,13 @@ var dotnetVendorPrefixes = []string{
 var dotnetPassThrough = []string{"Invoke", "InvokeAsync"}
 
 const dotnetInnerEnd = "--- End of inner exception stack trace"
+
+const (
+	// dotnetNested joins a nested type to its outer one in Mono's traces.
+	dotnetNested = "+"
+	// dotnetGenerated ends the method a compiler-generated name wraps.
+	dotnetGenerated = ">"
+)
 
 // dotnetMonoOffset starts what Mono prints after a frame's parameters: the
 // IL offset, "[0x0001a] in <module>:0".
@@ -79,11 +94,19 @@ func dotnetFrame(line string) (StackFrame, bool) {
 		return StackFrame{}, false
 	}
 	name = dotnetTypeArgsRe.ReplaceAllString(name, "")
+	// Mono joins a nested type to its outer one with "+", .NET with ".".
+	name = strings.ReplaceAll(name, dotnetNested, ".")
 	name = dotnetMainRe.ReplaceAllString(name, "$1")
-	name = dotnetLocalRe.ReplaceAllString(name, "$1")
-	name = dotnetAsyncRe.ReplaceAllString(name, "$1")
 	name = dotnetClosureRe.ReplaceAllString(name, "")
-	name = dotnetLambdaRe.ReplaceAllString(name, "$1")
+	// From the inside out; every pass removes a pair of brackets.
+	for strings.Contains(name, dotnetGenerated) {
+		unwrapped := dotnetLocalRe.ReplaceAllString(dotnetLambdaRe.ReplaceAllString(name, "$1"), "$1.$2")
+		if unwrapped == name {
+			break
+		}
+		name = unwrapped
+	}
+	name = dotnetAsyncRe.ReplaceAllString(name, "$1")
 
 	module, function := "", name
 	if dot := strings.LastIndexByte(name, '.'); dot >= 0 {
@@ -102,18 +125,30 @@ func dotnetFrame(line string) (StackFrame, bool) {
 
 // dotnetRootCause returns the frames of the innermost exception, which is
 // printed first, and its type: the last one an arrow introduces ("--->")
-// above the first frame.
+// above the first frame. An inner exception thrown without a stack has no
+// frames before the line that closes it, so the frames that follow belong
+// to the exception around it.
 func dotnetRootCause(lines []string) (frames []StackFrame, typ string) {
+	var inner []string // the types the arrows introduced, outermost first
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
-		if len(frames) > 0 && strings.HasPrefix(line, dotnetInnerEnd) {
-			break
+		if strings.HasPrefix(line, dotnetInnerEnd) {
+			if len(frames) > 0 {
+				break
+			}
+			inner = inner[:max(0, len(inner)-1)]
+			continue
 		}
 		if f, ok := dotnetFrame(line); ok {
 			frames = append(frames, f)
-		} else if inner := dotnetInnerRe.FindAllStringSubmatch(line, -1); inner != nil && len(frames) == 0 {
-			typ = inner[len(inner)-1][1]
+		} else if len(frames) == 0 {
+			for _, m := range dotnetInnerRe.FindAllStringSubmatch(line, -1) {
+				inner = append(inner, m[1])
+			}
 		}
+	}
+	if len(inner) > 0 {
+		typ = inner[len(inner)-1]
 	}
 	return frames, typ
 }

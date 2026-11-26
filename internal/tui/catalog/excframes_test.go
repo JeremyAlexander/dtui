@@ -251,17 +251,17 @@ func TestParseStackFramesDotNet(t *testing.T) {
    at Acme.Shop.CartService.<>c.<Total>b__9(Item item)`,
 			frames(StackDotNet,
 				"Acme.Shop.CartService", "AddItem", "Acme.Shop.CartService", "Total")},
-		{"local functions unwrap to their name", `   at Example.Shop.CartService.<Run>g__Validate|5_0(Int32 quantity)
+		{"local functions unwrap to their name under their method's", `   at Example.Shop.CartService.<Run>g__Validate|5_0(Int32 quantity)
    at Example.Shop.CartService.<Run>g__Validate|7_1(Int32 quantity)
    at Example.Shop.CartService.<<Run>g__Reserve|5_2>d.MoveNext()
    at Example.Shop.CartService.<>c__DisplayClass5_0.<Run>g__Check|3()
    at Program.<<Main>$>g__Handle|0_0(String[] args)
    at Program.<Main>$(String[] args)`,
 			frames(StackDotNet,
-				"Example.Shop.CartService", "Validate",
-				"Example.Shop.CartService", "Reserve",
-				"Example.Shop.CartService", "Check",
-				"Program", "Handle",
+				"Example.Shop.CartService.Run", "Validate",
+				"Example.Shop.CartService.Run", "Reserve",
+				"Example.Shop.CartService.Run", "Check",
+				"Program.Main", "Handle",
 				"Program", "Main")},
 		{"compiled delegates lose their number", `   at lambda_method42(Closure, Object)
    at lambda_method7(Closure, Object)
@@ -1318,6 +1318,79 @@ ValueError: locked
 		StackTrace: "Traceback (most recent call last):\n  File \"/app/shop/cart.py\", line 42, in add_item\nKeyError: 'sku'"})
 	if chain.Key != alone.Key || chain.Type != "KeyError" {
 		t.Errorf("chain %s (%s), root cause alone %s", chain.Key, chain.Type, alone.Key)
+	}
+}
+
+// An arrow introduces an inner exception only where a qualified type and a
+// colon, or the end of the line, follow it; and an inner exception without
+// frames is not the one the frames under it belong to.
+func TestDotNetInnerExceptionTypes(t *testing.T) {
+	moved := func(state string) string {
+		return "Example.Shop.StateException: order moved Open ---> " + state +
+			"\n   at Example.Shop.Orders.Move(String id)\n   at Example.Shop.Api.Post()"
+	}
+	cases := []struct {
+		name, stack string
+		want        []StackFrame
+		typ         string
+	}{
+		{"an arrow in a message", moved("Pending"), frames(StackDotNet, "Example.Shop.Orders", "Move", "Example.Shop.Api", "Post"), ""},
+		{"an arrow before a word and a colon", moved("Pending: retry later"),
+			frames(StackDotNet, "Example.Shop.Orders", "Move", "Example.Shop.Api", "Post"), ""},
+		{"an inner exception without frames", `Example.Shop.CheckoutException: failed
+ ---> Example.Shop.Inner: thrown without a stack
+   --- End of inner exception stack trace ---
+   at Example.Shop.Checkout.Run()`, frames(StackDotNet, "Example.Shop.Checkout", "Run"), ""},
+		{"the innermost of three has no frames", `Example.Shop.CheckoutException: failed
+ ---> Example.Shop.CartException: cart failed
+ ---> Example.Shop.Inner: thrown without a stack
+   --- End of inner exception stack trace ---
+   at Example.Shop.Cart.Add(String sku)
+   --- End of inner exception stack trace ---
+   at Example.Shop.Checkout.Run()`, frames(StackDotNet, "Example.Shop.Cart", "Add"), "Example.Shop.CartException"},
+		{"a type without a message", "Example.Shop.CheckoutException: failed\n ---> System.InvalidOperationException\n" +
+			"   at Example.Shop.Cart.Add(String sku)\n   --- End of inner exception stack trace ---\n   at Example.Shop.Checkout.Run()",
+			frames(StackDotNet, "Example.Shop.Cart", "Add"), "System.InvalidOperationException"},
+		{"a nested and a generic type", "Example.Shop.CheckoutException: failed\n ---> Example.Shop.Cart+LockedException`1[System.String]: locked\n" +
+			"   at Example.Shop.Cart.Add(String sku)\n   --- End of inner exception stack trace ---\n   at Example.Shop.Checkout.Run()",
+			frames(StackDotNet, "Example.Shop.Cart", "Add"), "Example.Shop.Cart+LockedException`1"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, typ := parseStack(tc.stack)
+			if !reflect.DeepEqual(got, tc.want) || typ != tc.typ {
+				t.Errorf("frames %+v type %q\nwant %+v %q", got, typ, tc.want, tc.typ)
+			}
+		})
+	}
+	a := mustFingerprint(t, SpanException{Type: "Example.Shop.StateException", StackTrace: moved("Pending")})
+	b := mustFingerprint(t, SpanException{Type: "Example.Shop.StateException", StackTrace: moved("Closed")})
+	if a.Key != b.Key || a.Type != "Example.Shop.StateException" {
+		t.Errorf("a word of the message is in the key: %s (%s) and %s (%s)", a.Key, a.Type, b.Key, b.Type)
+	}
+}
+
+// Compiler-generated names carry ordinals that move with every edit of the
+// class, and no two builds agree on them.
+func TestDotNetGeneratedNames(t *testing.T) {
+	cases := []struct{ line, module, function string }{
+		{"at Example.Shop.Cart.<>c.<<AddItem>b__5_0>d__12.MoveNext()", "Example.Shop.Cart", "AddItem"},
+		{"at Example.Shop.Cart.<AddItemAsync>d__12`1.MoveNext()", "Example.Shop.Cart", "AddItemAsync"},
+		{"at Example.Shop.Cart.<>c__DisplayClass5_0`1.<AddItem>b__0(Item item)", "Example.Shop.Cart", "AddItem"},
+		{"at Example.Shop.Cart.<>c__DisplayClass5_0`1.<<AddItem>b__0>d.MoveNext()", "Example.Shop.Cart", "AddItem"},
+		{"at Example.Shop.Cart.<Create>g__Validate|1_0`1(Int32 quantity)", "Example.Shop.Cart.Create", "Validate"},
+		{"at Example.Shop.Cart.<Cancel>g__Validate|3_1(Int32 quantity)", "Example.Shop.Cart.Cancel", "Validate"},
+		{"at Example.Shop.Cart.<<Create>g__Validate|1_0>g__Check|1_1(Int32 quantity)", "Example.Shop.Cart.Create.Validate", "Check"},
+		{"at Example.Shop.CartService+<AddItemAsync>d__12.MoveNext () [0x0001a] in <3f2b8c1e>:0", "Example.Shop.CartService", "AddItemAsync"},
+		{"at Example.Shop.CartService+<>c__DisplayClass5_0.<AddItem>b__0 (Example.Shop.Item item) [0x00007] in <3f2b8c1e>:0",
+			"Example.Shop.CartService", "AddItem"},
+		{"at Example.Shop.Cart+Line.Total () [0x00000] in <3f2b8c1e>:0", "Example.Shop.Cart.Line", "Total"},
+	}
+	for _, tc := range cases {
+		f, ok := dotnetFrame(tc.line)
+		if !ok || f.Module != tc.module || f.Function != tc.function {
+			t.Errorf("%s\n got %q %q %v\nwant %q %q", tc.line, f.Module, f.Function, ok, tc.module, tc.function)
+		}
 	}
 }
 
