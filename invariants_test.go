@@ -6,6 +6,7 @@ import (
 	"go/parser"
 	"go/token"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -13,6 +14,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 const modulePath = "github.com/dynatrace-oss/dtui"
@@ -415,7 +418,6 @@ var (
 	makeVersionPkg = regexp.MustCompile(`(?m)^DTCTL_VERSION_PKG\s*[:?]?=\s*(\S+)`)
 	xFlag          = regexp.MustCompile(`-X (\S+)\.(\w+)=`)
 	wasmDtctlLine  = regexp.MustCompile(`(?m)^(?:copy_mod|replace) (\S+/dtctl(?:/\S+)?) `)
-	dependabotItem = regexp.MustCompile(`(?m)^\s*-\s*"?([^"\s]*/dtctl[^"\s]*)"?\s*$`)
 )
 
 // ldflagProblems reports the -X flags of a makefile or a GoReleaser config
@@ -482,37 +484,54 @@ func wasmScriptProblems(text string) []string {
 	return problems
 }
 
-// dependabotProblems reports a dependabot config whose dtctl patterns do not
-// move dtctlModulePath and its sdk in one pull request: either the wildcard
-// that matches both, or the two paths as neighbouring patterns of one group.
+// dependabotProblems reports a dependabot config in which no group of the
+// gomod update moves dtctlModulePath and its sdk in one pull request: one
+// group must name the wildcard that matches both, or both paths. A dtctl
+// pattern of any other spelling, one path without the other, and a group
+// that excludes dtctl are reported. Which group Dependabot picks when two
+// match the same module is not evaluated.
 func dependabotProblems(text string) []string {
+	var config struct {
+		Updates []struct {
+			Ecosystem string `yaml:"package-ecosystem"`
+			Groups    map[string]struct {
+				Patterns []string `yaml:"patterns"`
+				Excludes []string `yaml:"exclude-patterns"`
+			} `yaml:"groups"`
+		} `yaml:"updates"`
+	}
+	if err := yaml.Unmarshal([]byte(text), &config); err != nil {
+		return []string{fmt.Sprintf(".github/dependabot.yml: %v", err)}
+	}
 	wildcard, sdk := dtctlModulePath+"*", dtctlModulePath+"/sdk"
 	partner := map[string]string{dtctlModulePath: sdk, sdk: dtctlModulePath}
-	pattern := func(line string) string {
-		if m := dependabotItem.FindStringSubmatch(line); m != nil {
-			return m[1]
-		}
-		return ""
-	}
-	lines := strings.Split(withoutCommentLines(text), "\n")
 	var problems []string
 	found := false
-	for i := 0; i < len(lines); i++ {
-		switch p := pattern(lines[i]); {
-		case p == "":
-		case p == wildcard:
-			found = true
-		case partner[p] != "" && i+1 < len(lines) && pattern(lines[i+1]) == partner[p]:
-			found = true
-			i++
-		case partner[p] != "":
-			problems = append(problems, fmt.Sprintf(".github/dependabot.yml groups %s without %s as the next pattern", p, partner[p]))
-		default:
-			problems = append(problems, fmt.Sprintf(".github/dependabot.yml groups %s, go.mod requires %s", p, dtctlModulePath))
+	for _, update := range config.Updates {
+		if update.Ecosystem != "gomod" {
+			continue
+		}
+		for _, name := range slices.Sorted(maps.Keys(update.Groups)) {
+			group := update.Groups[name]
+			for _, p := range group.Patterns {
+				switch {
+				case p == wildcard, partner[p] != "" && slices.Contains(group.Patterns, partner[p]):
+					found = true
+				case partner[p] != "":
+					problems = append(problems, fmt.Sprintf(".github/dependabot.yml group %s names %s without %s", name, p, partner[p]))
+				case strings.Contains(p, "/dtctl"):
+					problems = append(problems, fmt.Sprintf(".github/dependabot.yml group %s names %s, go.mod requires %s", name, p, dtctlModulePath))
+				}
+			}
+			for _, p := range group.Excludes {
+				if strings.Contains(p, "/dtctl") {
+					problems = append(problems, fmt.Sprintf(".github/dependabot.yml group %s excludes %s", name, p))
+				}
+			}
 		}
 	}
 	if !found && len(problems) == 0 {
-		problems = append(problems, fmt.Sprintf(".github/dependabot.yml has no group pattern %q", wildcard))
+		problems = append(problems, fmt.Sprintf(".github/dependabot.yml has no group with the pattern %q in its gomod update", wildcard))
 	}
 	return problems
 }
@@ -530,8 +549,15 @@ func TestDtctlPathChecksReadOnlyLiveLines(t *testing.T) {
 	wasm := "copy_mod " + dtctlModulePath + " dtctl\ncopy_mod " + dtctlModulePath + "/sdk dtctl-sdk\n" +
 		"replace " + dtctlModulePath + " => ./.deps/dtctl\nreplace " + dtctlModulePath + "/sdk => ./.deps/dtctl-sdk\n"
 	requires := "require (\n\t" + dtctlModulePath + " v1.0.0\n\t" + dtctlModulePath + "/sdk v1.0.0\n)\n"
-	group := "    patterns:\n      - \"" + dtctlModulePath + "*\"\n"
-	explicit := "      - \"" + dtctlModulePath + "\"\n      - \"" + dtctlModulePath + "/sdk\"\n"
+	// dependabot is a config whose gomod update has the given groups.
+	dependabot := func(groups string) string {
+		return "version: 2\nupdates:\n  - package-ecosystem: gomod\n    labels:\n      - area/dtctl\n    groups:\n" + groups
+	}
+	patterns := func(group, key string, items ...string) string {
+		return "      " + group + ":\n        " + key + ":\n          - " + strings.Join(items, "\n          - ") + "\n"
+	}
+	group := patterns("dtctl", "patterns", `"`+dtctlModulePath+`*"`)
+	explicit := patterns("dtctl", "patterns", dtctlModulePath, dtctlModulePath+"/sdk")
 
 	for _, tc := range []struct {
 		name string
@@ -562,12 +588,16 @@ func TestDtctlPathChecksReadOnlyLiveLines(t *testing.T) {
 		{"wasm copy that is only echoed", wasmScriptProblems(strings.Replace(wasm, "copy_mod", "echo copy_mod", 1)), `lacks "copy_mod ` + dtctlModulePath + ` dtctl"`},
 		{"wasm without a final newline", wasmScriptProblems(strings.TrimSuffix(wasm, "\n")), ""},
 
-		{"dependabot", dependabotProblems(group), ""},
-		{"dependabot stale group", dependabotProblems(strings.Replace(group, dtctlModulePath, old, 1)), "groups " + old},
-		{"dependabot commented-out group", dependabotProblems(strings.Replace(group, "- ", "# - ", 1)), "has no group pattern"},
-		{"dependabot explicit pair", dependabotProblems(explicit), ""},
-		{"dependabot explicit pair, sdk first", dependabotProblems("      - " + dtctlModulePath + "/sdk\n      - " + dtctlModulePath + "\n"), ""},
-		{"dependabot explicit pattern without the sdk", dependabotProblems(strings.SplitAfter(explicit, "\n")[0]), "without " + dtctlModulePath + "/sdk"},
+		{"dependabot", dependabotProblems(dependabot(group)), ""},
+		{"dependabot stale group", dependabotProblems(dependabot(strings.Replace(group, dtctlModulePath, old, 1))), "names " + old},
+		{"dependabot commented-out group", dependabotProblems(dependabot(strings.Replace(group, "- ", "# - ", 1))), "has no group"},
+		{"dependabot single-quoted pattern", dependabotProblems(dependabot(strings.ReplaceAll(group, `"`, "'"))), ""},
+		{"dependabot pattern before a comment", dependabotProblems(dependabot(strings.Replace(group, "*\"", "*\" # keep", 1))), ""},
+		{"dependabot explicit pair", dependabotProblems(dependabot(explicit)), ""},
+		{"dependabot explicit pattern without the sdk", dependabotProblems(dependabot(patterns("dtctl", "patterns", dtctlModulePath))), "without " + dtctlModulePath + "/sdk"},
+		{"dependabot pattern under exclude-patterns", dependabotProblems(dependabot(group + patterns("rest", "exclude-patterns", `"`+dtctlModulePath+`*"`))), "group rest excludes"},
+		{"dependabot pattern under another ecosystem", dependabotProblems(strings.Replace(dependabot(group), "gomod", "github-actions", 1)), "has no group"},
+		{"dependabot not YAML", dependabotProblems("updates: ["), ".github/dependabot.yml: "},
 	} {
 		switch {
 		case tc.want == "" && len(tc.got) > 0:
@@ -579,7 +609,7 @@ func TestDtctlPathChecksReadOnlyLiveLines(t *testing.T) {
 
 	// The explicit pair moves dtctl and its sdk together only as patterns of
 	// one group, so each half under a group of its own is reported.
-	split := strings.Replace(explicit, "\n", "\n  other:\n    patterns:\n", 1)
+	split := dependabot(patterns("dtctl", "patterns", dtctlModulePath) + patterns("sdk", "patterns", dtctlModulePath+"/sdk"))
 	if got := dependabotProblems(split); len(got) != 2 {
 		t.Errorf("dependabot explicit pair in two groups: problems %q, want one for each pattern", got)
 	}
