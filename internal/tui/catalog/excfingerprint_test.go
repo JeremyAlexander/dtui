@@ -429,8 +429,9 @@ func TestFingerprintIncludesTheThrowSite(t *testing.T) {
 }
 
 // Frames that only hand a call on (a filter or middleware chain, reflection,
-// async plumbing) say nothing about the bug, so they do not count toward the
-// top frames, in-app or not.
+// async plumbing) say nothing about the bug next to the application's other
+// frames, so they do not count toward the top in-app frames. Where the key
+// is made of all frames, they are frames like any other.
 func TestFingerprintSkipsPassThroughFrames(t *testing.T) {
 	cases := []struct {
 		name, stack string
@@ -458,7 +459,10 @@ func TestFingerprintSkipsPassThroughFrames(t *testing.T) {
 			"java.lang.reflect.Method.invoke",
 			"java.lang.Thread.run"), RungFrames,
 			frames(StackJava, "org.apache.catalina.connector.ResponseFacade", "sendError",
-				"org.apache.catalina.servlets.DefaultServlet", "doGet", "java.lang.Thread", "run")},
+				"org.apache.catalina.servlets.DefaultServlet", "doGet",
+				"org.apache.catalina.core.ApplicationFilterChain", "doFilter",
+				"com.example.shop.web.TracingFilter", "doFilter",
+				"org.apache.catalina.core.ApplicationFilterChain", "doFilter")},
 		{"dotnet: middleware", `   at Example.Shop.CartService.AddItem(String sku)
    at Example.Shop.TracingMiddleware.InvokeAsync(HttpContext context)
    at Example.Shop.AuthMiddleware.Invoke(HttpContext context)
@@ -500,6 +504,60 @@ main.main()`, RungAppFrames,
 				t.Errorf("rung %v frames %+v\nwant %v %+v", fp.Rung, fp.Frames, tc.rung, tc.want)
 			}
 		})
+	}
+}
+
+// Where the application's only frame under a runtime throw site is a
+// pass-through one, that frame is what tells two handlers, filters or
+// middlewares apart: the key is made of all frames and must hold it.
+func TestFingerprintKeepsPassThroughFramesOnTheAllFramesRung(t *testing.T) {
+	goHandler := func(handler string) string {
+		return "goroutine 34 [running]:\npanic({0x6a1e20?, 0x7d5c10?})\n\t/usr/local/go/src/runtime/panic.go:770 +0x132\n" +
+			"encoding/json.(*Decoder).Decode(0xc000128000, {0x69c2a0, 0xc00011e018})\n\t/usr/local/go/src/encoding/json/stream.go:73 +0x179\n" +
+			"shop/internal/web.(*" + handler + ").ServeHTTP(0xc000010000, {0x7f1a40, 0xc00019c000}, 0xc00018e000)\n" +
+			"\t/src/shop/internal/web/handlers.go:31 +0x8c\n" +
+			"net/http.serverHandler.ServeHTTP({0xc000122000?}, {0x7f1a40, 0xc00019c000}, 0xc00018e000)\n" +
+			"\t/usr/local/go/src/net/http/server.go:3137 +0x8e\n"
+	}
+	javaFilter := func(filter string) string {
+		return javaStack("org.apache.catalina.connector.ResponseFacade.sendError",
+			"com.example.shop.web."+filter+".doFilter",
+			"org.apache.catalina.core.ApplicationFilterChain.doFilter",
+			"java.lang.Thread.run")
+	}
+	pythonMiddleware := func(file string) string {
+		return "Traceback (most recent call last):\n" +
+			"  File \"/usr/lib/python3.11/wsgiref/handlers.py\", line 137, in run\n    self.result = application(self.environ, self.start_response)\n" +
+			"  File \"/app/shop/" + file + "\", line 9, in __call__\n    return json.loads(body)\n" +
+			"  File \"/usr/lib/python3.11/json/decoder.py\", line 355, in raw_decode\n    raise JSONDecodeError(\"Expecting value\", s, err.value) from None\n"
+	}
+	dotnetMiddleware := func(middleware string) string {
+		return "   at System.Text.Json.JsonSerializer.Deserialize(String json)\n" +
+			"   at Example.Shop." + middleware + ".InvokeAsync(HttpContext context)\n" +
+			"   at Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Http.HttpProtocol.ProcessRequests(IHttpApplication application)\n"
+	}
+	for name, pair := range map[string][2]string{
+		"go":     {goHandler("CartHandler"), goHandler("CheckoutHandler")},
+		"java":   {javaFilter("AuthFilter"), javaFilter("RateLimitFilter")},
+		"python": {pythonMiddleware("charge.py"), pythonMiddleware("refund.py")},
+		"dotnet": {dotnetMiddleware("AuthMiddleware"), dotnetMiddleware("QuotaMiddleware")},
+	} {
+		a := mustFingerprint(t, SpanException{Type: "T", StackTrace: pair[0]})
+		b := mustFingerprint(t, SpanException{Type: "T", StackTrace: pair[1]})
+		if a.Rung != RungFrames || b.Rung != RungFrames || len(a.Frames) < 2 || !isPassThrough(a.Frames[1]) {
+			t.Errorf("%s: rungs %v and %v, frames %+v; want the pass-through frame on the all-frames rung", name, a.Rung, b.Rung, a.Frames)
+		}
+		if a.Key == b.Key {
+			t.Errorf("%s: two pass-through frames share key %s: %+v and %+v", name, a.Key, a.Frames, b.Frames)
+		}
+	}
+	// The limit is the same on both rungs: five frames, the throw site
+	// among them where it counts.
+	fp := mustFingerprint(t, SpanException{Type: "T", StackTrace: javaStack("java.util.A.a", "java.util.B.doFilter",
+		"java.util.C.invoke", "java.util.D.d", "java.util.E.proceed", "java.util.F.f")})
+	want := frames(StackJava, "java.util.A", "a", "java.util.B", "doFilter", "java.util.C", "invoke", "java.util.D", "d", "java.util.E", "proceed")
+	if fp.Rung != RungFrames || !reflect.DeepEqual(fp.Frames, want) {
+		t.Errorf("rung %v frames %+v", fp.Rung, fp.Frames)
 	}
 }
 

@@ -24,8 +24,12 @@ import (
 // it moves.
 const ExceptionKeyVersion = "e1"
 
-// FingerprintFrames is how many frames, counted from the throw site, go
-// into a key besides the throw site itself. Deeper frames are the callers,
+// FingerprintFrames is how many frames that count go into a key, from the
+// throw site down: on the app-frames rung the application's frames that are
+// not pass-through, on the all-frames rung every frame. The throw site is
+// one of them where it counts. Where it does not (a runtime or pass-through
+// frame above the application's) it is in the key on top of them, so a key
+// holds at most FingerprintFrames+1 frames. Deeper frames are the callers,
 // and one bug has many.
 const FingerprintFrames = 5
 
@@ -113,10 +117,10 @@ func FingerprintExceptions(excs []SpanException, classify FrameClassifier) (Exce
 		fp.Type = rootType
 	}
 	var evidence []string
-	if app := topFrames(all, inApp); len(app) > 0 {
+	if app := topFrames(all, inApp, isPassThrough); len(app) > 0 {
 		fp.Rung, fp.Frames = RungAppFrames, app
 	} else if len(all) > 0 {
-		fp.Rung, fp.Frames = RungFrames, topFrames(all, func(StackFrame) bool { return true })
+		fp.Rung, fp.Frames = RungFrames, topFrames(all, anyFrame, noFrame)
 	} else if fp.Message != "" {
 		fp.Rung, evidence = RungMessage, []string{fp.Message}
 	}
@@ -132,26 +136,35 @@ func FingerprintExceptions(excs []SpanException, classify FrameClassifier) (Exce
 // a classifier without an ID has keys of its own.
 const customClassifierField = "custom:"
 
+// anyFrame and noFrame are the two answers that do not depend on the frame.
+func anyFrame(StackFrame) bool { return true }
+func noFrame(StackFrame) bool  { return false }
+
 // topFrames picks the frames of a key from a root cause's frames: the throw
-// site, then the frames below it that count and are not pass-through, until
-// FingerprintFrames such frames are in (the throw site included where it is
-// one). The throw site is part of every key whether it counts or not: what
-// is thrown where tells two bugs apart even where the same application
-// frames lead to both. nil when no frame counts.
-func topFrames(all []StackFrame, counts func(StackFrame) bool) []StackFrame {
+// site, then the frames below it that count and do not only hand the call
+// on, until FingerprintFrames such frames are in (the throw site included
+// where it is one). The throw site is part of every key whether it counts
+// or not: what is thrown where tells two bugs apart even where the same
+// application frames lead to both. nil when no frame counts.
+//
+// Pass-through frames are left out only next to the application's other
+// frames (handsOn is isPassThrough on the app-frames rung). On the
+// all-frames rung every frame counts and none is left out: there a handler's
+// or a filter's own frame may be all that tells it from the next one.
+func topFrames(all []StackFrame, counts, handsOn func(StackFrame) bool) []StackFrame {
 	if len(all) == 0 {
 		return nil
 	}
 	top := []StackFrame{all[0]}
 	counted := counts(all[0])
 	left := FingerprintFrames
-	if counted && !isPassThrough(all[0]) {
+	if counted && !handsOn(all[0]) {
 		left--
 	}
 	for _, f := range all[1:] {
 		// Dropping the frames between two calls of one function leaves a
 		// repeat behind; it is the same recursion.
-		if left > 0 && counts(f) && !isPassThrough(f) && top[len(top)-1] != f {
+		if left > 0 && counts(f) && !handsOn(f) && top[len(top)-1] != f {
 			top, counted = append(top, f), true
 			left--
 		}
