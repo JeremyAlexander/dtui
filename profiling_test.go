@@ -1518,10 +1518,11 @@ func TestProfilingRunsInFlightDoNotEvictAResult(t *testing.T) {
 	if got := cachedRuns(runs); got != profileCacheSize {
 		t.Fatalf("%d analyses kept once all had finished, want %d", got, profileCacheSize)
 	}
-	// The one dropped is the oldest: the latest result is still there.
+	// An analysis counts as read when it arrives: the four that arrived
+	// last are the four kept, and the one read before them is dropped.
 	read(profileCacheSize)
-	if got := p.asked(); got != profileCacheSize+1 {
-		t.Errorf("the latest of %d finished analyses was dropped, not the oldest", profileCacheSize+1)
+	if got := p.asked(); got != profileCacheSize+2 {
+		t.Errorf("%d analyses, want %d: the result read before the other four arrived is the one to drop", got, profileCacheSize+2)
 	}
 }
 
@@ -1548,4 +1549,30 @@ func TestProfilingOpenWindowSharesTheLastTwoHours(t *testing.T) {
 			t.Errorf("%s, then the last 2h: %d analyses, want %d", tc.name, got, tc.want)
 		}
 	}
+}
+
+// The analysis dropped to make room is the one read longest ago, not the one
+// started first: a result a view just read again stays.
+func TestProfilingEvictsTheAnalysisReadLongestAgo(t *testing.T) {
+	process := func(i int) *catalog.Entity {
+		return &catalog.Entity{ID: fmt.Sprintf("PROCESS-00000000000000%02d", i), Type: "PROCESS"}
+	}
+	p := &recordingProfiler{}
+	hotspots, _ := sourcesAt(p)
+	read := func(i, want int, what string) {
+		t.Helper()
+		if _, err := hotspots(context.Background(), catalog.Scope{Entity: process(i), Timeframe: timeframe(t, "2h")}, ""); err != nil {
+			t.Fatal(err)
+		}
+		if got := p.asked(); got != want {
+			t.Fatalf("%s: %d analyses so far, want %d", what, got, want)
+		}
+	}
+	for i := range profileCacheSize {
+		read(i, i+1, "a first read")
+	}
+	read(0, profileCacheSize, "the first analysis read again")
+	read(profileCacheSize, profileCacheSize+1, "a fifth process")
+	read(0, profileCacheSize+1, "the first analysis, read before the fifth arrived, must be kept")
+	read(1, profileCacheSize+2, "the second analysis, read longest ago, must be the one dropped")
 }

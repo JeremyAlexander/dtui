@@ -205,12 +205,14 @@ type profileRuns struct {
 
 	mu   sync.Mutex
 	runs map[string]*profileRun
-	seq  int
+	uses int
 }
 
 type profileRun struct {
-	key    string
-	seq    int
+	key string
+	// used orders the finished analyses by when each was last read, or
+	// arrived: the one with the lowest is dropped first.
+	used   int
 	window catalog.ProfileWindow
 	pinned bool // an absolute, closed window: its analysis never goes stale
 
@@ -261,6 +263,8 @@ func (r *profileRuns) get(ctx context.Context, key string, tf catalog.Timeframe,
 	}
 	if run == nil {
 		run = r.start(key, tf, fetch)
+	} else if run.finished() {
+		r.use(run)
 	}
 	run.waiters[ctx] = struct{}{}
 	r.mu.Unlock()
@@ -302,9 +306,8 @@ func (r *profileRuns) abandon(run *profileRun, left int) {
 func (r *profileRuns) start(key string, tf catalog.Timeframe,
 	fetch func(ctx context.Context, w catalog.ProfileWindow) (any, error),
 ) *profileRun {
-	r.seq++
 	run := &profileRun{
-		key: key, seq: r.seq,
+		key:     key,
 		window:  catalog.ProfileWindowOf(tf, r.now()),
 		pinned:  tf.Absolute() && !tf.To.IsZero(),
 		done:    make(chan struct{}),
@@ -327,6 +330,7 @@ func (r *profileRuns) start(key string, tf catalog.Timeframe,
 		result, err := fetch(runCtx, run.window)
 		r.mu.Lock()
 		run.result, run.err, run.at = result, err, r.now()
+		r.use(run)
 		close(run.done)
 		// A failure is not kept: the next call asks again. The calls
 		// waiting for this one hold the run and read it from there.
@@ -339,8 +343,14 @@ func (r *profileRuns) start(key string, tf catalog.Timeframe,
 	return run
 }
 
-// evict drops the oldest finished analyses beyond the cache size; the caller
-// holds r.mu. One still running neither counts nor is dropped: a result is
+// use marks run as the analysis read last; the caller holds r.mu.
+func (r *profileRuns) use(run *profileRun) {
+	r.uses++
+	run.used = r.uses
+}
+
+// evict drops the finished analyses read longest ago beyond the cache size;
+// the caller holds r.mu. One still running neither counts nor is dropped: a result is
 // megabytes only once it has arrived, and counting the runs in flight would
 // drop the one result there is while four others run.
 func (r *profileRuns) evict() {
@@ -352,7 +362,7 @@ func (r *profileRuns) evict() {
 				continue
 			}
 			finished++
-			if oldest == nil || run.seq < oldest.seq {
+			if oldest == nil || run.used < oldest.used {
 				oldest = run
 			}
 		}
