@@ -61,7 +61,13 @@ nothing about the format.
   modules for a file with a path entry), so it runs once per launch and once
   per context switch, never per query, and not on the UI goroutine: the shell
   paints first, and a view the scope can narrow sends its first query when the
-  scope is known, so no unscoped rows are shown first. The browser build
+  scope is known, so no unscoped rows are shown first. Until then such a view
+  shows its loading state. That differs from the segments of `.dtui.yaml`,
+  whose first queries go out unsegmented and are superseded. An edit of the
+  scope file takes effect at the next launch or context switch. The wait, and
+  the segment check where the entry has segments, come before the first rows,
+  which [vision.md](../design/vision.md) budgets at about 2 s; the
+  implementing pull request measures them against it. The browser build
   (`cmd/web`) has no file system and passes no scope. dtui does not
   re-implement the lookup, the renderer or the insertion.
 - **The entry's filter narrows the logs and spans lists.** The rewrite is
@@ -131,9 +137,11 @@ nothing about the format.
   all and the header says why, since dropping some segments would change the
   rows unseen. They belong to the scope, not to the selection: `alt+s` pauses
   the user's segments only, the picker shows the entry's as locked rows, and
-  the switch for the scope switches them with the filter. Before a scoped
-  query is sent dtui checks, once per context, that the environment returns
-  each of the entry's segments to this user. If one is missing or not
+  the switch for the scope switches them with the filter. While `alt+s` pauses the user's segments, a segment both name is sent as the
+  entry's, with the entry's variables, and with the user's again when the
+  pause ends. Before a scoped
+  query is sent dtui checks, once per context and not per view or per query,
+  that the environment returns each of the entry's segments to this user. If one is missing or not
   readable, the whole entry is not applied, filter included: half a scope
   shows rows that look scoped. If the check itself fails, the entry is not
   applied either, the header says the check failed, and a refresh tries again.
@@ -276,7 +284,8 @@ header. A view that carries neither shows no scope.
   command of the first context released after the switch, asserting that the
   second executor receives nothing; an entry that holds only segments; an entry whose filter is refused while its
   segments are sent; one segment id named by the entry and by the user with
-  different variables; eleven segments in total; a missing segment and a
+  different variables, and the roster's dimensions after `alt+s` paused the
+  user's; eleven segments in total; a missing segment and a
   failed check; `:traces` without `--lens` under an applied filter; a pinned
   `:logs` page; the analyzer input of the pattern analysis for an entry that
   holds only segments and for a bound name with two spaces.
