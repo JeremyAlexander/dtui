@@ -121,7 +121,10 @@ func stackLines(stack string) []string {
 	if !strings.ContainsAny(stack, "\r\n") && (strings.Contains(stack, `\n `) || strings.Contains(stack, `\n\t`)) {
 		stack = stackEscapedBreaks.Replace(stack)
 	}
-	return strings.Split(stackLineBreaks.Replace(stack), "\n")
+	if strings.Contains(stack, "\r") {
+		stack = stackLineBreaks.Replace(stack)
+	}
+	return strings.Split(stack, "\n")
 }
 
 // framesOf reads every line that is a frame.
@@ -204,7 +207,7 @@ func sourceModule(path string) string {
 // collapseFrames drops a frame equal to the one before it, so a recursion
 // counts once however deep it went.
 func collapseFrames(frames []StackFrame) []StackFrame {
-	var out []StackFrame
+	out := make([]StackFrame, 0, len(frames))
 	for _, f := range frames {
 		if len(out) == 0 || out[len(out)-1] != f {
 			out = append(out, f)

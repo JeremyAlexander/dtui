@@ -11,13 +11,11 @@ import (
 // after it.
 
 var (
-	// A frame with or without "at" (OneAgent call stacks and some log
-	// formats leave it out). The source location in the parentheses is what
-	// tells a frame from prose and from a .NET frame, whose parentheses
-	// hold parameters.
-	javaFrameRe = regexp.MustCompile(
-		`^(?:at )?([\w$.<>/@-]+\.[\w$<>]+) ?\((?:[\w$-]+\.\w+(?::\d+)?|Native Method|Unknown Source|<generated>)\)`)
-	javaMoreRe = regexp.MustCompile(`^\.\.\. (\d+) (?:more|common frames omitted)`)
+	// The source location in a frame's parentheses. It is what tells a
+	// frame from prose and from a .NET frame, whose parentheses hold
+	// parameters.
+	javaLocationRe = regexp.MustCompile(`^(?:[\w$-]+\.\w+(?::\d+)?|Native Method|Unknown Source|<generated>)\)`)
+	javaMoreRe     = regexp.MustCompile(`^\.\.\. (\d+) (?:more|common frames omitted)`)
 	// The type a "Caused by:" line names, before its message.
 	javaCauseRe = regexp.MustCompile(`^Caused by: ([\w.$]+)`)
 
@@ -52,12 +50,38 @@ var javaVendorPrefixes = []string{
 // calls.
 var javaPassThrough = []string{"doFilter", "doFilterInternal", "intercept", "invoke", "proceed"}
 
+// javaFrameName returns the qualified method name of a frame line:
+// "pkg.Class.method" before a source location in parentheses, with or
+// without "at" in front (OneAgent call stacks and some log formats leave it
+// out) and a space between. It is read by hand because it is read for every
+// line of every trace.
+func javaFrameName(line string) (string, bool) {
+	line = strings.TrimPrefix(line, "at ")
+	paren := strings.IndexByte(line, '(')
+	if paren < 0 || !javaLocationRe.MatchString(line[paren+1:]) {
+		return "", false
+	}
+	name := strings.TrimSuffix(line[:paren], " ")
+	dot := strings.LastIndexByte(name, '.')
+	if dot <= 0 || dot == len(name)-1 {
+		return "", false
+	}
+	for i := 0; i < len(name); i++ {
+		switch c := name[i]; {
+		case isWordByte(c), c == '$', c == '<', c == '>':
+		case i <= dot && (c == '.' || c == '/' || c == '@' || c == '-'):
+		default:
+			return "", false
+		}
+	}
+	return name, true
+}
+
 func javaFrame(line string) (StackFrame, bool) {
-	m := javaFrameRe.FindStringSubmatch(line)
-	if m == nil {
+	name, ok := javaFrameName(line)
+	if !ok {
 		return StackFrame{}, false
 	}
-	name := m[1]
 	// A lambda's synthetic class ("Cart$$Lambda$14/0x0800.accept") is
 	// plumbing between two real frames.
 	if strings.Contains(name, "$$Lambda") {
@@ -67,14 +91,22 @@ func javaFrame(line string) (StackFrame, bool) {
 	name = name[strings.LastIndexByte(name, '/')+1:]
 	dot := strings.LastIndexByte(name, '.')
 	module, function := name[:dot], name[dot+1:]
-	function = javaLambdaRe.ReplaceAllString(function, "$1")
-	function = javaScalaMethodRe.ReplaceAllString(function, "$1")
-	if m := javaScalaClassRe.FindStringSubmatch(module); m != nil {
-		module, function = m[1], m[2]
+	// Few names are generated ones; the expressions run only on a name
+	// that holds what each of them needs.
+	if strings.Contains(name, "$") {
+		function = javaLambdaRe.ReplaceAllString(function, "$1")
+		function = javaScalaMethodRe.ReplaceAllString(function, "$1")
+		if m := javaScalaClassRe.FindStringSubmatch(module); m != nil {
+			module, function = m[1], m[2]
+		}
+		module = javaProxyRe.ReplaceAllString(module, FrameAuto)
 	}
-	module = javaProxyRe.ReplaceAllString(module, FrameAuto)
-	module = javaGeneratedRe.ReplaceAllString(module, FrameAuto)
-	module = javaProxyPkgRe.ReplaceAllString(module, "jdk.proxy.")
+	if strings.Contains(module, "Generated") || strings.Contains(module, "$Proxy") {
+		module = javaGeneratedRe.ReplaceAllString(module, FrameAuto)
+	}
+	if strings.HasPrefix(module, "jdk.proxy") {
+		module = javaProxyPkgRe.ReplaceAllString(module, "jdk.proxy.")
+	}
 	return StackFrame{Module: module, Function: function, Syntax: StackJava}, true
 }
 
@@ -121,8 +153,10 @@ func javaRootCause(lines []string) (root []StackFrame, typ string) {
 			}
 			sections = append(sections, cause)
 		default:
-			if m := javaMoreRe.FindStringSubmatch(line); m != nil {
-				cur.more, _ = strconv.Atoi(m[1])
+			if strings.HasPrefix(line, "...") {
+				if m := javaMoreRe.FindStringSubmatch(line); m != nil {
+					cur.more, _ = strconv.Atoi(m[1])
+				}
 			} else if f, ok := javaFrame(line); ok {
 				cur.frames = append(cur.frames, f)
 			}

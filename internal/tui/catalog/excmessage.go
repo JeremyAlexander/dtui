@@ -91,10 +91,15 @@ var (
 			`|(?:(?:^|[\s=:(\[,;])-)?\b\d+(?:\.\d+)?[A-Za-z]{0,7}\b`)
 )
 
-// messageRule is one replacement step of the parameteriser.
+// messageRule is one replacement step of the parameteriser. applies is a
+// cheap test on the bytes the rule cannot do without: most messages hold
+// nothing for most rules, and a pass after the one that replaced everything
+// holds nothing for any, so the regular expressions are only run where they
+// can match.
 type messageRule struct {
-	name  string
-	apply func(string) string
+	name    string
+	applies func(string) bool
+	apply   func(string) string
 }
 
 // messageRules run in this order, and the order is part of the result:
@@ -105,14 +110,16 @@ type messageRule struct {
 // paths before the ids in their segments. A digit run is a number however
 // long it is, so hex needs a letter. Changing the order changes fingerprints.
 var messageRules = []messageRule{
-	{"quoted", func(s string) string {
+	{"quoted", func(s string) bool { return strings.ContainsAny(s, "\"'`") }, func(s string) string {
 		s = msgDoubleQuotedRe.ReplaceAllString(s, msgQuoted)
 		s = msgSingleQuotedRe.ReplaceAllString(s, msgQuoted)
 		return msgBackQuotedRe.ReplaceAllString(s, msgQuoted)
 	}},
-	{"url", func(s string) string { return msgURLRe.ReplaceAllString(s, msgURL) }},
-	{"uuid", func(s string) string { return msgUUIDRe.ReplaceAllString(s, msgUUID) }},
-	{"ip", func(s string) string {
+	{"url", func(s string) bool { return strings.Contains(s, "://") },
+		func(s string) string { return msgURLRe.ReplaceAllString(s, msgURL) }},
+	{"uuid", func(s string) bool { return strings.Count(s, "-") >= 4 },
+		func(s string) string { return msgUUIDRe.ReplaceAllString(s, msgUUID) }},
+	{"ip", func(s string) bool { return strings.Count(s, ".") >= 3 || strings.Count(s, ":") >= 2 }, func(s string) string {
 		s = msgIPv6BracketRe.ReplaceAllStringFunc(s, func(m string) string {
 			if isIPv6(msgIPv6BracketRe.FindStringSubmatch(m)[1]) {
 				return msgIP
@@ -122,12 +129,13 @@ var messageRules = []messageRule{
 		// IPv6 before IPv4, so an IPv4-mapped address is taken whole.
 		return msgIPv4Re.ReplaceAllString(replaceBareIPv6(s), msgIP)
 	}},
-	{"date", func(s string) string { return msgDateRe.ReplaceAllString(s, msgDate) }},
-	{"path", func(s string) string {
+	{"date", func(s string) bool { return hasDigit(s) && strings.ContainsAny(s, "-:") },
+		func(s string) string { return msgDateRe.ReplaceAllString(s, msgDate) }},
+	{"path", func(s string) bool { return strings.ContainsAny(s, `/\`) }, func(s string) string {
 		s = msgUnixPathRe.ReplaceAllStringFunc(s, replaceFilePath)
 		return msgWinPathRe.ReplaceAllString(s, msgPath)
 	}},
-	{"hex", func(s string) string {
+	{"hex", hasDigit, func(s string) string {
 		s = msgHexLitRe.ReplaceAllString(s, msgHex)
 		s = msgHexAtRe.ReplaceAllStringFunc(s, func(m string) string {
 			if hasDigit(m) {
@@ -144,8 +152,9 @@ var messageRules = []messageRule{
 			return m
 		})
 	}},
-	{"id", func(s string) string { return msgPrefixedIDRe.ReplaceAllString(s, "${1}"+msgID) }},
-	{"number", func(s string) string { return msgNumberRe.ReplaceAllStringFunc(s, replaceNumber) }},
+	{"id", func(s string) bool { return hasDigit(s) && strings.Contains(s, "_") },
+		func(s string) string { return msgPrefixedIDRe.ReplaceAllString(s, "${1}"+msgID) }},
+	{"number", hasDigit, func(s string) string { return msgNumberRe.ReplaceAllStringFunc(s, replaceNumber) }},
 }
 
 // replaceFilePath decides what a path match becomes. A path that names a
@@ -182,15 +191,15 @@ func replaceNumber(m string) string {
 
 // ParameterizeMessage replaces the variable parts of an exception message
 // with placeholders (<q>, <url>, <uuid>, <ip>, <date>, <path>, <hex>, <id>,
-// <n>),
-// collapses whitespace and bounds the result to ExceptionMessageMax bytes.
-// It is idempotent: parameterising its own output changes nothing.
+// <n>), collapses whitespace and bounds the result to ExceptionMessageMax
+// bytes. It is idempotent: parameterising its own output changes nothing.
 func ParameterizeMessage(msg string) string {
 	s := cutBytes(strings.ToValidUTF8(msg, ""), exceptionMessageInput)
 	// A replacement or the cut can expose a new match (a quote pair around a
 	// placeholder, a number at the new end), so run to a fixed point. Every
 	// changing pass removes literal text, which bounds the passes; the cap
-	// only guards that argument.
+	// only guards that argument. The pass that confirms the fixed point
+	// finds little left for the rules to apply to.
 	for range exceptionMessageInput {
 		next := parameterizeOnce(s)
 		if next == s {
@@ -203,11 +212,30 @@ func ParameterizeMessage(msg string) string {
 
 // parameterizeOnce is one pass: whitespace, every rule in order, the cut.
 func parameterizeOnce(s string) string {
-	s = strings.Join(strings.Fields(s), " ")
+	s = collapseSpaces(s)
 	for _, rule := range messageRules {
-		s = rule.apply(s)
+		if rule.applies(s) {
+			s = rule.apply(s)
+		}
 	}
 	return strings.TrimRight(cutMessage(s), " ")
+}
+
+// collapseSpaces trims s and turns every run of whitespace into one space.
+// Text already in that form, which the second pass always is, is returned as
+// it is.
+func collapseSpaces(s string) string {
+	last := byte(' ')
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		// Anything that may be whitespace other than a single space inside
+		// the text; a byte beyond ASCII may start one (U+00A0).
+		if c >= utf8.RuneSelf || c < ' ' || c == ' ' && last == ' ' {
+			return strings.Join(strings.Fields(s), " ")
+		}
+		last = c
+	}
+	return strings.TrimRight(s, " ")
 }
 
 // cutMessage bounds s to ExceptionMessageMax bytes without leaving half a

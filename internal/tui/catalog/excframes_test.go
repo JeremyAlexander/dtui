@@ -2,6 +2,7 @@ package catalog
 
 import (
 	"reflect"
+	"regexp"
 	"sort"
 	"strings"
 	"testing"
@@ -785,5 +786,36 @@ func FuzzParseStackFrames(f *testing.F) {
 			}
 			builtinInApp(fr)
 		}
+		for _, line := range stackLines(in) {
+			checkJavaFrameName(t, strings.TrimSpace(line))
+		}
 	})
+}
+
+// javaFrameNameRe is what javaFrameName reads by hand.
+var javaFrameNameRe = regexp.MustCompile(
+	`^(?:at )?([\w$.<>/@-]+\.[\w$<>]+) ?\((?:[\w$-]+\.\w+(?::\d+)?|Native Method|Unknown Source|<generated>)\)`)
+
+func checkJavaFrameName(t *testing.T, line string) {
+	t.Helper()
+	want := ""
+	if m := javaFrameNameRe.FindStringSubmatch(line); m != nil {
+		want = m[1]
+	}
+	if got, ok := javaFrameName(line); got != want || ok != (want != "") {
+		t.Fatalf("javaFrameName(%q) = %q, %v; the expression reads %q", line, got, ok, want)
+	}
+}
+
+func TestJavaFrameNameReadsWhatItsExpressionDoes(t *testing.T) {
+	for _, line := range []string{
+		"", "(", "a.b(", "at a.b(C.java:1)", "a.b(C.java:1)", "a.b (C.java)", "a.b  (C.java:1)", "at at a.b(C.java:1)",
+		"at a.b(Native Method)", "at a.b(Unknown Source) ~[x.jar:1]", "at a.b(<generated>)x", "at .b(C.java:1)",
+		"at a.(C.java:1)", "at b(C.java:1)", "at a..b(C.java:1)", "at java.base/a.B.<init>(B.java:1)",
+		"at app//a.B$1.c-d(B.java:1)", "at a.b/c(B.java:1)", "at a@1.b(B.java:1)", "at a.b@1(B.java:1)",
+		"at a.é(B.java:1)", "at a.b(String s)", "at a.b(B.java:x)", "at a.b((B.java:1)", "at a.b(B.java:1", "ata.b(C.java:1)",
+		"at a.b(C.kt:12)(D.java:1)", "at  a.b(C.java:1)", "at a.b(C-1.java:1)",
+	} {
+		checkJavaFrameName(t, line)
+	}
 }

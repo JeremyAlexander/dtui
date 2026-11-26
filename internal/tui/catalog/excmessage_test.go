@@ -226,6 +226,17 @@ func TestParameterizeMessageRulesMergeAndSplit(t *testing.T) {
 	}
 }
 
+func TestCollapseSpaces(t *testing.T) {
+	for in, want := range map[string]string{
+		"": "", " ": "", "a": "a", "a b": "a b", " a b": "a b", "a b ": "a b", "a  b": "a b",
+		"a\tb": "a b", "a\nb": "a b", "a\u00a0b": "a b", "a\u2003b": "a b", "é à": "é à", "a\x00b": "a\x00b",
+	} {
+		if got := collapseSpaces(in); got != want {
+			t.Errorf("collapseSpaces(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 func TestParameterizeMessageIsIdempotent(t *testing.T) {
 	inputs := []string{
 		`'<q>'`,
@@ -353,6 +364,15 @@ func FuzzParameterizeMessage(f *testing.F) {
 		}
 		if again := ParameterizeMessage(got); again != got {
 			t.Fatalf("not idempotent for %q:\n  once  %q\n  twice %q", in, got, again)
+		}
+		// A rule is only skipped where it would have changed nothing.
+		for _, rule := range messageRules {
+			if !rule.applies(in) && rule.apply(in) != in {
+				t.Fatalf("rule %s is skipped for %q but changes it to %q", rule.name, in, rule.apply(in))
+			}
+		}
+		if want := strings.Join(strings.Fields(in), " "); collapseSpaces(in) != want {
+			t.Fatalf("collapseSpaces(%q) = %q, want %q", in, collapseSpaces(in), want)
 		}
 	})
 }
