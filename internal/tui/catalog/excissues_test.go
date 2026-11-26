@@ -226,6 +226,11 @@ func TestGroupExceptionIssuesCountsEverySpan(t *testing.T) {
 	if last.Key != "" || last.Count != 2 || last.Rung != "" {
 		t.Errorf("spans whose events say nothing = %+v, want one keyless row of 2", last)
 	}
+	// The span that names no service adds none: the keyless row ran in "a"
+	// alone, not in "a" and one more.
+	if len(last.Services) != 1 || last.Services[0] != "a" {
+		t.Errorf("services of the keyless row = %q, want only a", last.Services)
+	}
 }
 
 func TestGroupExceptionIssuesEmpty(t *testing.T) {

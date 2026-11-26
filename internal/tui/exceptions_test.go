@@ -169,6 +169,9 @@ func TestSampleLine(t *testing.T) {
 		// arrived are then not the newest of the timeframe.
 		{"scan limit on a full sample", manySpans(catalog.ExceptionSampleRows), scanLimit,
 			"scan limit hit: 1000 exception spans of what was scanned; narrow the timeframe (t) · last 2h", true},
+		// Spans without a readable start time: the line claims no reach.
+		{"size limit, no times", []map[string]any{{"span.id": "a"}, {"span.id": "b", "start_time": "soon"}}, sizeLimit,
+			"size limit hit: newest 2 exception spans; older ones are not counted · last 2h", true},
 		{"info is not a cut", issueSpans(), []exec.QueryNotification{{Severity: "INFO", NotificationType: "SCAN_LIMIT_GBYTES"}},
 			"all 3 exception spans · last 2h", false},
 	} {
