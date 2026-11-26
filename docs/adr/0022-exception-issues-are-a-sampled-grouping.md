@@ -38,9 +38,11 @@ rest how the view uses it.
   the specification; this record names the rules and does not replace them.
   One vector for another implementation: an event with the type `é` and
   nothing else hashes the bytes `1:42:é` to `e1:c7bd5892e50a`.
-- **One event per span is keyed.** Of a span's exception events that say
-  anything (a type, a message or a stack), take the last one flagged
-  `exception.is_caused_by_root`, else the last one. Where that event's stack
+- **One event per span is keyed.** Of a span's exception events that give a
+  type, a message or a frame a reader can use, take the last one flagged
+  `exception.is_caused_by_root`, else the last one. Stack text no reader can
+  use does not make an event count, and neither does a Go stack that is not a
+  panic's. A span with no such event has no key. Where that event's stack
   text holds a whole chain (`Caused by:` in Java, an inner exception in .NET,
   an earlier traceback in Python), the frames are the root cause's, read from
   the text, and so is the type where the text names one. A cause whose type
@@ -67,7 +69,8 @@ rest how the view uses it.
   coarse.
 - **A Go stack that is not a panic's is not used.** It was taken where the
   error was recorded, not where it arose, and every error that passes there
-  has the same. Such an event is keyed on its message.
+  has the same. Such an event is keyed as if it had no stack: on its message,
+  else on its type alone.
 - **The throw site is always in a frame key, and pass-through frames do not
   count among the application's.** Filter chains, middleware continuations,
   interceptors and decorator wrappers are shared by every error that passes
@@ -119,9 +122,9 @@ rest how the view uses it.
 - **A group row is small, and the counts add up.** A row keeps its key, its
   rung, its count, its times, its services and the display fields of its
   newest member, not the member spans or their stack text. The view builds no
-  list of a group's occurrences. A span whose exception events recorded
-  nothing has no key; such spans are counted in one keyless last row, so the
-  counts add up to the number the sample line gives.
+  list of a group's occurrences. A span that has no key (see "One event per
+  span is keyed") is counted in one keyless last row, so the counts add up to
+  the number the sample line gives.
 - **A sample line says what the rows were computed from.** It is built from
   the same response as the rows. When nothing cut the sample it reads
   `all 3 exception spans · last 2h`. When something did, the reason leads and
