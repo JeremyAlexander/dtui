@@ -30,12 +30,21 @@ deps="$here/.deps"
 out="$here/ui"
 mkdir -p "$out"
 
-gover="$(cd "$repo" && go list -m -f '{{.GoVersion}}' 2>/dev/null || echo 1.26)"
+# GOWORK=off here and in copy_mod: under an inherited GOWORK that names the
+# workspace written below, a module resolves to its copy in wasm/.deps.
+gover="$(cd "$repo" && GOWORK=off go list -m -f '{{.GoVersion}}' 2>/dev/null || echo 1.26)"
 
 # copy_mod <module-path> <dest-name>
 copy_mod() {
   local mod="$1" dest="$deps/$2" src
-  src="$(cd "$repo" && go list -m -f '{{.Dir}}' "$mod")"
+  # A module the cache knows only by its go.mod has an empty Dir, which would
+  # turn the copy below into a copy of the filesystem root. Extract it first.
+  (cd "$repo" && GOWORK=off go mod download "$mod")
+  src="$(cd "$repo" && GOWORK=off go list -m -f '{{.Dir}}' "$mod")"
+  if [ -z "$src" ] || [ ! -f "$src/go.mod" ]; then
+    echo "error: no source for $mod in the module cache (go list reports '$src')" >&2
+    exit 1
+  fi
   rm -rf "$dest"
   mkdir -p "$dest"
   cp -R "$src/." "$dest/"
