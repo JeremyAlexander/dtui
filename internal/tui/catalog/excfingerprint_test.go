@@ -809,8 +809,8 @@ func TestExceptionKeysAreStable(t *testing.T) {
 		want, ok := pinned[c.Name]
 		switch {
 		case ok && want != key:
-			t.Errorf("%s: key %s, pinned %s — the %s algorithm changed; "+exceptionKeyRepin,
-				c.Name, key, want, ExceptionKeyVersion, "keys")
+			t.Errorf("%s: key %s, pinned %s — the %s algorithm changed; %s",
+				c.Name, key, want, ExceptionKeyVersion, exceptionKeyRepin("keys"))
 		case !ok && !*updateExceptionKeys:
 			t.Errorf("%s: no pinned key; run with -update to add %s", c.Name, key)
 		}

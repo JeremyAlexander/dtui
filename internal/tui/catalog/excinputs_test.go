@@ -23,10 +23,14 @@ var exceptionKeySources = []string{
 	"excframes_javascript.go", "excframes_python.go", "excmessage.go",
 }
 
-// exceptionKeyRepin is what to do about a pinned value that changed.
-const exceptionKeyRepin = "raise ExceptionKeyVersion, which starts a new golden file. " +
-	"Only while no release has shipped %[1]s keys: delete the line from testdata/exceptions/%[1]s-%[2]s.golden " +
-	"and run go test -run TestExceptionKey -update"
+// exceptionKeyRepin says what to do about a pinned value that changed, for
+// the golden file of the given kind ("keys" or "inputs").
+func exceptionKeyRepin(kind string) string {
+	return "raise ExceptionKeyVersion, which starts a new golden file. Only while no release has shipped " +
+		ExceptionKeyVersion + " keys: delete the line from " +
+		filepath.Join(exceptionCorpusDir, ExceptionKeyVersion+"-"+kind+".golden") +
+		" and run go test -run TestExceptionKey -update"
+}
 
 // readExceptionGolden reads a golden file of "value<TAB>name" lines into a
 // map by name. A missing file is an error unless -update is creating it.
@@ -104,8 +108,8 @@ func TestExceptionKeyInputsArePinned(t *testing.T) {
 		want, ok := pinned[in.name]
 		switch {
 		case ok && want != in.digest:
-			t.Errorf("%s changed — it is part of the %s key algorithm; "+exceptionKeyRepin,
-				in.name, ExceptionKeyVersion, "inputs")
+			t.Errorf("%s changed — it is part of the %s key algorithm; %s",
+				in.name, ExceptionKeyVersion, exceptionKeyRepin("inputs"))
 		case !ok && !*updateExceptionKeys:
 			t.Errorf("%s is not pinned; if no %s key depends on it yet, run with -update to add it", in.name, ExceptionKeyVersion)
 		}
@@ -113,8 +117,8 @@ func TestExceptionKeyInputsArePinned(t *testing.T) {
 		lines = append(lines, in.digest+"\t"+in.name)
 	}
 	for name := range pinned {
-		t.Errorf("%s is pinned but no longer declared — it was part of the %s key algorithm; "+exceptionKeyRepin,
-			name, ExceptionKeyVersion, "inputs")
+		t.Errorf("%s is pinned but no longer declared — it was part of the %s key algorithm; %s",
+			name, ExceptionKeyVersion, exceptionKeyRepin("inputs"))
 	}
 	if *updateExceptionKeys && !t.Failed() {
 		if err := os.WriteFile(golden, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
