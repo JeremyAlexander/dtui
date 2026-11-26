@@ -46,7 +46,7 @@ func safeRune(r rune) rune {
 // (Flatten).
 func OneLine(s string) string { return Flatten(SafeText(s)) }
 
-// Flatten collapses line breaks and tabs to single spaces — a multi-line
+// Flatten collapses line breaks and tabs to single spaces: a multi-line
 // value (SQL statements, log content) must not shear a row apart.
 func Flatten(s string) string {
 	if !strings.ContainsAny(s, "\n\r\t") {

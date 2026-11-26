@@ -149,6 +149,26 @@ func TestCatalogIsFrameworkFree(t *testing.T) {
 	}
 }
 
+// TestFlameIsFrameworkFree pins the flame graph's model as rules without a
+// screen (ADR-0021): no terminal framework, and of this module only the
+// catalog, whose text helpers it shares with the tables. What the graph
+// shows for a tree, a size and a key is then tested as plain values.
+func TestFlameIsFrameworkFree(t *testing.T) {
+	seen := 0
+	for file, imports := range importsByFile(t, "internal/tui/flame") {
+		seen++
+		for _, imp := range imports {
+			if strings.HasPrefix(imp, "github.com/charmbracelet/") ||
+				(strings.HasPrefix(imp, modulePath+"/") && imp != modulePath+"/internal/tui/catalog") {
+				t.Errorf("%s imports %s: the flame model draws nothing; rendering and keys live in internal/tui", file, imp)
+			}
+		}
+	}
+	if seen == 0 {
+		t.Error("no file under internal/tui/flame: the guard checks nothing")
+	}
+}
+
 // TestWorkspaceHasNoTenantAccess pins the workspace file as display defaults
 // only (ADR-0005): it cannot reach a tenant, so it cannot carry credentials or
 // actions.
