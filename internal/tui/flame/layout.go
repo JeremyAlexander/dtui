@@ -52,14 +52,7 @@ func (t *Tree) Layout(lens int, zoom NodeID, width int) *Layout {
 		l.Rows[t.Level(n)] = []Cell{{Node: n, W: width}}
 	}
 
-	// cellOf is the cell a weight offset from the zoomed frame's left edge
-	// falls into: offset × width ÷ whole, rounded down, in 128 bits so that
-	// no weight overflows it.
-	cellOf := func(offset int64) int {
-		hi, lo := bits.Mul64(uint64(min(offset, whole)), uint64(width))
-		cell, _ := bits.Div64(hi, lo, uint64(whole))
-		return int(cell)
-	}
+	cellOf := func(offset int64) int { return cellAt(offset, whole, width) }
 	type span struct {
 		node  NodeID
 		start int64 // weight offset of the frame's left edge
@@ -88,8 +81,10 @@ func (t *Tree) Layout(lens int, zoom NodeID, width int) *Layout {
 			if w < 1 {
 				continue
 			}
+			// Totals are sums, so a callee ends where its caller does or
+			// before, and so do the cells.
 			end := satAdd(start, w)
-			x0, x1 := cellOf(start), min(cellOf(end), parent.x1)
+			x0, x1 := cellOf(start), cellOf(end)
 			if x1 > x0 {
 				marker = Cell{W: 1}
 				put(level, Cell{Node: c, X: x0, W: x1 - x0})
@@ -113,6 +108,16 @@ func (t *Tree) Layout(lens int, zoom NodeID, width int) *Layout {
 		}
 	}
 	return l
+}
+
+// cellAt is the cell a weight offset from the left edge falls into when
+// whole weighs width cells: offset × width ÷ whole, rounded down, in 128 bits
+// so that no weight overflows it. An offset beyond the whole is the right
+// edge. whole and width are at least one.
+func cellAt(offset, whole int64, width int) int {
+	hi, lo := bits.Mul64(uint64(min(max(offset, 0), whole)), uint64(width))
+	cell, _ := bits.Div64(hi, lo, uint64(whole))
+	return int(cell)
 }
 
 // Find is the cell a frame is drawn in; false for a frame too narrow to

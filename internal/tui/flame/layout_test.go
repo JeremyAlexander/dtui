@@ -141,6 +141,36 @@ func TestLayoutMarker(t *testing.T) {
 	}
 }
 
+// A callee without weight in the lens is no part of a marker.
+func TestLayoutMarkerCountsWhatIsThere(t *testing.T) {
+	tree := build(t, 2, "m;a 55,55", "m;b 2,2", "m;c 1,0", "m;d 1,1", "m 41,42")
+	if got, want := tree.Layout(0, Root, 10).Rows[2][1], (Cell{Node: find(t, tree, "m", "b"), X: 5, W: 1, Hidden: 3, Weight: 4}); got != want {
+		t.Errorf("first lens: marker %+v, want %+v", got, want)
+	}
+	if got, want := tree.Layout(1, Root, 10).Rows[2][1], (Cell{Node: find(t, tree, "m", "b"), X: 5, W: 1, Hidden: 2, Weight: 3}); got != want {
+		t.Errorf("second lens: marker %+v, want %+v", got, want)
+	}
+}
+
+func TestCellAt(t *testing.T) {
+	for _, tc := range []struct {
+		offset, whole int64
+		width, want   int
+	}{
+		{0, 10, 5, 0}, {1, 10, 5, 0}, {2, 10, 5, 1}, {9, 10, 5, 4}, {10, 10, 5, 5},
+		{11, 10, 5, 5},            // beyond the whole: the right edge
+		{-3, 10, 5, 0},            // before it: the left edge
+		{math.MaxInt64, 10, 5, 5}, // far beyond
+		{math.MaxInt64 - 1, math.MaxInt64, 400, 399}, // no overflow on the way
+		{math.MaxInt64, math.MaxInt64, 400, 400},
+		{1, 1, 1, 1},
+	} {
+		if got := cellAt(tc.offset, tc.whole, tc.width); got != tc.want {
+			t.Errorf("cellAt(%d, %d, %d) = %d, want %d", tc.offset, tc.whole, tc.width, got, tc.want)
+		}
+	}
+}
+
 func TestLayoutFind(t *testing.T) {
 	tree := build(t, 1, "m;a 55", "m;b 2", "m;c 3", "m 40", "n;deep 1", " 3")
 	l := tree.Layout(0, Root, 10)

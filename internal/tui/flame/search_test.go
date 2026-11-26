@@ -56,6 +56,7 @@ func TestSearch(t *testing.T) {
 			"down down same next", "++++", "sel=other;a zoom=all top=0", "^a$", MatchShare{All: 13, Zoom: 13},
 		},
 		{"same on the root does nothing", "same", "-", "sel=all zoom=all top=0", "", MatchShare{}},
+		{"same on the root keeps the search there is", "search:x same", "+-", "sel=all zoom=all top=0", "x", MatchShare{All: 4, Zoom: 4}},
 		{"clear forgets the search", "search:a clear clear next", "++--", "sel=all zoom=all top=0", "", MatchShare{}},
 		{
 			"the root is not a function and is never matched",
@@ -102,6 +103,24 @@ func TestSearch(t *testing.T) {
 				t.Errorf("share %+v, want %+v", got, tc.share)
 			}
 		})
+	}
+}
+
+// The share is of the search as it is now: another pattern, another share.
+func TestSearchShareFollowsTheSearch(t *testing.T) {
+	g := New(build(t, 2, walkLines...))
+	g.Resize(20, 10)
+	want := []MatchShare{{All: 4, Zoom: 4}, {All: 6, Zoom: 6}, {}, {All: 13, Zoom: 13}}
+	for i, pattern := range []string{"^x$", "^b$", "nothing", "^a$"} {
+		if err := g.Search(pattern); err != nil {
+			t.Fatal(err)
+		}
+		if got := g.Share(); got != want[i] {
+			t.Errorf("after searching %s: share %+v, want %+v", pattern, got, want[i])
+		}
+	}
+	if g.ClearSearch(); g.Share() != (MatchShare{}) {
+		t.Errorf("without a search: share %+v", g.Share())
 	}
 }
 

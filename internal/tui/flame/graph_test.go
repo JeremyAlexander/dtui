@@ -196,6 +196,27 @@ func TestGraphScrollsToAMarkerOnlyLevel(t *testing.T) {
 	}
 }
 
+// A marker is not a place to stand: moving along a level passes over it.
+func TestGraphMovesPastMarkers(t *testing.T) {
+	// Level 2 at 20 cells: a, the marker for b and c, then other's callee z.
+	tree := build(t, 1, "m;a 55", "m;b 2", "m;c 2", "m 41", "other;z 100")
+	g := New(tree)
+	g.Resize(20, 10)
+	if row := g.Layout().Rows[2]; len(row) != 3 || row[1].Hidden != 2 {
+		t.Fatalf("the fixture has no marker between two frames: %+v", row)
+	}
+	if got := run(t, g, "down down right"); got != "+++" || g.Selected() != find(t, tree, "other", "z") {
+		t.Errorf("right from a: answers %s, on %v, want other;z", got, tree.Path(g.Selected()))
+	}
+	if got := run(t, g, "left left"); got != "+-" || g.Selected() != find(t, tree, "m", "a") {
+		t.Errorf("left from other;z: answers %s, on %v, want m;a", got, tree.Path(g.Selected()))
+	}
+	// Nor does a search step onto one, though its first frame matches.
+	if got := run(t, g, "search:^b$ next prev"); got != "+--" || g.Selected() != find(t, tree, "m", "a") {
+		t.Errorf("stepping to a match that is only a marker: answers %s, on %v", got, tree.Path(g.Selected()))
+	}
+}
+
 func TestGraphInfo(t *testing.T) {
 	tree := build(t, 2, "m;a 55,1", "m;b 2,0", "m;c 2,0", "m 41,0", "n 100,9")
 	g := New(tree)
