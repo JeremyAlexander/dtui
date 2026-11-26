@@ -137,8 +137,17 @@ func TestSearchMarks(t *testing.T) {
 	if !g.SearchLabel("all") || !g.Matches(all) || g.Matches(Root) || g.Pattern() != "^all$" {
 		t.Errorf("searching the label of a function called like the root: pattern %q", g.Pattern())
 	}
-	if !g.SearchLabel("a") || g.Pattern() != "^a$" {
-		t.Errorf("searching a label: pattern %q", g.Pattern())
+	if !g.SearchLabel("a") || g.Pattern() != "^a$" || g.SearchedFunction() != "a" {
+		t.Errorf("searching a label: pattern %q, function %q", g.Pattern(), g.SearchedFunction())
+	}
+	if err := g.Search("^a$"); err != nil || g.SearchedFunction() != "" {
+		t.Errorf("a search by pattern is for the function %q (%v)", g.SearchedFunction(), err)
+	}
+	if run(t, g, "same"); g.SearchedFunction() != "a" {
+		t.Errorf("searching the selected frame is for the function %q", g.SearchedFunction())
+	}
+	if g.ClearSearch(); g.SearchedFunction() != "" {
+		t.Errorf("no search is for the function %q", g.SearchedFunction())
 	}
 	if g.SearchLabel("a.") || g.Searching() {
 		t.Errorf("a label that is not in the tree was found (pattern %q)", g.Pattern())

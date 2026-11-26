@@ -297,6 +297,16 @@ func TestFlameGraphSearchLine(t *testing.T) {
 		t.Error("an empty search line did not clear the search")
 	}
 
+	// A search that matches nothing in the thread state drawn says so.
+	press(a, key("/"))
+	typeText("^b$")
+	press(a, key("enter"))
+	press(a, key("]"))
+	if out := screen(a); !strings.Contains(out, "⌕ ^b$  no lock samples") {
+		t.Errorf("a search without samples in this thread state:\n%s", out)
+	}
+	press(a, key("["))
+
 	// Zoomed, the share of the zoomed frame is said too.
 	for _, k := range []string{"down", "enter", "/"} {
 		press(a, flameKey(k))
@@ -321,6 +331,15 @@ func TestFlameGraphTakesWhatTheTableHandsOver(t *testing.T) {
 	if fv.graph.Selected() != flame.Root {
 		t.Error("the hand-over moved the cursor")
 	}
+	// A function searched for is named, not spelled as its pattern.
+	if out := screen(a); !strings.Contains(out, "⌕ "+first+"  5 samples · 50.0% of all") {
+		t.Errorf("the search line does not name the function and its share:\n%s", out)
+	}
+	a.Update(tea.WindowSizeMsg{Width: 60, Height: 24})
+	if out := screen(a); !strings.Contains(out, "⌕ UTF8JsonGenerator.writeString  5 samples · 50.0% of all") {
+		t.Errorf("a narrow search line does not shorten the function and keep the numbers:\n%s", out)
+	}
+	a.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
 
 	// Nothing new from the table: the graph keeps its own search and state.
 	press(a, key("esc"))

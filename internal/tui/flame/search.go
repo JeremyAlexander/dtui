@@ -8,7 +8,9 @@ import (
 // however many frames carry it.
 type search struct {
 	pattern string
-	labels  []bool // by label id
+	// function is the label a search for one function was for.
+	function string
+	labels   []bool // by label id
 }
 
 // MatchShare is how much of the graph a search matches. A frame under a
@@ -55,6 +57,7 @@ func (g *Graph) SearchLabel(label string) bool {
 	for i, hit := range g.search.labels {
 		// The root's label names no function, whatever it is spelled like.
 		if hit && i != 0 {
+			g.search.function = label
 			return true
 		}
 	}
@@ -67,6 +70,15 @@ func (g *Graph) ClearSearch() bool {
 	had := g.search != nil
 	g.search, g.shareValid = nil, false
 	return had
+}
+
+// SearchedFunction is the function a search by label is for (SearchLabel,
+// SearchSelected); "" for a search by pattern and without a search.
+func (g *Graph) SearchedFunction() string {
+	if g.search == nil {
+		return ""
+	}
+	return g.search.function
 }
 
 // Pattern is the regular expression searched for; "" without a search.

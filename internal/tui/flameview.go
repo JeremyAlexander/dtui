@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/dynatrace-oss/dtui/internal/tui/catalog"
 	"github.com/dynatrace-oss/dtui/internal/tui/flame"
@@ -704,8 +705,8 @@ func (v *flameView) renderGraph(b *strings.Builder, width int) {
 	b.WriteString(pad(title, width) + "\n" + pad(numbers, width))
 }
 
-// matchLine says what is searched for and how much of the graph it matches,
-// counting each stack once.
+// matchLine says what is searched for, a pattern or a function, and how much
+// of the graph it matches, counting each stack once.
 func (v *flameView) matchLine() string {
 	g := v.graph
 	share, whole := g.Share(), g.Info(flame.Root)
@@ -714,9 +715,16 @@ func (v *flameView) matchLine() string {
 		text += fmt.Sprintf(" · %s of the zoomed frame", percent(share.Zoom, whole.Zoom))
 	}
 	if share.All == 0 {
-		text = "matches no frame"
+		text = "no " + catalog.HotspotState(v.scope) + " samples"
 	}
-	return theme.Hit.Render("⌕ "+oneLine(g.Pattern())) + theme.Dim.Render("  "+text)
+	// The numbers are what the line is for: what was searched for gets the
+	// room they leave, a function shortened like a frame's label.
+	room := max(v.width-lipgloss.Width(text)-6, 12)
+	what := ansi.Truncate(oneLine(g.Pattern()), room, "…")
+	if fn := g.SearchedFunction(); fn != "" {
+		what = catalog.ShortFrame(oneLine(fn), room)
+	}
+	return theme.Hit.Render("⌕ "+what) + theme.Dim.Render("  "+text)
 }
 
 // selectedLines are the two lines about the selected frame: its function
