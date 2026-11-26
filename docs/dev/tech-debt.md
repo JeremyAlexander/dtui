@@ -62,15 +62,6 @@ On the exceptions view the line above the table stays right, because its
 facts travel with its rows. Fix: let the view say whether it accepted the
 result and take the notice only then.
 
-## The command echo leaves a leading `=` bare
-
-`catalog.EchoCommand` quotes for a POSIX shell and counts `=` as a plain
-character. zsh, the default shell on macOS, rewrites a bare word that
-starts with `=` to the path of the command of that name, or fails when
-there is none, so a segment id or a record id spelled `=name` does not
-arrive as it was echoed. Fix: quote a word that starts with `=`, in the
-one copy of `echo.go` that remains once the echo quoting work merges.
-
 ## The exceptions view offers no bucket facet
 
 `BucketEligible` reads the view's `| fields` projection as dropping

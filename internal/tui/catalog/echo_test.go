@@ -18,6 +18,10 @@ func TestEchoCommandQuotesEveryValue(t *testing.T) {
 		// last, behind the end-of-options marker.
 		{"-rf", []string{"-S", "uid-a"}, `dtctl get things -S uid-a -- -rf`},
 		{"uid", []string{"-S", "-x"}, `dtctl get things uid -S -x`},
+		// zsh replaces a word that starts with an equals sign by the path of
+		// the command it names, so such a value is quoted.
+		{"=ls", []string{"-S", "=id"}, `dtctl get things '=ls' -S '=id'`},
+		{"a=b", nil, `dtctl get things 'a=b'`},
 	}
 	for _, tt := range tests {
 		if got := EchoCommand("dtctl get things", tt.operand, tt.flags...); got != tt.want {

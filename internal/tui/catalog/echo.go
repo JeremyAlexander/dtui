@@ -35,9 +35,10 @@ func shellWord(s string) string {
 	return shellSingleQuote(s)
 }
 
-// shellBare are the characters a POSIX shell reads literally anywhere in a
-// word.
-const shellBare = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-+=:,./@%"
+// shellBare are the characters a shell reads literally anywhere in a word.
+// The equals sign is not one of them: zsh replaces a word that starts with it
+// by the path of the command it names (`=ls` becomes `/bin/ls`).
+const shellBare = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-+:,./@%"
 
 // shellSingleQuote wraps s in single quotes for a POSIX shell, closing and
 // reopening the quotes around any embedded single quote.
