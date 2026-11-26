@@ -374,18 +374,20 @@ var hotspotsSpec = &Spec{
 	EnterTarget:   "function-focus", // sentinel: the same view, focused on the row's function
 }
 
-// FocusTarget names the function enter on a hotspots row focuses: the row's
-// own, unless it is the synthetic root or the function already in focus. An
-// allocation path has none.
-func FocusTarget(s Scope, rec map[string]any) string {
+// FocusTarget names the function enter on a hotspots row focuses, or says
+// why the row has none: it is the function already in focus, or the
+// synthetic root. An allocation path has neither.
+func FocusTarget(s Scope, rec map[string]any) (fn, why string) {
 	if ProfileAllocations(s) {
-		return ""
+		return "", ""
 	}
-	fn := Str(rec, ProfFunction)
-	if fn == profRootCaller || fn == s.Arg {
-		return ""
+	switch fn = Str(rec, ProfFunction); fn {
+	case profRootCaller:
+		return "", profRootCaller + " is where the stacks start, not a function"
+	case s.Arg:
+		return "", "this row is the function in focus — enter a caller or callee to walk on"
 	}
-	return fn
+	return fn, ""
 }
 
 // survivedCaveat says what the survived figures of an allocations analysis

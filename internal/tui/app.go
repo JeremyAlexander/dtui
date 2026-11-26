@@ -713,6 +713,9 @@ func (a *app) handleKey(msg tea.KeyMsg) tea.Cmd {
 			if a.width < previewPaneMinWidth && a.bodyHeight() < previewBottomMinHeight {
 				cmd = status("preview on — hidden until the terminal grows")
 			}
+			if tv, ok := top.(*tableView); ok && tv.spec.NoPreview {
+				cmd = status("preview pane on — this view has none")
+			}
 			if nv, ok := top.(*navView); ok {
 				if nv.rightPaneVisible() {
 					cmd = status("preview pane on")

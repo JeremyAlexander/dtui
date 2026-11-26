@@ -211,9 +211,9 @@ func (v *tableView) openFunctionFocus(rec map[string]any) tea.Cmd {
 	if catalog.ProfileAllocations(v.scope) {
 		return v.inspect(rec) // an allocation path names no single function
 	}
-	fn := catalog.FocusTarget(v.scope, rec)
+	fn, why := catalog.FocusTarget(v.scope, rec)
 	if fn == "" {
-		return status("this row is the function in focus — enter a caller or callee to walk on")
+		return status(why)
 	}
 	spec, scope := v.spec, v.scope
 	scope.Arg = fn

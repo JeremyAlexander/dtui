@@ -688,3 +688,51 @@ func TestCallKeepsTheSourceItWasIssuedWith(t *testing.T) {
 		t.Errorf("the call answered from %v (err %v), want the source it was issued with", msg.records, msg.err)
 	}
 }
+
+// P is an app-wide preference; on a view that has no preview pane it says
+// so, and the view does not offer the key.
+func TestPreviewToggleOnAViewWithoutAPane(t *testing.T) {
+	sc := loadProfilingScenario(t, "hotspots-running")
+	a, tv := openProfiling(t, sc)
+	sc.answer(tv)
+	a.Update(tea.WindowSizeMsg{Width: 160, Height: 50})
+	press(a, key("P"))
+	if want := "preview pane off (P restores it)"; a.status != want {
+		t.Errorf("P: status %q, want %q", a.status, want)
+	}
+	if got := hintFor(tv, "P"); got != "" {
+		t.Errorf("the view offers P %s, which does nothing on it", got)
+	}
+	press(a, key("P"))
+	if want := "preview pane on — this view has none"; a.status != want {
+		t.Errorf("P again: status %q, want %q", a.status, want)
+	}
+	// A view with a pane keeps its wording.
+	b := testApp(t, "hosts")
+	b.Update(tea.WindowSizeMsg{Width: 160, Height: 50})
+	press(b, key("P"))
+	press(b, key("P"))
+	if want := "preview pane on"; b.status != want {
+		t.Errorf("hosts: status %q, want %q", b.status, want)
+	}
+}
+
+// Enter on a row that cannot be focused says which kind of row it is.
+func TestEnterOnARowThatIsNoFunction(t *testing.T) {
+	a := renderProfiling(t, "hotspots-focus")
+	tv := a.top().(*tableView)
+	tv.cursor = 0 // the total row of the function in focus
+	press(a, key("enter"))
+	if want := "this row is the function in focus — enter a caller or callee to walk on"; a.status != want {
+		t.Errorf("enter on the focused function: %q, want %q", a.status, want)
+	}
+	tv.rows = append(tv.rows, map[string]any{catalog.ProfRelation: catalog.ProfRelCaller, catalog.ProfFunction: "(root)"})
+	tv.cursor = len(tv.rows) - 1
+	press(a, key("enter"))
+	if want := "(root) is where the stacks start, not a function"; a.status != want {
+		t.Errorf("enter on the root: %q, want %q", a.status, want)
+	}
+	if a.top() != viewModel(tv) {
+		t.Error("enter on a row that is no function opened a view")
+	}
+}

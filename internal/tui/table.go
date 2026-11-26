@@ -616,7 +616,7 @@ func (v *tableView) Hints() []keyHint {
 			hints = append(hints, keyHint{"tab", "lens"})
 		}
 	}
-	if !v.ds.previewOn() {
+	if !v.ds.previewOn() && !v.spec.NoPreview {
 		hints = append(hints, keyHint{"P", "preview"})
 	}
 	if h, sentinel := enterHandlers[v.spec.EnterTarget]; sentinel {

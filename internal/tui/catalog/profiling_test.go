@@ -112,14 +112,14 @@ func TestProfileEmptyReasons(t *testing.T) {
 func TestFocusTarget(t *testing.T) {
 	row := func(fn string) map[string]any { return map[string]any{ProfFunction: fn} }
 	focused := Scope{Arg: "com.example.shop.CartService.total"}
-	if got := FocusTarget(Scope{}, row("com.example.shop.CartService.total")); got != "com.example.shop.CartService.total" {
+	if got, _ := FocusTarget(Scope{}, row("com.example.shop.CartService.total")); got != "com.example.shop.CartService.total" {
 		t.Errorf("a function row focuses its function, got %q", got)
 	}
-	if got := FocusTarget(focused, row("com.example.shop.CartService.total")); got != "" {
-		t.Errorf("the focused function's own rows must not re-open it, got %q", got)
+	if got, why := FocusTarget(focused, row("com.example.shop.CartService.total")); got != "" || !strings.Contains(why, "function in focus") {
+		t.Errorf("the focused function's own rows must not re-open it, got %q (%s)", got, why)
 	}
-	if got := FocusTarget(focused, row(profRootCaller)); got != "" {
-		t.Errorf("the synthetic root is not a function, got %q", got)
+	if got, why := FocusTarget(focused, row(profRootCaller)); got != "" || !strings.Contains(why, "(root)") {
+		t.Errorf("the synthetic root is not a function, got %q (%s)", got, why)
 	}
 }
 
