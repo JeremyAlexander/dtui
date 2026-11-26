@@ -109,17 +109,21 @@ func dotnetFrame(line string) (StackFrame, bool) {
 	name = dotnetTypeArgsRe.ReplaceAllString(name, "")
 	// Mono joins a nested type to its outer one with "+", .NET with ".".
 	name = strings.ReplaceAll(name, dotnetNested, ".")
-	name = dotnetMainRe.ReplaceAllString(name, "$1")
-	name = dotnetClosureRe.ReplaceAllString(name, "")
-	// From the inside out; every pass removes a pair of brackets.
-	for strings.Contains(name, dotnetGenerated) {
-		unwrapped := dotnetLocalRe.ReplaceAllString(dotnetLambdaRe.ReplaceAllString(name, "$1"), "$1.$2")
-		if unwrapped == name {
-			break
+	// Few names are generated ones, and every one of them holds the
+	// bracket that closes the method it wraps.
+	if strings.Contains(name, dotnetGenerated) {
+		name = dotnetMainRe.ReplaceAllString(name, "$1")
+		name = dotnetClosureRe.ReplaceAllString(name, "")
+		// From the inside out; every pass removes a pair of brackets.
+		for strings.Contains(name, dotnetGenerated) {
+			unwrapped := dotnetLocalRe.ReplaceAllString(dotnetLambdaRe.ReplaceAllString(name, "$1"), "$1.$2")
+			if unwrapped == name {
+				break
+			}
+			name = unwrapped
 		}
-		name = unwrapped
+		name = dotnetAsyncRe.ReplaceAllString(name, "$1")
 	}
-	name = dotnetAsyncRe.ReplaceAllString(name, "$1")
 
 	module, function := "", name
 	if dot := strings.LastIndexByte(name, '.'); dot >= 0 {
