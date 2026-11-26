@@ -74,3 +74,22 @@ While a table loads, is empty or has failed, its footer still lists
 `:processes` footer no longer fits `q quit` since `h hotspots` joined it.
 Fix: derive the hint list from whether the view has rows, and drop the
 lowest-value hint first when the line overflows.
+
+## third_party/ lists eight modules at versions the build no longer uses
+
+`third_party/licenses.csv` and `third_party/THIRD_PARTY_LICENSES.txt` were
+generated before `go.mod` moved to what the local dtctl checkout requires.
+They name `github.com/Dynatrace/dtctl/sdk` v0.46.0 (built: v0.47.0),
+`andybalholm/brotli` v1.2.8 (v1.3.0), `klauspost/compress` v1.20.2
+(v1.20.4), `parquet-go/bitpack` v1.0.0 (v1.0.3), `parquet-go/jsonlite`
+v1.0.0 (v1.5.5), `parquet-go/parquet-go` v0.32.0 (v0.32.1) and
+`pierrec/lz4/v4` v4.1.21 (v4.1.33); the other 67 rows match. The set of
+modules is the same, so no licence is missing, but the CI job
+`third-party-notices` fails on the difference. `make third-party-licenses`
+cannot repair it while the two `replace` lines are in `go.mod`: it takes
+the sdk's licence text from the module cache, and the replaced sdk is a
+directory of the checkout with no licence file of its own, so the script
+stops with "no license file" and leaves both files truncated. Fix: when
+the `replace` lines go and `go.mod` requires a dtctl release that has the
+profiling package, run `make third-party-licenses` (it downloads the
+released modules) and commit the result. Do not edit the files by hand.
