@@ -39,7 +39,7 @@ before you invest time. Overriding a gate requires an ADR, not a PR comment.
   Nothing imports `internal/tui` except the main package (and `cmd/web`); no HTTP inside `internal/tui`.
 - DQL: **Grail fails silently** — a wrong field returns an empty result with no
   error. Validate new queries against a live environment and confirm they return rows.
-- Tests: no HTTP, no TTY, no sleeps; golden files only for layout snapshots of main screens (see [docs/design/tui.md](docs/design/tui.md) "Testing").
+- Tests: no HTTP, no TTY, no sleeps; golden files only for layout snapshots of main screens (see [docs/design/tui.md](docs/design/tui.md) "Testing"). A versioned compatibility fixture is also allowed: a golden file that pins output persisted or shared outside the process, such as the exception key's `e1-keys.golden` and `e1-inputs.golden` ([ADR-0022](docs/adr/0022-exception-issues-are-a-sampled-grouping.md)).
 - Reuse the shared helpers listed in [AGENTS.md](AGENTS.md) "Reuse before you write" instead of writing feature-local copies.
 - **Use synthetic identifiers only** in tests, fixtures and docs — never real
   environment names, URLs, entity IDs or tokens.
