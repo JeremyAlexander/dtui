@@ -1,0 +1,3 @@
+{"view":"hotspots","entity":{"id":"PROCESS-000000000000A001","name":"shop-backend","type":"PROCESS"},"timeframe":"2h","lens":"running","error":"the environment refused the analysis (403): profiling needs storage:profiles:read and storage:entities:read, as scopes of the token and granted by an IAM policy — the scopes on the token alone are not enough",
+"records":[
+]}

@@ -1,0 +1,460 @@
+package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/dynatrace-oss/dtui/internal/tui"
+	"github.com/dynatrace-oss/dtui/internal/tui/catalog"
+)
+
+// The profiling views (catalog "hotspots" and "allocations") in dtui's own
+// terms. Everything here is independent of dtctl: the sources below turn a
+// profiler's readings into the rows and the summary record the catalog specs
+// render, word the failures, and share one analysis between the lenses and
+// focus drills of a view. The profiler itself — dtctl's profiling package, or
+// a recorded analysis — is in profiling_dtctl.go, the only file that knows
+// dtctl's types.
+
+// profiler runs profiling analyses of one process. Every request it sends is
+// a GET (ADR-0011): an analysis reads samples the agent already collected.
+type profiler interface {
+	// Eligible reports whether an analysis can run on the entity id at all.
+	Eligible(entityID string) bool
+	Hotspots(ctx context.Context, q profileQuery) (hotspotReading, error)
+	Allocations(ctx context.Context, q profileQuery) (allocationReading, error)
+}
+
+// profileQuery is what one analysis is asked for.
+type profileQuery struct {
+	Entity   string
+	From, To time.Time
+}
+
+// hotspotReading is one hotspots analysis, read per thread state. The states
+// are the catalog.HotspotLenses names.
+type hotspotReading interface {
+	// Functions is one row per function, by self samples, descending; samples
+	// is the number counted, the base of the percentages. A reading without
+	// rows says why in empty (a catalog.ProfEmpty* reason).
+	Functions(state string) (rows []functionRow, samples int, empty string, err error)
+	// Focus is one function's total and self rows, then its callers, then
+	// its callees. function is an exact frame label; one the state has no
+	// samples of reads as empty, not as an error.
+	Focus(state, function string) (rows []focusRow, empty string, err error)
+}
+
+// allocationReading is one allocations analysis.
+type allocationReading interface {
+	// Paths is one row per allocation site and call path, by allocated bytes,
+	// descending, with the totals over all of them.
+	Paths() (rows []allocationRow, allocBytes, survivedBytes int64, empty string)
+}
+
+type functionRow struct {
+	Function          string
+	Self, Total       int
+	SelfPct, TotalPct float64
+	Paths             int
+}
+
+type focusRow struct {
+	Relation string // a catalog.ProfRel* value
+	Function string
+	Samples  int
+	Share    float64
+}
+
+type allocationRow struct {
+	Site    string
+	Callers []string // innermost caller first
+	// SurvivedBytes and SurvivedCount are summed per GC survived: not a
+	// size, and they can exceed the allocated figures.
+	AllocBytes, SurvivedBytes int64
+	AllocCount, SurvivedCount int64
+}
+
+// profileReason names why an analysis could not be shown.
+type profileReason string
+
+const (
+	profileNoProcess    profileReason = "no_process"    // the view has no entity to analyse
+	profileNotAProcess  profileReason = "not_a_process" // the entity is not one an analysis runs on
+	profileBadRequest   profileReason = "bad_request"   // 400
+	profileForbidden    profileReason = "forbidden"     // 403
+	profileNotFound     profileReason = "not_found"     // 404
+	profileThrottled    profileReason = "throttled"     // 429, after the retries
+	profileNotCompleted profileReason = "not_completed" // still running after the last poll
+	profileNoRecording  profileReason = "no_recording"  // the fixture holds no analysis of this kind
+)
+
+// profileFailure is a failure the views word themselves, so that what the
+// user reads is about dtui (which key to press, which view to open) and not
+// about a CLI's flags.
+type profileFailure struct {
+	Reason profileReason
+	Entity string
+	// Message is the API's own message, when there is one.
+	Message string
+}
+
+func (f *profileFailure) Error() string {
+	switch f.Reason {
+	case profileNoProcess:
+		return "profiling analyses one process — press h on a row of :processes, or open :hotspots PROCESS-…"
+	case profileNotAProcess:
+		return fmt.Sprintf("%s cannot be profiled: an analysis runs on a process (PROCESS-… or PROCESS_GROUP-…), not on a service — open the service's processes and press h there", f.Entity)
+	case profileForbidden:
+		return "the environment refused the analysis (403): profiling needs storage:profiles:read and storage:entities:read, as scopes of the token and granted by an IAM policy — the scopes on the token alone are not enough"
+	case profileNotFound:
+		return fmt.Sprintf("the environment knows no process %s (404): process instances are short-lived, and ids belong to one environment — pick a current one from :processes", f.Entity)
+	case profileThrottled:
+		return "the environment is running as many profiling analyses as it allows (429) and kept refusing this one — wait for another to finish, then press r"
+	case profileNotCompleted:
+		return "the analysis was still running after about a minute — press r to ask again"
+	case profileNoRecording:
+		return f.Message
+	case profileBadRequest:
+		return "the environment rejected the analysis (400): " + f.Message
+	}
+	return f.Message
+}
+
+// profileCacheTTL is how long an analysis of a moving window ("last 2h") is
+// reused. Switching the thread-state lens and walking callers and callees
+// read the same analysis, so within the TTL they cost no request; after it,
+// the next read (or r) analyses the window as it then is.
+const profileCacheTTL = 2 * time.Minute
+
+// profileAbandonGrace is how long an analysis nobody waits for keeps running.
+// A lens switch cancels the view's call and issues the next one a moment
+// later, and that gap must not restart a minute-long analysis; a view that was
+// really left stops holding its slot after the grace.
+const profileAbandonGrace = 2 * time.Second
+
+// profileCacheSize bounds the analyses kept: a hotspots result is megabytes.
+const profileCacheSize = 4
+
+// profileRuns shares analyses between the calls of the views. A call for an
+// analysis that is cached gets it at once; one for an analysis in flight
+// joins it. The analysis is cancelled shortly after the last call waiting for
+// it was (the view was left), so an abandoned one does not keep holding one of
+// the environment's few concurrent analyses.
+type profileRuns struct {
+	now   func() time.Time
+	grace time.Duration
+
+	mu   sync.Mutex
+	runs map[string]*profileRun
+	seq  int
+}
+
+type profileRun struct {
+	key    string
+	seq    int
+	window catalog.ProfileWindow
+	at     time.Time
+	pinned bool // an absolute, closed window: its analysis never goes stale
+
+	done    chan struct{}
+	result  any
+	err     error
+	cancel  context.CancelFunc
+	waiters map[context.Context]struct{}
+}
+
+func newProfileRuns() *profileRuns {
+	return &profileRuns{now: time.Now, grace: profileAbandonGrace, runs: map[string]*profileRun{}}
+}
+
+// profileNoteKey carries the run's progress reporter on the context of the
+// requests it makes; the transport observer in profiling_dtctl.go calls it.
+type profileNoteKey struct{}
+
+// profileNote tells the views waiting on the run that owns ctx how it is
+// going. A context of no run is ignored.
+func profileNote(ctx context.Context, text string) {
+	if note, ok := ctx.Value(profileNoteKey{}).(func(string)); ok {
+		note(text)
+	}
+}
+
+// get returns the analysis for key, running fetch unless it is cached or in
+// flight, and the window it covers.
+func (r *profileRuns) get(ctx context.Context, key string, tf catalog.Timeframe,
+	fetch func(ctx context.Context, w catalog.ProfileWindow) (any, error),
+) (any, catalog.ProfileWindow, error) {
+	r.mu.Lock()
+	run := r.runs[key]
+	if run != nil && run.finished() && (run.err != nil || (!run.pinned && r.now().Sub(run.at) > profileCacheTTL)) {
+		delete(r.runs, key)
+		run = nil
+	}
+	if run == nil {
+		run = r.start(key, tf, fetch)
+	}
+	run.waiters[ctx] = struct{}{}
+	r.mu.Unlock()
+
+	select {
+	case <-run.done:
+		r.mu.Lock()
+		delete(run.waiters, ctx)
+		r.mu.Unlock()
+		return run.result, run.window, run.err
+	case <-ctx.Done():
+		r.mu.Lock()
+		delete(run.waiters, ctx)
+		if len(run.waiters) == 0 && !run.finished() {
+			time.AfterFunc(r.grace, func() { r.abandon(run) })
+		}
+		r.mu.Unlock()
+		return nil, run.window, ctx.Err()
+	}
+}
+
+// abandon cancels a run that still has no one waiting for it.
+func (r *profileRuns) abandon(run *profileRun) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(run.waiters) > 0 || run.finished() {
+		return
+	}
+	run.cancel()
+	if r.runs[run.key] == run {
+		delete(r.runs, run.key)
+	}
+}
+
+// start launches an analysis; the caller holds r.mu.
+func (r *profileRuns) start(key string, tf catalog.Timeframe,
+	fetch func(ctx context.Context, w catalog.ProfileWindow) (any, error),
+) *profileRun {
+	now := r.now()
+	r.seq++
+	run := &profileRun{
+		key: key, seq: r.seq, at: now,
+		window:  catalog.ProfileWindowOf(tf, now),
+		pinned:  tf.Absolute() && !tf.To.IsZero(),
+		done:    make(chan struct{}),
+		waiters: map[context.Context]struct{}{},
+	}
+	// The run outlives any one call (a lens switch replaces the call, not
+	// the analysis), so it gets a context of its own.
+	runCtx, cancel := context.WithCancel(context.Background())
+	run.cancel = cancel
+	runCtx = context.WithValue(runCtx, profileNoteKey{}, func(text string) {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		for waiter := range run.waiters {
+			tui.ReportProgress(waiter, text)
+		}
+	})
+	r.runs[key] = run
+	r.evict()
+	go func() {
+		defer cancel()
+		result, err := fetch(runCtx, run.window)
+		r.mu.Lock()
+		run.result, run.err = result, err
+		r.mu.Unlock()
+		close(run.done)
+	}()
+	return run
+}
+
+// evict drops the oldest finished analyses beyond the cache size; the caller
+// holds r.mu.
+func (r *profileRuns) evict() {
+	for len(r.runs) > profileCacheSize {
+		var oldest *profileRun
+		for _, run := range r.runs {
+			if run.finished() && (oldest == nil || run.seq < oldest.seq) {
+				oldest = run
+			}
+		}
+		if oldest == nil {
+			return
+		}
+		delete(r.runs, oldest.key)
+	}
+}
+
+func (run *profileRun) finished() bool {
+	select {
+	case <-run.done:
+		return true
+	default:
+		return false
+	}
+}
+
+// profileSources builds the hotspots and allocations sources over one
+// profiler. fixture names the recorded analysis they serve ("" = live); it
+// goes into every summary so the view can say so.
+func profileSources(p profiler, fixture string) (hotspots, allocations tui.Source) {
+	runs := newProfileRuns()
+	return hotspotsSource(p, runs, fixture), allocationsSource(p, runs, fixture)
+}
+
+// profileTarget is the process a profiling scope analyses, or the refusal
+// that says why there is none. It sends no request.
+func profileTarget(p profiler, scope catalog.Scope) (catalog.Entity, error) {
+	if scope.Entity == nil || scope.Entity.ID == "" {
+		return catalog.Entity{}, &profileFailure{Reason: profileNoProcess}
+	}
+	if !p.Eligible(scope.Entity.ID) {
+		return catalog.Entity{}, &profileFailure{Reason: profileNotAProcess, Entity: scope.Entity.ID}
+	}
+	return *scope.Entity, nil
+}
+
+func profileKey(kind string, e catalog.Entity, tf catalog.Timeframe) string {
+	return strings.Join([]string{kind, e.ID, tf.Label, tf.From.UTC().Format(time.RFC3339), tf.To.UTC().Format(time.RFC3339)}, "|")
+}
+
+// profileSummary starts the record a profiling source leads its result with.
+func profileSummary(w catalog.ProfileWindow, fixture string) map[string]any {
+	summary := map[string]any{
+		catalog.SummaryKey:  true,
+		catalog.ProfSumFrom: w.From.UTC().Format(time.RFC3339),
+		catalog.ProfSumTo:   w.To.UTC().Format(time.RFC3339),
+	}
+	if fixture != "" {
+		summary[catalog.ProfSumFixture] = fixture
+	}
+	return summary
+}
+
+// stampProcess names the analysed process on a row (catalog.ProfEntityID).
+func stampProcess(rec map[string]any, e catalog.Entity) map[string]any {
+	rec[catalog.ProfEntityID] = e.ID
+	if e.Name != "" {
+		rec[catalog.ProfEntityName] = e.Name
+	}
+	return rec
+}
+
+// hotspotsSource serves the hotspots view: the functions table of the lens'
+// thread state, or one function's callers and callees when the scope carries
+// a function (Scope.Arg).
+func hotspotsSource(p profiler, runs *profileRuns, fixture string) tui.Source {
+	return func(ctx context.Context, scope catalog.Scope, _ string) ([]map[string]any, error) {
+		entity, err := profileTarget(p, scope)
+		if err != nil {
+			return nil, err
+		}
+		result, window, err := runs.get(ctx, profileKey("hotspots", entity, scope.Timeframe), scope.Timeframe,
+			func(ctx context.Context, w catalog.ProfileWindow) (any, error) {
+				return p.Hotspots(ctx, profileQuery{Entity: entity.ID, From: w.From, To: w.To})
+			})
+		if err != nil {
+			return nil, err
+		}
+		reading, ok := result.(hotspotReading)
+		if !ok || reading == nil {
+			return nil, errors.New("the hotspots analysis returned nothing to read")
+		}
+		summary := profileSummary(window, fixture)
+		state := catalog.HotspotState(scope)
+
+		if scope.Arg != "" {
+			rows, empty, err := reading.Focus(state, scope.Arg)
+			if err != nil {
+				return nil, err
+			}
+			records := []map[string]any{summary}
+			for _, row := range rows {
+				if row.Relation == catalog.ProfRelTotal {
+					summary[catalog.ProfSumSamples] = float64(row.Samples)
+				}
+				records = append(records, stampProcess(map[string]any{
+					catalog.ProfRelation: row.Relation,
+					catalog.ProfFunction: row.Function,
+					catalog.ProfSamples:  float64(row.Samples),
+					catalog.ProfShare:    row.Share,
+				}, entity))
+			}
+			if len(rows) == 0 {
+				summary[catalog.ProfSumEmpty] = empty
+			}
+			return records, nil
+		}
+
+		rows, samples, empty, err := reading.Functions(state)
+		if err != nil {
+			return nil, err
+		}
+		summary[catalog.ProfSumSamples] = float64(samples)
+		summary[catalog.ProfSumRows] = float64(len(rows))
+		if len(rows) == 0 {
+			summary[catalog.ProfSumEmpty] = empty
+		}
+		if len(rows) > catalog.ProfileRowCap {
+			rows = rows[:catalog.ProfileRowCap]
+		}
+		records := make([]map[string]any, 0, len(rows)+1)
+		records = append(records, summary)
+		for _, row := range rows {
+			records = append(records, stampProcess(map[string]any{
+				catalog.ProfFunction: row.Function,
+				catalog.ProfSelf:     float64(row.Self),
+				catalog.ProfSelfPct:  row.SelfPct,
+				catalog.ProfTotal:    float64(row.Total),
+				catalog.ProfTotalPct: row.TotalPct,
+				catalog.ProfPaths:    float64(row.Paths),
+			}, entity))
+		}
+		return records, nil
+	}
+}
+
+// allocationsSource serves the allocations view: one row per allocation site
+// and call path.
+func allocationsSource(p profiler, runs *profileRuns, fixture string) tui.Source {
+	return func(ctx context.Context, scope catalog.Scope, _ string) ([]map[string]any, error) {
+		entity, err := profileTarget(p, scope)
+		if err != nil {
+			return nil, err
+		}
+		result, window, err := runs.get(ctx, profileKey("allocations", entity, scope.Timeframe), scope.Timeframe,
+			func(ctx context.Context, w catalog.ProfileWindow) (any, error) {
+				return p.Allocations(ctx, profileQuery{Entity: entity.ID, From: w.From, To: w.To})
+			})
+		if err != nil {
+			return nil, err
+		}
+		reading, ok := result.(allocationReading)
+		if !ok || reading == nil {
+			return nil, errors.New("the allocations analysis returned nothing to read")
+		}
+		rows, allocBytes, survivedBytes, empty := reading.Paths()
+		summary := profileSummary(window, fixture)
+		summary[catalog.ProfSumAlloc] = float64(allocBytes)
+		summary[catalog.ProfSumSurvived] = float64(survivedBytes)
+		summary[catalog.ProfSumRows] = float64(len(rows))
+		if len(rows) == 0 {
+			summary[catalog.ProfSumEmpty] = empty
+		}
+		if len(rows) > catalog.ProfileRowCap {
+			rows = rows[:catalog.ProfileRowCap]
+		}
+		records := make([]map[string]any, 0, len(rows)+1)
+		records = append(records, summary)
+		for _, row := range rows {
+			records = append(records, stampProcess(map[string]any{
+				catalog.ProfSite:          row.Site,
+				catalog.ProfCallers:       anySlice(row.Callers),
+				catalog.ProfAllocBytes:    float64(row.AllocBytes),
+				catalog.ProfSurvivedBytes: float64(row.SurvivedBytes),
+				catalog.ProfAllocCount:    float64(row.AllocCount),
+				catalog.ProfSurvivedCount: float64(row.SurvivedCount),
+			}, entity))
+		}
+		return records, nil
+	}
+}

@@ -24,7 +24,10 @@ import (
 // resource handlers. All sources are read-only; construction here keeps
 // internal/tui free of HTTP, mirroring how main.go passes the DQL executor.
 func tuiSources(c *session.Client) map[string]tui.Source {
+	hotspots, allocations := profilingSourcesFor(c)
 	return map[string]tui.Source{
+		"hotspots":          hotspots,
+		"allocations":       allocations,
 		"slos":              sloSource(slo.NewHandler(c)),
 		"anomaly-detectors": detectorSource(anomalydetector.NewHandler(c)),
 		"log-patterns":      logPatternSource(analyzer.NewHandler(c)),

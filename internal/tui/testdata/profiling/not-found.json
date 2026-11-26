@@ -1,0 +1,3 @@
+{"view":"hotspots","entity":{"id":"PROCESS-000000000000A001","name":"shop-backend","type":"PROCESS"},"timeframe":"2h","lens":"running","error":"the environment knows no process PROCESS-000000000000A001 (404): process instances are short-lived, and ids belong to one environment — pick a current one from :processes",
+"records":[
+]}
