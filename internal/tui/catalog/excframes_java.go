@@ -79,22 +79,34 @@ type javaSection struct {
 	more   int
 }
 
-// javaRootCause returns the frames of the last "Caused by:" section,
-// completed from the enclosing one where it ends in "... N more".
-// "Suppressed:" blocks are left out.
+// javaRootCause returns the frames of the last "Caused by:" section that has
+// any, completed from the enclosing one where it ends in "... N more"; a
+// last cause printed without frames (cut off, or thrown without a stack)
+// leaves the one before it as the root.
+//
+// A "Suppressed:" block is left out with everything in it, including its own
+// "Caused by:" sections. The block reaches as far as the lines are indented
+// at least as deep as its first: Java indents a suppressed exception and its
+// causes one step further than the exception they belong to. A trace whose
+// indentation was stripped therefore ends at its first suppressed block.
 func javaRootCause(lines []string) []StackFrame {
 	sections := make([]javaSection, 1)
-	suppressed := false
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
+	suppressed := -1 // indentation of the suppressed block being skipped
+	for _, raw := range lines {
+		line := strings.TrimSpace(raw)
+		indent := len(raw) - len(strings.TrimLeft(raw, " \t"))
+		if suppressed >= 0 {
+			if line == "" || indent >= suppressed {
+				continue
+			}
+			suppressed = -1
+		}
 		cur := &sections[len(sections)-1]
 		switch {
-		case strings.HasPrefix(line, "Caused by:"):
-			suppressed = false
-			sections = append(sections, javaSection{})
 		case strings.HasPrefix(line, "Suppressed:"):
-			suppressed = true
-		case suppressed:
+			suppressed = indent
+		case strings.HasPrefix(line, "Caused by:"):
+			sections = append(sections, javaSection{})
 		default:
 			if m := javaMoreRe.FindStringSubmatch(line); m != nil {
 				cur.more, _ = strconv.Atoi(m[1])
@@ -103,13 +115,16 @@ func javaRootCause(lines []string) []StackFrame {
 			}
 		}
 	}
-	var full []StackFrame
+	var full, root []StackFrame
 	for _, sec := range sections {
 		// "... N more": the last N frames of the enclosing exception.
 		shared := min(sec.more, len(full))
 		full = append(sec.frames[:len(sec.frames):len(sec.frames)], full[len(full)-shared:]...)
+		if len(full) > 0 {
+			root = full
+		}
 	}
-	return full
+	return root
 }
 
 func javaInApp(f StackFrame) bool {

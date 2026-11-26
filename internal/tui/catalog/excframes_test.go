@@ -155,6 +155,53 @@ Caused by: java.lang.IllegalStateException: locked
 	at com.acme.shop.CartService.addItem(CartService.java:42)
 	... 1 more`,
 			frames(StackJava, "com.acme.shop.CartService", "addItem", "com.acme.shop.Api", "post")},
+		{"a cause inside a suppressed block is not the root", `com.example.shop.CheckoutException: checkout failed
+	at com.example.shop.Checkout.run(Checkout.java:30)
+	at com.example.shop.Api.post(Api.java:12)
+	Suppressed: java.io.IOException: close failed
+		at com.example.shop.Conn.close(Conn.java:5)
+		... 2 more
+	Caused by: java.net.SocketException: broken pipe
+		at com.example.shop.Socket.write(Socket.java:9)
+		... 3 more
+		Suppressed: java.io.IOException: flush failed
+			at com.example.shop.Socket.flush(Socket.java:14)
+	Suppressed: java.io.IOException: unlock failed
+		at com.example.shop.Lock.release(Lock.java:21)`,
+			frames(StackJava, "com.example.shop.Checkout", "run", "com.example.shop.Api", "post")},
+		{"a cause after a suppressed block with a cause of its own", `    com.example.shop.CheckoutException: checkout failed
+    	at com.example.shop.Checkout.run(Checkout.java:30)
+    	at com.example.shop.Api.post(Api.java:12)
+    	Suppressed: java.io.IOException: close failed
+    		at com.example.shop.Conn.close(Conn.java:5)
+    	Caused by: java.net.SocketException: broken pipe
+    		at com.example.shop.Socket.write(Socket.java:9)
+    Caused by: java.lang.IllegalStateException: locked
+    	at com.example.shop.CartService.addItem(CartService.java:42)
+    	... 1 more`,
+			frames(StackJava, "com.example.shop.CartService", "addItem", "com.example.shop.Api", "post")},
+		{"a last cause without frames falls back to the nearest with some", `com.example.shop.ApiException: failed
+	at com.example.shop.Api.post(Api.java:12)
+	at com.example.shop.Server.handle(Server.java:80)
+Caused by: com.example.shop.CheckoutException: checkout failed
+	at com.example.shop.Checkout.run(Checkout.java:30)
+	... 2 more
+Caused by: java.lang.IllegalStateException: Cart 7 is locked
+Caused by: java.sql.SQLException: lock timeout`,
+			frames(StackJava,
+				"com.example.shop.Checkout", "run",
+				"com.example.shop.Api", "post",
+				"com.example.shop.Server", "handle")},
+		{"a cause without frames under a single exception", `com.example.shop.ApiException: failed
+	at com.example.shop.Api.post(Api.java:12)
+Caused by: java.lang.IllegalStateException: Cart 7 is locked`,
+			frames(StackJava, "com.example.shop.Api", "post")},
+		{"a cause that shares every frame is still the root", `com.example.shop.ApiException: failed
+	at com.example.shop.Api.post(Api.java:12)
+	at com.example.shop.Server.handle(Server.java:80)
+Caused by: java.lang.IllegalStateException: Cart 7 is locked
+	... 1 more`,
+			frames(StackJava, "com.example.shop.Server", "handle")},
 		{"recursion collapses", `	at com.acme.shop.Tree.walk(Tree.java:10)
 	at com.acme.shop.Tree.walk(Tree.java:14)
 	at com.acme.shop.Tree.walk(Tree.java:14)
