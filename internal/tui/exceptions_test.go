@@ -548,3 +548,103 @@ func TestExceptionsExitsSayTheyHandOverTheUngroupedSample(t *testing.T) {
 		t.Errorf("logs status after c = %q", logs.status)
 	}
 }
+
+// The fetch command itself asks for both caps and reads what cut the sample
+// from the response that carried the spans.
+func TestExceptionsFetchCommandCapsTheQueryAndReadsItsNotices(t *testing.T) {
+	pinSnapshotClock(t)
+	a := testApp(t, "exceptions")
+	tv := a.top().(*tableView)
+	var ran []exec.DQLExecuteOptions
+	a.ds.runWith = func(_ string, opts exec.DQLExecuteOptions) ([]map[string]any, []exec.QueryNotification, error) {
+		ran = append(ran, opts)
+		return manySpans(412), warning("BYTE_LIMIT_ADDED", ""), nil
+	}
+	msg := tv.Refresh()().(dataMsg)
+	if len(ran) != 1 || ran[0].MaxResultRecords != catalog.ExceptionSampleRows || ran[0].MaxResultBytes != catalog.ExceptionSampleBytes {
+		t.Fatalf("the query ran with %+v, want one run with both caps", ran)
+	}
+	a.Update(msg)
+	if out := screen(a); !strings.Contains(out, "size limit hit: newest 412 exception spans, back to 11:53:08") {
+		t.Errorf("the header does not name the size limit:\n%s", out)
+	}
+	// A failed fetch delivers its error and no sample.
+	a.ds.runWith = func(string, exec.DQLExecuteOptions) ([]map[string]any, []exec.QueryNotification, error) {
+		return nil, nil, fmt.Errorf("boom")
+	}
+	if msg := tv.Refresh()().(dataMsg); msg.err == nil || msg.sample != nil || msg.records != nil {
+		t.Errorf("a failed fetch delivered %+v", msg)
+	}
+}
+
+// A result for a superseded request is dropped: a slow, clean answer to an
+// earlier refresh must not replace the cut sample of the later one, nor its
+// line.
+func TestExceptionsLateResultOfAnEarlierRefreshIsDropped(t *testing.T) {
+	pinSnapshotClock(t)
+	a := testApp(t, "exceptions")
+	tv := a.top().(*tableView)
+	a.ds.runFn = func(string) ([]map[string]any, error) { return issueSpans(), nil }
+	early := tv.Refresh() // not run yet: the slow one
+	seedSample(t, a, manySpans(5), warning("SCAN_LIMIT_GBYTES", ""))
+
+	a.Update(early())
+	if tv.sample.fetched != 5 || len(tv.rows) != 1 {
+		t.Errorf("the late result replaced the current sample: %+v, %d rows", tv.sample, len(tv.rows))
+	}
+	if out := screen(a); !strings.Contains(out, "scan limit hit: 5 exception spans of what was scanned") {
+		t.Errorf("the line no longer describes the rows on screen:\n%s", out)
+	}
+}
+
+// A refresh while issues are on screen: the commands group on their own
+// goroutines, here even over the same span records, while the update loop
+// draws and takes results in whatever order they finish. Run under the race
+// detector (make test).
+func TestExceptionsRefreshWhileOnScreenIsRaceFree(t *testing.T) {
+	a := testApp(t, "exceptions")
+	tv := a.top().(*tableView)
+	shared := issueSample()
+	a.ds.runFn = func(string) ([]map[string]any, error) { return shared, nil }
+	seedSample(t, a, issueSpans(), nil)
+
+	const refreshes = 6
+	results := make(chan tea.Msg, refreshes)
+	for range refreshes {
+		cmd := tv.Refresh()
+		go func() { results <- cmd() }()
+		screen(a)
+	}
+	for range refreshes {
+		a.Update(<-results)
+		screen(a)
+	}
+	// Only the last refresh's result may have landed, whenever it finished.
+	if tv.loading || tv.sample == nil || tv.sample.fetched != len(shared) || len(tv.rows) != 6 {
+		t.Errorf("after the refreshes: loading=%v sample=%+v rows=%d", tv.loading, tv.sample, len(tv.rows))
+	}
+	for _, span := range shared {
+		for k := range span {
+			if strings.HasPrefix(k, "__") {
+				t.Fatalf("grouping wrote %q into a span record", k)
+			}
+		}
+	}
+}
+
+// The facet picker offers every scalar field any sampled span carried, also
+// when the spans of one issue carry different ones.
+func TestExceptionsFacetFieldsAreTheUnionOverTheSample(t *testing.T) {
+	a := testApp(t, "exceptions")
+	one := issueSpanRecord(1, "2026-07-15T11:59:58Z", "cart", "java.lang.IllegalStateException", "cart 1 is locked", issueCartStack)
+	two := issueSpanRecord(2, "2026-07-15T11:59:57Z", "cart", "java.lang.IllegalStateException", "cart 2 is locked", issueCartStack)
+	delete(one, "endpoint.name")
+	delete(two, "span.name")
+	tv := seedSample(t, a, []map[string]any{one, two}, nil)
+	if len(tv.rows) != 1 {
+		t.Fatalf("rows = %d, want the one issue", len(tv.rows))
+	}
+	if !tv.hasField("endpoint.name") || !tv.hasField("span.name") {
+		t.Errorf("facet fields = %q, want both spans' fields", tv.facetCandidates())
+	}
+}

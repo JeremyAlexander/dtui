@@ -27,6 +27,9 @@ type dataSource struct {
 	sources map[string]Source
 	// runFn replaces the executor in tests; nil in production.
 	runFn func(dql string) ([]map[string]any, error)
+	// runWith is runFn for a test that must see the execution options a
+	// query ran with, or answer with notifications; it wins over runFn.
+	runWith func(dql string, opts exec.DQLExecuteOptions) ([]map[string]any, []exec.QueryNotification, error)
 
 	// dict caches the semantic dictionary's field definitions for the whole
 	// session (fetched once, on the first inspector). Reads and writes both
@@ -287,6 +290,10 @@ func (d *dataSource) run(owner any, seq int, dql string, maxRecords int64, enric
 // fetch runs one query to its result. It blocks: only a command calls it.
 func (d *dataSource) fetch(owner any, seq int, dql string, opts exec.DQLExecuteOptions) dataMsg {
 	start := time.Now()
+	if d.runWith != nil {
+		records, notices, err := d.runWith(dql, opts)
+		return dataMsg{owner: owner, seq: seq, dql: dql, elapsed: time.Since(start), records: records, notices: notices, err: err}
+	}
 	if d.runFn != nil {
 		records, err := d.runFn(dql)
 		return dataMsg{owner: owner, seq: seq, dql: dql, elapsed: time.Since(start), records: records, err: err}
