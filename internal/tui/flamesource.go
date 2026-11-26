@@ -113,7 +113,8 @@ type sourceFoundMsg struct {
 	label   string
 	index   *source.Index
 	matches []source.Match
-	// unread is how many files that could hold the frame were not read.
+	// unread is how many files that could hold the frame were not read:
+	// beyond the bound, not reached in time, or no longer files to read.
 	unread int
 	// late says the lookup ran out of time before it ran out of files.
 	late bool
@@ -215,6 +216,9 @@ func sourceHow(f source.Frame, m source.Match) string {
 // unread, and that it was the time that ran out when it was.
 func sourceUnread(files int, late bool) string {
 	text := catalog.GroupInt(int64(files)) + " files that could hold it were not read"
+	if files == 1 {
+		text = "1 file that could hold it was not read"
+	}
 	if late {
 		text = fmt.Sprintf("the search was cut after %d seconds: %s", int(source.ResolveTime.Seconds()), text)
 	}

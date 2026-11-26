@@ -218,6 +218,13 @@ func TestOpenSourceSaysWhatWasNotRead(t *testing.T) {
 	if !a.statusErr || !strings.HasSuffix(a.status, "· 50 files that could hold it were not read") {
 		t.Errorf("a miss: status %q", a.status)
 	}
+	// One file is one file: a candidate that turned into something that is
+	// not read (a named pipe, a directory) is a count of one.
+	_, cmd = a.Update(sourceFoundMsg{view: fv, label: "main.main", index: ix, unread: 1})
+	deliver(a, cmd)
+	if !a.statusErr || !strings.HasSuffix(a.status, "· 1 file that could hold it was not read") {
+		t.Errorf("a miss with one file unread: status %q", a.status)
+	}
 	// The time ran out before the files did.
 	_, cmd = a.Update(sourceFoundMsg{view: fv, label: "main.main", index: ix, unread: 50, late: true})
 	deliver(a, cmd)
@@ -228,6 +235,32 @@ func TestOpenSourceSaysWhatWasNotRead(t *testing.T) {
 	deliver(a, cmd)
 	if !strings.Contains(a.status, "(the declaration of total; the first found, the search was cut after 2 seconds: 7 files that could hold it were not read)") {
 		t.Errorf("one match out of time: status %q", a.status)
+	}
+}
+
+// A file that stopped being one between the lookup and the opening (picked
+// from the list a while later, say) is not handed to an editor: the status
+// line says what it is now.
+func TestOpenSourceRefusesWhatIsNoLongerAFile(t *testing.T) {
+	a, fv, root, opened := sourceApp(t, "vscode")
+	onFrame(t, a, fv, "com.example.shop.CartService.total")
+	ix, err := a.ds.source.get(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	const rel = "src/main/java/com/example/shop/CartService.java"
+	p := filepath.Join(root, filepath.FromSlash(rel))
+	if err := os.Remove(p); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(p, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_, cmd := a.Update(sourceFoundMsg{view: fv, label: "com.example.shop.CartService.total", index: ix,
+		matches: []source.Match{{Path: rel, Line: 6, How: source.Declaration}}})
+	deliver(a, cmd)
+	if want := `"` + rel + `" is not a regular file any more`; !a.statusErr || a.status != want || len(*opened) != 0 {
+		t.Errorf("status %q (error %v), opened %v; want %q and nothing opened", a.status, a.statusErr, *opened, want)
 	}
 }
 
