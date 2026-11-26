@@ -1,7 +1,7 @@
  ▛▞▟ dtui  ·  context:test  ·  ● readonly                                                                       last 2h
  exceptions ───────────────────────────────────────────────────────────────────────────────────────────────────────────
  6 rows · 1s                                                          │ java.lang.IllegalStateException
- limit hit: newest 1000 exception spans, back to 11:48:19; older one… │
+ limit hit: newest 1000 exception spans, back to 11:48:19; any older… │
  COUNT  LAST          EXCEPTION          MESSAGE   SERVICE     BY     │  issue: e1:8d92c7fb9207
 ▌  650  11:59:59      lang.IllegalStat…  cart <n…  cart +1     app    │  in sample: 650 spans
    100  11:59:56      sql.SQLException   connect…  orders      app    │  grouped by: app frames

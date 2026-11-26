@@ -27,9 +27,10 @@ type dataSource struct {
 	sources map[string]Source
 	// runFn replaces the executor in tests; nil in production.
 	runFn func(dql string) ([]map[string]any, error)
-	// runWith is runFn for a test that must see the execution options a
-	// query ran with, or answer with notifications; it wins over runFn.
-	runWith func(dql string, opts exec.DQLExecuteOptions) ([]map[string]any, []exec.QueryNotification, error)
+	// runWith stands in for the executor in a test that must see the
+	// execution options a query ran with, or answer with a whole response
+	// (notifications, metadata); it wins over runFn.
+	runWith func(dql string, opts exec.DQLExecuteOptions) (*exec.DQLQueryResponse, error)
 
 	// dict caches the semantic dictionary's field definitions for the whole
 	// session (fetched once, on the first inspector). Reads and writes both
@@ -237,7 +238,10 @@ type dataMsg struct {
 	// sample is set by a sampled view's fetch (catalog.Spec.Sample): records
 	// then holds the rows computed from the sample, and sample what was
 	// fetched to compute them.
-	sample  *sampleFacts
+	sample *sampleFacts
+	// sampled is the response's statement that Grail read only a part of
+	// the data (metadata.grail.sampled).
+	sampled bool
 	elapsed time.Duration
 	err     error
 }
@@ -290,24 +294,34 @@ func (d *dataSource) run(owner any, seq int, dql string, maxRecords int64, enric
 // fetch runs one query to its result. It blocks: only a command calls it.
 func (d *dataSource) fetch(owner any, seq int, dql string, opts exec.DQLExecuteOptions) dataMsg {
 	start := time.Now()
-	if d.runWith != nil {
-		records, notices, err := d.runWith(dql, opts)
-		return dataMsg{owner: owner, seq: seq, dql: dql, elapsed: time.Since(start), records: records, notices: notices, err: err}
-	}
-	if d.runFn != nil {
+	if d.runFn != nil && d.runWith == nil {
 		records, err := d.runFn(dql)
 		return dataMsg{owner: owner, seq: seq, dql: dql, elapsed: time.Since(start), records: records, err: err}
 	}
-	resp, err := d.exec.ExecuteQueryWithContext(context.Background(), dql, opts)
+	run := d.runWith
+	if run == nil {
+		run = func(dql string, opts exec.DQLExecuteOptions) (*exec.DQLQueryResponse, error) {
+			return d.exec.ExecuteQueryWithContext(context.Background(), dql, opts)
+		}
+	}
+	resp, err := run(dql, opts)
 	msg := dataMsg{owner: owner, seq: seq, dql: dql, elapsed: time.Since(start), err: rewriteSegmentVarError(err)}
 	if err == nil {
 		if resp == nil {
 			msg.err = errors.New("query cancelled")
 		} else {
-			msg.records = resp.GetRecords()
-			msg.metrics = resp.GetMetrics()
-			msg.notices = resp.GetNotifications()
+			msg.take(resp)
 		}
 	}
 	return msg
+}
+
+// take copies out of a response what a view reads.
+func (m *dataMsg) take(resp *exec.DQLQueryResponse) {
+	m.records = resp.GetRecords()
+	m.metrics = resp.GetMetrics()
+	m.notices = resp.GetNotifications()
+	if grail := resp.GetMetadata(); grail != nil {
+		m.sampled = grail.Sampled
+	}
 }

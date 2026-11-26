@@ -70,6 +70,13 @@ func warning(notificationType, message string) []exec.QueryNotification {
 	return []exec.QueryNotification{{Severity: "WARNING", NotificationType: notificationType, Message: message}}
 }
 
+// response is what the executor hands back for a query: records, and the
+// notifications in Grail's metadata.
+func response(records []map[string]any, notices []exec.QueryNotification) *exec.DQLQueryResponse {
+	return &exec.DQLQueryResponse{Records: records,
+		Metadata: &exec.DQLMetadata{Grail: &exec.GrailMetadata{Notifications: notices}}}
+}
+
 // seedSample lands spans in the top view the way its fetch command would:
 // grouped, with the facts of the sample they were grouped from.
 func seedSample(t *testing.T, a *app, spans []map[string]any, notices []exec.QueryNotification) *tableView {
@@ -80,7 +87,7 @@ func seedSample(t *testing.T, a *app, spans []map[string]any, notices []exec.Que
 	}
 	tv.seq++
 	tv.loading = true
-	rows, facts := takeSample(tv.spec.Sample, sampleWindow(tv.scope.Timeframe), spans, notices)
+	rows, facts := takeSample(tv.spec.Sample, sampleWindow(tv.scope.Timeframe), spans, notices, false)
 	a.Update(dataMsg{owner: tv, seq: tv.seq, dql: tv.DQL(), records: rows, sample: facts,
 		notices: notices, elapsed: time.Second})
 	return tv
@@ -160,6 +167,9 @@ func TestSampleLine(t *testing.T) {
 	spec := catalog.Lookup("exceptions").Sample
 	sizeLimit := warning("BYTE_LIMIT_ADDED", "Your result has been limited because the maximum bytes (8388608) were reached.")
 	scanLimit := warning("SCAN_LIMIT_GBYTES", "Your execution was stopped after 500 gigabytes of data were scanned.")
+	rowLimit := warning("RESULT_LIMIT_RECORDS", "")
+	consumption := warning("QUERY_CONSUMPTION_LIMIT", "")
+	sampling := warning("SAMPLING_APPLIED", "")
 	for _, tc := range []struct {
 		name    string
 		spans   []map[string]any
@@ -169,10 +179,16 @@ func TestSampleLine(t *testing.T) {
 	}{
 		{"whole", issueSpans(), nil, "all 3 exception spans · last 2h", false},
 		{"one", issueSpans()[:1], nil, "1 exception span · last 2h", false},
+		// A full sample may be all there is: nothing says older spans exist.
 		{"row limit", manySpans(catalog.ExceptionSampleRows), nil,
-			"limit hit: newest 1000 exception spans, back to 11:43:20; older ones are not counted · last 2h", true},
+			"limit hit: newest 1000 exception spans, back to 11:43:20; any older ones are not counted · last 2h", true},
 		{"one short of the limit", manySpans(catalog.ExceptionSampleRows - 1), nil,
 			"all 999 exception spans · last 2h", false},
+		{"row limit announced", manySpans(5), rowLimit,
+			"limit hit: newest 5 exception spans, back to 11:59:55; any older ones are not counted · last 2h", true},
+		// No scan gave up here: the result was cut and happens to be empty.
+		{"row limit, nothing arrived", nil, rowLimit,
+			"limit hit: the result was cut and holds no exception spans · last 2h", true},
 		{"size limit", manySpans(412), sizeLimit,
 			"size limit hit: newest 412 exception spans, back to 11:53:08; older ones are not counted · last 2h", true},
 		{"scan limit", manySpans(5), scanLimit,
@@ -192,11 +208,40 @@ func TestSampleLine(t *testing.T) {
 		// Spans without a readable start time: the line claims no reach.
 		{"size limit, no times", []map[string]any{{"span.id": "a"}, {"span.id": "b", "start_time": "soon"}}, sizeLimit,
 			"size limit hit: newest 2 exception spans; older ones are not counted · last 2h", true},
-		{"info is not a cut", issueSpans(), []exec.QueryNotification{{Severity: "INFO", NotificationType: "SCAN_LIMIT_GBYTES"}},
-			"all 3 exception spans · last 2h", false},
+		// A cut is a cut whatever severity Grail files it under.
+		{"a cut filed as information", issueSpans(), []exec.QueryNotification{{Severity: "INFO", NotificationType: "SCAN_LIMIT_GBYTES"}},
+			"scan limit hit: 3 exception spans of what was scanned; narrow the timeframe (t) · last 2h", true},
+		{"a cut without a severity", issueSpans(), []exec.QueryNotification{{NotificationType: "RESULT_LIMIT_BYTES"}},
+			"size limit hit: newest 3 exception spans, back to 11:59:40; older ones are not counted · last 2h", true},
+		{"execution time limit", manySpans(5), warning("FETCH_EXEC_TIME_LIMIT", ""),
+			"fetch timed out: 5 exception spans of what was scanned; narrow the timeframe (t) · last 2h", true},
+		{"internal time limit, by its message", manySpans(5), warning("", "The query reached an internal time limit."),
+			"fetch timed out: 5 exception spans of what was scanned; narrow the timeframe (t) · last 2h", true},
+		// A cause with no wording of its own claims neither "all" nor "newest".
+		{"consumption limit", manySpans(5), consumption,
+			"partial result: 5 exception spans of what was returned; narrow the timeframe (t) · last 2h", true},
+		{"consumption limit, nothing returned", nil, consumption,
+			"partial result: no exception spans in what was returned; narrow the timeframe (t) · last 2h", true},
+		// It outranks a limit, which would claim the newest spans, and
+		// yields to a cause that has its own wording.
+		{"consumption limit on a full sample", manySpans(catalog.ExceptionSampleRows), consumption,
+			"partial result: 1000 exception spans of what was returned; narrow the timeframe (t) · last 2h", true},
+		{"consumption limit and a size cut", manySpans(5), append(sizeLimit, consumption...),
+			"partial result: 5 exception spans of what was returned; narrow the timeframe (t) · last 2h", true},
+		{"consumption limit and a scan limit", manySpans(5), append(consumption, scanLimit...),
+			"scan limit hit: 5 exception spans of what was scanned; narrow the timeframe (t) · last 2h", true},
+		// A sampled read is not all of the timeframe either.
+		{"sampling", issueSpans(), sampling,
+			"sampled read: 3 exception spans in the part that was read · last 2h", true},
+		{"sampling, one span", issueSpans()[:1], sampling,
+			"sampled read: 1 exception span in the part that was read · last 2h", true},
+		{"sampling, nothing read", nil, sampling,
+			"sampled read: no exception spans in the part that was read · last 2h", true},
+		{"sampling and a size cut", manySpans(412), append(sampling, sizeLimit...),
+			"size limit hit: newest 412 exception spans, back to 11:53:08; older ones are not counted · last 2h", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, facts := takeSample(spec, sampleWindow(catalog.Timeframe{Label: "2h"}), tc.spans, tc.notices)
+			_, facts := takeSample(spec, sampleWindow(catalog.Timeframe{Label: "2h"}), tc.spans, tc.notices, false)
 			text, warn := facts.line()
 			if text != tc.want || warn != tc.warn {
 				t.Errorf("line = %q (warn %v)\nwant   %q (warn %v)", text, warn, tc.want, tc.warn)
@@ -208,7 +253,7 @@ func TestSampleLine(t *testing.T) {
 // Nothing fetched and nothing cut is an ordinary empty view: no header line
 // claims a sample.
 func TestSampleLineEmptyAndWhole(t *testing.T) {
-	_, facts := takeSample(catalog.Lookup("exceptions").Sample, "last 2h", nil, nil)
+	_, facts := takeSample(catalog.Lookup("exceptions").Sample, "last 2h", nil, nil, false)
 	if text, _ := facts.line(); text != "" {
 		t.Errorf("an empty, uncut sample wrote %q", text)
 	}
@@ -216,6 +261,51 @@ func TestSampleLineEmptyAndWhole(t *testing.T) {
 	seedSample(t, a, nil, nil)
 	if out := screen(a); !strings.Contains(out, "no data in timeframe (last 2h)") || strings.Contains(out, "exception spans") {
 		t.Errorf("empty view:\n%s", out)
+	}
+}
+
+// Whatever dtctl reads as a cut result, and a sampled read, must never show
+// as the whole timeframe: not as "all N", and not as an empty timeframe.
+func TestSampleNeverReadsWholeBesideACutOrSampledResult(t *testing.T) {
+	for name, n := range map[string]exec.QueryNotification{
+		"execution time limit":   {Severity: "WARNING", NotificationType: "FETCH_EXEC_TIME_LIMIT"},
+		"consumption limit":      {Severity: "WARNING", NotificationType: "QUERY_CONSUMPTION_LIMIT"},
+		"internal time limit":    {Severity: "WARNING", Message: "The query reached an internal time limit."},
+		"scan limit as info":     {Severity: "INFO", NotificationType: "SCAN_LIMIT_GBYTES"},
+		"scan limit, unlabelled": {NotificationType: "SCAN_LIMIT_GBYTES"},
+		"sampling":               {Severity: "WARNING", NotificationType: "SAMPLING_APPLIED"},
+	} {
+		if name != "sampling" && !exec.ResultIsPartial(n) {
+			t.Fatalf("%s: dtctl no longer reads this notification as a cut result; the case is stale", name)
+		}
+		for _, spans := range [][]map[string]any{issueSpans(), nil} {
+			a := testApp(t, "exceptions")
+			disablePreview(a)
+			seedSample(t, a, spans, []exec.QueryNotification{n})
+			out := screen(a)
+			if strings.Contains(out, "all 3 ") || strings.Contains(out, "no data in timeframe") {
+				t.Errorf("%s, %d spans: the screen claims the whole timeframe:\n%s", name, len(spans), out)
+			}
+			if !strings.Contains(out, "exception spans") {
+				t.Errorf("%s, %d spans: no sample line:\n%s", name, len(spans), out)
+			}
+		}
+	}
+}
+
+// The response's own sampled flag reaches the line without a notification:
+// it is read in the fetch command, from the response that carried the spans.
+func TestExceptionsSampledResponseIsNotCalledWhole(t *testing.T) {
+	a := testApp(t, "exceptions")
+	tv := a.top().(*tableView)
+	a.ds.runWith = func(string, exec.DQLExecuteOptions) (*exec.DQLQueryResponse, error) {
+		resp := response(issueSpans(), nil)
+		resp.Metadata.Grail.Sampled = true
+		return resp, nil
+	}
+	a.Update(tv.Refresh()())
+	if out := screen(a); !strings.Contains(out, "sampled read: 3 exception spans in the part that was read") {
+		t.Errorf("a sampled response reads as whole:\n%s", out)
 	}
 }
 
@@ -579,9 +669,9 @@ func TestExceptionsFetchCommandCapsTheQueryAndReadsItsNotices(t *testing.T) {
 	a := testApp(t, "exceptions")
 	tv := a.top().(*tableView)
 	var ran []exec.DQLExecuteOptions
-	a.ds.runWith = func(_ string, opts exec.DQLExecuteOptions) ([]map[string]any, []exec.QueryNotification, error) {
+	a.ds.runWith = func(_ string, opts exec.DQLExecuteOptions) (*exec.DQLQueryResponse, error) {
 		ran = append(ran, opts)
-		return manySpans(412), warning("BYTE_LIMIT_ADDED", ""), nil
+		return response(manySpans(412), warning("BYTE_LIMIT_ADDED", "")), nil
 	}
 	msg := tv.Refresh()().(dataMsg)
 	if len(ran) != 1 || ran[0].MaxResultRecords != catalog.ExceptionSampleRows || ran[0].MaxResultBytes != catalog.ExceptionSampleBytes {
@@ -592,8 +682,8 @@ func TestExceptionsFetchCommandCapsTheQueryAndReadsItsNotices(t *testing.T) {
 		t.Errorf("the header does not name the size limit:\n%s", out)
 	}
 	// A failed fetch delivers its error and no sample.
-	a.ds.runWith = func(string, exec.DQLExecuteOptions) ([]map[string]any, []exec.QueryNotification, error) {
-		return nil, nil, fmt.Errorf("boom")
+	a.ds.runWith = func(string, exec.DQLExecuteOptions) (*exec.DQLQueryResponse, error) {
+		return nil, fmt.Errorf("boom")
 	}
 	if msg := tv.Refresh()().(dataMsg); msg.err == nil || msg.sample != nil || msg.records != nil {
 		t.Errorf("a failed fetch delivered %+v", msg)
