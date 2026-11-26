@@ -191,44 +191,26 @@ func appendKeyField(b []byte, field string) []byte {
 
 // rootException picks the event a span's fingerprint is computed from, of
 // those that say something about an exception (saysNothing); false when
-// none does. The later event wins every tie, as the last one does where
-// nothing marks a chain:
-//
-//  1. the last event flagged exception.is_caused_by_root;
-//  2. else the last event that caused another (its exception.id is some
-//     event's exception.caused_by_id) and has no cause among the events;
-//  3. else the last event.
-//
-// Step 2 is unverified. The live spans seen so far carry exception.id and
-// the root flag but no exception.caused_by_id, so their chains are found by
-// step 1 and everything else by step 3; step 2 is kept for instrumentation
-// that links its events without flagging one. It is a pass over the events,
-// not a walk along the links, so a cycle or an id used twice cannot make it
-// loop: a cycle has no event without a cause and falls through to step 3.
+// none does: the last event flagged exception.is_caused_by_root, else the
+// last event. Instrumentation that records a chain flags its root; without
+// a flag the last event is the exception the span ended with.
 func rootException(excs []SpanException) (SpanException, bool) {
+	var last *SpanException
 	for i := len(excs) - 1; i >= 0; i-- {
-		if excs[i].CauseRoot && !saysNothing(excs[i]) {
+		if saysNothing(excs[i]) {
+			continue
+		}
+		if excs[i].CauseRoot {
 			return excs[i], true
 		}
-	}
-	ids := map[string]bool{}
-	causes := map[string]bool{}
-	for _, ex := range excs {
-		ids[ex.ID] = true
-		causes[ex.CausedByID] = true
-	}
-	delete(ids, "") // an event without an id is nobody's cause
-	for i := len(excs) - 1; i >= 0; i-- {
-		if ex := excs[i]; ex.ID != "" && causes[ex.ID] && !ids[ex.CausedByID] && !saysNothing(ex) {
-			return ex, true
+		if last == nil {
+			last = &excs[i]
 		}
 	}
-	for i := len(excs) - 1; i >= 0; i-- {
-		if !saysNothing(excs[i]) {
-			return excs[i], true
-		}
+	if last == nil {
+		return SpanException{}, false
 	}
-	return SpanException{}, false
+	return *last, true
 }
 
 // saysNothing reports whether an event has no type, no message and no stack

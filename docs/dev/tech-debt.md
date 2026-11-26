@@ -56,8 +56,10 @@ of which splits or merges issues it should not:
   method name alone, so an application method named `proceed` or `next`
   never counts toward a key next to other application frames unless it is
   the throw site.
-- `rootException` follows `exception.caused_by_id` without that field ever
-  having been seen on a live span.
+- A cause chain is found by `exception.is_caused_by_root` alone.
+  `exception.caused_by_id` is not read, since no live span seen so far
+  carried it, and `exception.escaped` has no role: instrumentation that
+  links its events without flagging the root is keyed on its last event.
 - A snake-case code (`error_code_404`) loses its number to the id rule,
   which runs before the code rule: `error_code_404` and `error_code_500`
   merge.

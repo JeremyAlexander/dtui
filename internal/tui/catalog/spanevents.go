@@ -29,13 +29,9 @@ type SpanException struct {
 	Message    string
 	StackTrace string
 	Location   string // "File.java:243" when the instrumentation stamped it
-	// Cause-chain links, where the instrumentation stamps them: the event's
-	// own exception.id (a uid), the exception.caused_by_id of the exception
-	// that caused it, and exception.is_caused_by_root on the chain's root
-	// cause. exception.caused_by_id has not been seen on a live span yet.
-	ID         string
-	CausedByID string
-	CauseRoot  bool
+	// CauseRoot is exception.is_caused_by_root: of the events of a cause
+	// chain, the one that is the root cause.
+	CauseRoot bool
 }
 
 // SpanEvents parses a span record's span.events array; nil when absent.
@@ -69,8 +65,6 @@ func (e SpanEvent) Exception() (SpanException, bool) {
 		Message: Str(e.Fields, "exception.message"),
 		StackTrace: firstNonEmpty(
 			Str(e.Fields, "exception.stack_trace"), Str(e.Fields, "exception.stacktrace")),
-		ID:         Str(e.Fields, "exception.id"),
-		CausedByID: Str(e.Fields, "exception.caused_by_id"),
 	}
 	// The flag is a boolean, or a string attribute that spells one.
 	switch root := e.Fields["exception.is_caused_by_root"].(type) {

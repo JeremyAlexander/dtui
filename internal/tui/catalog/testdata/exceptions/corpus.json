@@ -42,26 +42,6 @@
     ]
   },
   {
-    "name": "java: root cause linked by id, wrapper last",
-    "group": "java-cart-add",
-    "rung": "app frames",
-    "events": [
-      {
-        "type": "java.lang.IllegalStateException",
-        "message": "Cart 7 is locked",
-        "stack": "java-locked-b.txt",
-        "id": "2"
-      },
-      {
-        "type": "com.acme.shop.checkout.CheckoutException",
-        "message": "checkout failed",
-        "stack": "java-locked-wrapper.txt",
-        "id": "1",
-        "caused_by_id": "2"
-      }
-    ]
-  },
-  {
     "name": "java: same type, another top in-app frame",
     "group": "java-cart-remove",
     "rung": "app frames",

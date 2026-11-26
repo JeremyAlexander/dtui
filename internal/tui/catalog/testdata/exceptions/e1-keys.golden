@@ -18,7 +18,6 @@ e1:04de5c3787d9	java: baseline
 e1:04de5c3787d9	java: one event whose stack text holds the chain
 e1:04de5c3787d9	java: other ids, line numbers and proxy suffixes
 e1:04de5c3787d9	java: root cause flagged, wrapper last
-e1:04de5c3787d9	java: root cause linked by id, wrapper last
 e1:0cfba379cafa	java: runtime frames only
 e1:0cfba379cafa	java: runtime frames only, another JDK build
 e1:199454ff35bd	java: same type, another top in-app frame
