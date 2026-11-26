@@ -38,6 +38,9 @@ const (
 	pythonTraceback   = "Traceback (most recent call last)"
 	// pythonGutter is what an exception group puts before each line.
 	pythonGutter = "|+ "
+	// pythonIndent is what stands before the text of a line: the gutter
+	// and the indentation, in spaces or tabs.
+	pythonIndent = pythonGutter + "\t"
 )
 
 func pythonFrame(line string) (StackFrame, bool) {
@@ -81,33 +84,53 @@ func pythonModule(path string) string {
 // pythonRootCause returns the frames of the first traceback, which is the
 // first exception raised, reversed so that the throw site comes first. An
 // exception group is a wrapper around the exceptions it collected, so there
-// the first sub-exception is the root, at any depth of nesting. Where the
-// root is not the last exception of the trace, its type is the one the line
-// under its traceback names.
+// the first sub-exception is the root, at any depth of nesting; one that
+// was never raised has no traceback, and leaves the group itself as the
+// root. Where the root is not the last exception of the trace, its type is
+// the one the line under its traceback names.
+//
+// That line stands at the column of its traceback, left of the frames; the
+// source text of a frame, with the markers Python draws under it, stands
+// right of them. A frame may have several source lines or none, so the
+// columns tell the two apart. Only where the indentation was stripped does
+// the order have to: there the line after a frame is its source text.
 func pythonRootCause(lines []string) (frames []StackFrame, typ string) {
 	chained := false // another exception follows the root's, or wraps it
-	source := false  // the line is the source text of the frame before it
+	after := false   // the line follows a frame directly
+	column := 0      // of the last frame, behind the gutter of a group
+	// Inside the first sub-exception of a group: the group's own traceback.
+	var group []StackFrame
+	groupType, first := "", false
 scan:
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
+	for _, raw := range lines {
+		line := strings.TrimSpace(raw)
+		text := strings.TrimLeft(raw, pythonIndent)
+		at := len(raw) - len(text)
 		if f, ok := pythonFrame(line); ok {
-			frames = append(frames, f)
-			source = true
+			// A frame after the line that looked like the end of the
+			// traceback: it was not the end.
+			frames, typ = append(frames, f), ""
+			after, column = true, at
 			continue
 		}
+		source := at > column || at == column && after
+		after = false
 		rule := pythonGroupRuleRe.FindStringSubmatch(line)
 		switch {
 		case rule != nil && rule[1] == "1":
-			frames, typ, chained = nil, "", true
+			group, groupType = frames, typ
+			frames, typ, chained, first = nil, "", true, true
+		case rule != nil && first && len(frames) == 0:
+			frames, typ = group, groupType
+			break scan
 		case len(frames) > 0 && (rule != nil || !source && strings.Contains(line, pythonTraceback)):
 			chained = chained || rule == nil
 			break scan
 		case len(frames) > 0 && !source && typ == "":
-			if m := pythonRaisedRe.FindStringSubmatch(strings.TrimLeft(line, pythonGutter)); m != nil {
+			if m := pythonRaisedRe.FindStringSubmatch(strings.TrimSpace(text)); m != nil {
 				typ = m[1]
 			}
 		}
-		source = false
 	}
 	if !chained {
 		typ = ""

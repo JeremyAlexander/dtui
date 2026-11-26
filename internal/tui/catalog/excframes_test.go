@@ -1199,6 +1199,128 @@ func TestJavaChainIsReadInLinearSpace(t *testing.T) {
 	}
 }
 
+// What was raised stands at the column of its traceback, the source text of
+// a frame deeper. That, not the order of the lines, tells the two apart: a
+// frame may have several source lines or none.
+func TestPythonRootCauseReadsIndentation(t *testing.T) {
+	const wrapper = `
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/app/shop/api.py", line 17, in post
+    cart.add_item(sku)
+RuntimeError: failed`
+	addItem := frames(StackPython, "shop/cart.py", "add_item")
+	cases := []struct {
+		name, stack string
+		want        []StackFrame
+		typ         string
+	}{
+		{"a call over several source lines", `Traceback (most recent call last):
+  File "/app/shop/cart.py", line 42, in add_item
+    result = self.repo.save(
+        sku,
+        order_id
+    )
+ValueError: locked
+` + wrapper, addItem, "ValueError"},
+		{"source lines with markers under them", `Traceback (most recent call last):
+  File "/app/shop/cart.py", line 42, in add_item
+    result = self.repo.save(
+             ~~~~~~~~~~~~~~^
+        sku,
+        ^^^^
+        order_id
+        ^^^^^^^^
+    )
+    ^
+ValueError: locked
+` + wrapper, addItem, "ValueError"},
+		{"no source lines", `Traceback (most recent call last):
+  File "/app/shop/cart.py", line 42, in add_item
+KeyError: 'sku'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/app/shop/api.py", line 17, in post
+RuntimeError: failed`, addItem, "KeyError"},
+		{"no source lines, several frames", `Traceback (most recent call last):
+  File "/app/shop/api.py", line 17, in post
+  File "/app/shop/cart.py", line 42, in add_item
+KeyError: 'sku'
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/app/shop/web.py", line 5, in handle
+RuntimeError: failed`, frames(StackPython, "shop/cart.py", "add_item", "shop/api.py", "post"), "KeyError"},
+		{"a first sub-exception that was never raised", `  + Exception Group Traceback (most recent call last):
+  |   File "/app/shop/api.py", line 17, in post
+  |     raise ExceptionGroup("checkout", errors)
+  | ExceptionGroup: checkout (2 sub-exceptions)
+  +-+---------------- 1 ----------------
+    | ValueError: locked
+    +---------------- 2 ----------------
+    | Traceback (most recent call last):
+    |   File "/app/shop/retry.py", line 9, in later
+    |     raise LookupError(sku)
+    | LookupError: 'kettle'
+    +------------------------------------`, frames(StackPython, "shop/api.py", "post"), "ExceptionGroup"},
+		{"a group in a group whose first member was never raised", `  + Exception Group Traceback (most recent call last):
+  |   File "/app/shop/api.py", line 17, in post
+  |     raise ExceptionGroup("checkout", errors)
+  | ExceptionGroup: checkout (1 sub-exception)
+  +-+---------------- 1 ----------------
+    | Exception Group Traceback (most recent call last):
+    |   File "/app/shop/cart.py", line 42, in add_all
+    |     raise ExceptionGroup("cart", errors)
+    | ExceptionGroup: cart (2 sub-exceptions)
+    +-+---------------- 1 ----------------
+      | ValueError: locked
+      +---------------- 2 ----------------
+      | Traceback (most recent call last):
+      |   File "/app/shop/retry.py", line 9, in later
+      |     raise LookupError(sku)
+      | LookupError: 'kettle'
+      +------------------------------------`, frames(StackPython, "shop/cart.py", "add_all"), "ExceptionGroup"},
+		// Where a logger stripped the indentation, the line after a frame is
+		// its source text and the next one what was raised.
+		{"indentation stripped", `Traceback (most recent call last):
+File "/app/shop/cart.py", line 42, in add_item
+raise ValueError("locked")
+ValueError: locked
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+File "/app/shop/api.py", line 17, in post
+cart.add_item(sku)
+RuntimeError: failed`, addItem, "ValueError"},
+		{"a source line that names a traceback", `Traceback (most recent call last):
+  File "/app/shop/cart.py", line 42, in add_item
+    log("Traceback (most recent call last)")
+ValueError: locked
+` + wrapper, addItem, "ValueError"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, typ := parseStack(tc.stack)
+			if !reflect.DeepEqual(got, tc.want) || typ != tc.typ {
+				t.Errorf("frames %+v type %q\nwant %+v %q", got, typ, tc.want, tc.typ)
+			}
+		})
+	}
+	// The key of a chain is that of its root cause alone, with or without
+	// source lines.
+	chain := mustFingerprint(t, SpanException{Type: "RuntimeError", StackTrace: cases[2].stack})
+	alone := mustFingerprint(t, SpanException{Type: "KeyError",
+		StackTrace: "Traceback (most recent call last):\n  File \"/app/shop/cart.py\", line 42, in add_item\nKeyError: 'sku'"})
+	if chain.Key != alone.Key || chain.Type != "KeyError" {
+		t.Errorf("chain %s (%s), root cause alone %s", chain.Key, chain.Type, alone.Key)
+	}
+}
+
 func TestRootCauseBoundaries(t *testing.T) {
 	cases := []struct {
 		name, stack string

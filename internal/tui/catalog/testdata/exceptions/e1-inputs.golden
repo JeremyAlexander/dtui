@@ -17,7 +17,7 @@ d4727ff604b5e9d7	const javaUnknownSource, javaNotInFile
 9ba37082d5b0fd6f	const msgNumberText, msgNumberLeads, msgCodeDigits, msgEscape
 3326b310fbb605a5	const msgQuoted, msgURL, msgUUID, msgDate, msgIP, msgPath, msgHex, msgID, msgNumber
 b29bd30168fc254b	const msgWinPathWord, msgWinPathWords
-474756cfd1208541	const pythonFramePrefix, pythonTraceback, pythonGutter
+f3be678cfc5108c2	const pythonFramePrefix, pythonTraceback, pythonGutter, pythonIndent
 14ebf31c1d78cb21	const pythonStdlibDir
 be49c176bdbf2914	const sourceCurrentDir
 eda6f7a2f1efdb7b	const stackTextMax, stackLineMax
