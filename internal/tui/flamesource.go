@@ -156,8 +156,8 @@ func (a *app) findSource(view viewModel, label string) tea.Cmd {
 		if err != nil {
 			return sourceFoundMsg{view: view, label: label, err: err}
 		}
-		matches, unread, late := ix.Resolve(context.Background(), f)
-		return sourceFoundMsg{view: view, label: label, index: ix, matches: matches, unread: unread, late: late}
+		found := ix.Resolve(context.Background(), f)
+		return sourceFoundMsg{view: view, label: label, index: ix, matches: found.Matches, unread: found.Unread, late: found.Late}
 	})
 }
 

@@ -36,6 +36,11 @@ func scan(t testing.TB, root string) *Index {
 	return ix
 }
 
+// parts are the parts of a lookup's answer most tests look at.
+func parts(f Found) (matches []Match, unread int, late bool) {
+	return f.Matches, f.Unread, f.Late
+}
+
 // shop is a repository with one service per language.
 var shop = map[string]string{
 	".git/HEAD": "ref: refs/heads/main\n",
@@ -190,7 +195,7 @@ func TestResolve(t *testing.T) {
 
 		{"", nil}, {"main", nil}, {"...", nil},
 	} {
-		got, unread, late := ix.Resolve(context.Background(), Parse(tc.label))
+		got, unread, late := parts(ix.Resolve(context.Background(), Parse(tc.label)))
 		if !reflect.DeepEqual(got, tc.want) || unread != 0 || late {
 			t.Errorf("%s\n got  %+v (%d unread)\n want %+v", tc.label, got, unread, tc.want)
 		}
@@ -242,7 +247,7 @@ func TestResolveIsConfinedToTheRoot(t *testing.T) {
 		strings.Repeat("a.", 5000) + "B.c",
 		strings.Repeat("../", 2000) + "passwd.py:root",
 	} {
-		matches, _, _ := ix.Resolve(context.Background(), Parse(label))
+		matches, _, _ := parts(ix.Resolve(context.Background(), Parse(label)))
 		for _, m := range matches {
 			abs, err := ix.Abs(m.Path)
 			if err != nil || !strings.HasPrefix(abs, ix.Root()+string(filepath.Separator)) || strings.Contains(abs, "Secret") || strings.Contains(abs, "passwd") {
@@ -270,7 +275,7 @@ func TestResolveIsConfinedToTheRoot(t *testing.T) {
 	if abs, err := ix.Abs("api/cmd/api/main.go"); err == nil {
 		t.Errorf("a file that now links outside the root is handed out as %q", abs)
 	}
-	if got, _, _ := ix.Resolve(context.Background(), Parse("main.main")); len(got) != 0 {
+	if got, _, _ := parts(ix.Resolve(context.Background(), Parse("main.main"))); len(got) != 0 {
 		t.Errorf("a file that now links outside the root is matched: %+v", got)
 	}
 }
@@ -286,12 +291,32 @@ func TestResolveSaysWhatItDidNotRead(t *testing.T) {
 	files["cmd/tool007/run.go"] = "package main\n\nfunc main() {}\n"
 	files[fmt.Sprintf("cmd/tool%03d/run.go", maxCandidates+20)] = "package main\n\nfunc main() {}\n"
 	ix := scan(t, tree(t, files))
-	got, unread, late := ix.Resolve(context.Background(), Parse("main.main"))
+	got, unread, late := parts(ix.Resolve(context.Background(), Parse("main.main")))
 	if len(got) != 1 || got[0].Path != "cmd/tool007/run.go" || unread != 50 || late {
 		t.Errorf("got %+v, %d unread; want the one main among the files read and 50 unread", got, unread)
 	}
-	if got, unread, _ := ix.Resolve(context.Background(), Parse("main.absent")); len(got) != 0 || unread != 50 {
+	if got, unread, _ := parts(ix.Resolve(context.Background(), Parse("main.absent"))); len(got) != 0 || unread != 50 {
 		t.Errorf("a miss: %+v, %d unread", got, unread)
+	}
+}
+
+// Only so many matches are offered. The answer says how many more there
+// were, so that the last one offered is not taken for the last there is.
+func TestResolveSaysHowManyMatchesItDoesNotOffer(t *testing.T) {
+	files := map[string]string{}
+	for i := range maxMatches + 3 {
+		files[fmt.Sprintf("cmd/tool%02d/main.go", i)] = "package main\n\nfunc main() {}\n"
+	}
+	ix := scan(t, tree(t, files))
+	found := ix.Resolve(context.Background(), Parse("main.main"))
+	if len(found.Matches) != maxMatches || found.More != 3 || found.Unread != 0 || found.Late {
+		t.Errorf("%d matches, %d more, %d unread, late %v; want %d and 3 more", len(found.Matches), found.More, found.Unread, found.Late, maxMatches)
+	}
+	delete(files, "cmd/tool00/main.go")
+	delete(files, "cmd/tool01/main.go")
+	delete(files, "cmd/tool02/main.go")
+	if found := scan(t, tree(t, files)).Resolve(context.Background(), Parse("main.main")); len(found.Matches) != maxMatches || found.More != 0 {
+		t.Errorf("as many as are offered: %d matches, %d more", len(found.Matches), found.More)
 	}
 }
 
@@ -309,11 +334,11 @@ func TestResolveIsBoundedInTime(t *testing.T) {
 	}))
 	over, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
 	defer cancel()
-	got, unread, late := ix.Resolve(over, Parse("main.main"))
+	got, unread, late := parts(ix.Resolve(over, Parse("main.main")))
 	if len(got) != 0 || unread != 3 || !late {
 		t.Errorf("out of time: %+v, %d unread, late %v; want nothing, 3 unread, late", got, unread, late)
 	}
-	if got, unread, late := ix.Resolve(context.Background(), Parse("main.main")); len(got) != 2 || unread != 0 || late {
+	if got, unread, late := parts(ix.Resolve(context.Background(), Parse("main.main"))); len(got) != 2 || unread != 0 || late {
 		t.Errorf("in time: %+v, %d unread, late %v", got, unread, late)
 	}
 }

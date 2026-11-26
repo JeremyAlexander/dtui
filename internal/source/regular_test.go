@@ -42,7 +42,7 @@ func swapped(t *testing.T, rel string, put func(p string) error) *Index {
 func TestResolveDoesNotReadADirectory(t *testing.T) {
 	for label, rel := range map[string]string{cartFrame: cartJava, goFrame: cartGo} {
 		ix := swapped(t, rel, func(p string) error { return os.Mkdir(p, 0o755) })
-		got, unread, late := ix.Resolve(context.Background(), Parse(label))
+		got, unread, late := parts(ix.Resolve(context.Background(), Parse(label)))
 		if len(got) != 0 || unread != 1 || late {
 			t.Errorf("%s: %+v, %d unread, late %v; want no match, 1 unread and not late", label, got, unread, late)
 		}
@@ -74,7 +74,7 @@ func TestResolveAfterAFileBecameALink(t *testing.T) {
 		}, 1, 0},
 	} {
 		ix := swapped(t, cartJava, tc.put)
-		got, unread, late := ix.Resolve(context.Background(), Parse(cartFrame))
+		got, unread, late := parts(ix.Resolve(context.Background(), Parse(cartFrame)))
 		if len(got) != tc.matches || unread != tc.unread || late {
 			t.Errorf("%s: %+v, %d unread, late %v; want %d matches and %d unread", tc.name, got, unread, late, tc.matches, tc.unread)
 		}
@@ -192,7 +192,7 @@ func TestResolveReadsAFileUpToTheByteBound(t *testing.T) {
 		"cmd/b/main.go": head[:maxFileBytes-len("func")-1] + "\n" + decl,
 	}))
 	want := Match{Path: "cmd/a/main.go", Line: strings.Count(onBound, "\n"), How: Declaration}
-	got, unread, late := ix.Resolve(context.Background(), Parse("main.main"))
+	got, unread, late := parts(ix.Resolve(context.Background(), Parse("main.main")))
 	if len(got) != 1 || got[0] != want || unread != 0 || late {
 		t.Errorf("%+v, %d unread, late %v; want %+v, the declaration that ends on the bound, and not the one past it", got, unread, late, want)
 	}
@@ -347,13 +347,13 @@ func TestResolveCountsTheFileTheTimeRanOutOn(t *testing.T) {
 	}))
 	f := Parse("main.main")
 	asked := []string{}
-	got, unread, late := ix.resolve(context.Background(), f, func(ctx context.Context, rel string, f Frame, pkg string) (Match, holds, reading) {
+	got, unread, late := parts(ix.resolve(context.Background(), f, func(ctx context.Context, rel string, f Frame, pkg string) (Match, holds, reading) {
 		asked = append(asked, rel)
 		if rel == "cmd/b/main.go" {
 			return Match{Path: rel}, holds{}, cut
 		}
 		return ix.locate(ctx, rel, f, pkg)
-	})
+	}))
 	if len(got) != 1 || got[0].Path != "cmd/a/main.go" || unread != 3 || !late {
 		t.Errorf("%+v, %d unread, late %v; want the first file, 3 unread and late", got, unread, late)
 	}

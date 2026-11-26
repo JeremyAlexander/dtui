@@ -61,7 +61,7 @@ func TestResolveDoesNotWaitOnANamedPipe(t *testing.T) {
 		ix := scan(t, root)
 		pipe := pipeAt(t, root, rel)
 		within(t, pipe, func() {
-			got, unread, late := ix.Resolve(context.Background(), Parse(label))
+			got, unread, late := parts(ix.Resolve(context.Background(), Parse(label)))
 			if len(got) != 0 || unread != 1 || late {
 				t.Errorf("%s: %+v, %d unread, late %v; want no match, 1 unread and not late", label, got, unread, late)
 			}
@@ -86,7 +86,7 @@ func TestScanKeepsNoNamedPipe(t *testing.T) {
 		if _, err := ix.Abs("src/Pipe.java"); err == nil {
 			t.Error("a named pipe is in the index")
 		}
-		if got, unread, _ := ix.Resolve(context.Background(), Parse("Pipe.run")); len(got) != 0 || unread != 0 {
+		if got, unread, _ := parts(ix.Resolve(context.Background(), Parse("Pipe.run"))); len(got) != 0 || unread != 0 {
 			t.Errorf("a named pipe is a candidate: %+v, %d unread", got, unread)
 		}
 	})

@@ -58,16 +58,29 @@ func (ix *Index) Likely(f Frame) bool {
 	return len(files) > 0
 }
 
-// Resolve finds the files a frame may have been compiled from, the best
-// first. A runtime's frame has none. It reads the candidate files, up to a
-// bound, to find the line the function is declared on; unread is how many
-// files that could hold the frame were beyond that bound, so that one match
-// is not taken for the only one. Reading stops after ResolveTime as well, or
-// when ctx ends, also in the middle of a file: the files not read to their
-// end are unread too, and late says so. A candidate that cannot be read (it
-// is no longer a regular file, it now leads out of the root, it may not be
-// opened) is unread as well and is not a match; one that is gone is neither.
-func (ix *Index) Resolve(ctx context.Context, f Frame) (matches []Match, unread int, late bool) {
+// Found is the answer of a lookup of one frame.
+type Found struct {
+	// Matches are the files the frame may have been compiled from, the best
+	// first, and at most maxMatches of them.
+	Matches []Match
+	// More is how many further matches there were than Matches holds.
+	More int
+	// Unread is how many files that could hold the frame were not read, so
+	// that one match is not taken for the only one: files beyond the bound
+	// on candidates, files the time did not reach, and files that cannot be
+	// read (no longer a regular file, leading out of the root, not to be
+	// opened). A candidate that is gone is neither unread nor a match.
+	Unread int
+	// Late says that it was the time that ran out, also in the middle of a
+	// file.
+	Late bool
+}
+
+// Resolve finds the files a frame may have been compiled from. A runtime's
+// frame has none. It reads the candidate files, up to a bound, to find the
+// line the function is declared on. Reading stops after ResolveTime as
+// well, or when ctx ends.
+func (ix *Index) Resolve(ctx context.Context, f Frame) Found {
 	ctx, cancel := context.WithTimeout(ctx, maxResolveTime)
 	defer cancel()
 	return ix.resolve(ctx, f, ix.locate)
@@ -75,34 +88,34 @@ func (ix *Index) Resolve(ctx context.Context, f Frame) (matches []Match, unread 
 
 // resolve is Resolve within the time ctx leaves, reading each file with
 // locate.
-func (ix *Index) resolve(ctx context.Context, f Frame, locate func(context.Context, string, Frame, string) (Match, holds, reading)) (matches []Match, unread int, late bool) {
+func (ix *Index) resolve(ctx context.Context, f Frame, locate func(context.Context, string, Frame, string) (Match, holds, reading)) (found Found) {
 	files, need := ix.candidates(f)
 	if len(files) > maxCandidates {
-		files, unread = files[:maxCandidates], len(files)-maxCandidates
+		files, found.Unread = files[:maxCandidates], len(files)-maxCandidates
 	}
 	for i, rel := range files {
 		if ctx.Err() != nil {
-			unread, late = unread+len(files)-i, true
+			found.Unread, found.Late = found.Unread+len(files)-i, true
 			break
 		}
 		m, has, how := locate(ctx, rel, f, need.pkg)
 		if how == cut {
-			unread, late = unread+len(files)-i, true
+			found.Unread, found.Late = found.Unread+len(files)-i, true
 			break
 		}
 		if how == refused {
-			unread++
+			found.Unread++
 		}
 		if how != read || (need.function && !has.function) || (need.pkg != "" && !has.pkg) {
 			continue
 		}
-		matches = append(matches, m)
+		found.Matches = append(found.Matches, m)
 	}
-	slices.SortStableFunc(matches, func(a, b Match) int { return int(b.How) - int(a.How) })
-	if len(matches) > maxMatches {
-		matches = matches[:maxMatches]
+	slices.SortStableFunc(found.Matches, func(a, b Match) int { return int(b.How) - int(a.How) })
+	if len(found.Matches) > maxMatches {
+		found.Matches, found.More = found.Matches[:maxMatches], len(found.Matches)-maxMatches
 	}
-	return matches, unread, late
+	return found
 }
 
 // ResolveTime is the longest Resolve reads files for one frame.
