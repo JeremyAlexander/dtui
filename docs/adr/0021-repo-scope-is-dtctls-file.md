@@ -48,31 +48,32 @@ nothing about the format.
   `pkg/reposcope` crosses into `internal/tui`. The main package locates and
   loads the file from the launch directory and resolves it for the host of the
   selected context, derived as dtctl derives it (the lowercase hostname,
-  without port, path or a trailing dot), not with dtui's own `envKey`. It hands `internal/tui`
-  a value of a type `internal/tui` declares: the entry's name, its segments as
-  `exec.FilterSegmentRef`, a function from a composed query to the rewritten
-  query with an outcome and a reason, and the warning to show. The value is
-  built again on every context switch and travels on `ContextWiring`, so a
-  scope and the executor it belongs to are replaced together, and a context
-  whose host has no entry clears it. A query is sent with the executor, the
-  segments and the scope it was composed under, also when a switch arrives
-  before it is sent, and a reply that belongs to the previous context (a
-  segment list, a segment check) is dropped. Today a query command reads its
-  executor when it runs and a segment list reply is not checked for its
-  context, so the implementing pull request changes both. A switch-off chosen
-  at launch survives the switch. Resolving can walk the repository (dtctl reads a Gradle build's
-  modules for a file with a path entry), so it runs once per launch and once
-  per context switch, never per query, and not on the UI goroutine: the shell
-  paints first, and a view the scope can narrow sends its first query when the
-  scope is known, so no unscoped rows are shown first. Until then such a view
-  shows its loading state. That differs from the segments of `.dtui.yaml`,
-  whose first queries go out unsegmented and are superseded. An edit of the
-  scope file takes effect at the next launch or context switch. The wait, and
-  the segment check where the entry has segments, come before the first rows,
-  which [vision.md](../design/vision.md) budgets at about 2 s; the
-  implementing pull request measures them against it. The browser build
-  (`cmd/web`) has no file system and passes no scope. dtui does not
-  re-implement the lookup, the renderer or the insertion.
+  without port, path or a trailing dot), not with dtui's own `envKey`. It
+  hands `internal/tui` a value of a type `internal/tui` declares: the entry's
+  name, its segments as `exec.FilterSegmentRef`, a function from a composed
+  query to the rewritten query with an outcome and a reason, and the warning
+  to show. The value is built again on every context switch and travels on
+  `ContextWiring`, so a scope and the executor it belongs to are replaced
+  together, and a context whose host has no entry clears it. A query is sent
+  with the executor, the segments and the scope it was composed under, also
+  when a switch arrives before it is sent, and a reply that belongs to the
+  previous context (a segment list, a segment check) is dropped. Today a query
+  command reads its executor when it runs and a segment list reply is not
+  checked for its context, so the implementing pull request changes both. A
+  switch-off chosen at launch survives the switch. Resolving can walk the
+  repository (dtctl reads a Gradle build's modules for a file with a path
+  entry), so it runs once per launch and once per context switch, never per
+  query, and not on the UI goroutine: the shell paints first, and a view the
+  scope can narrow sends its first query when the scope is known, so no
+  unscoped rows are shown first. Until then such a view shows its loading
+  state. That differs from the segments of `.dtui.yaml`, whose first queries
+  go out unsegmented and are superseded. An edit of the scope file takes
+  effect at the next launch or context switch. The wait, and the segment check
+  where the entry has segments, come before the first rows, which
+  [vision.md](../design/vision.md) budgets at about 2 s; the implementing pull
+  request measures them against it. The browser build (`cmd/web`) has no file
+  system and passes no scope. dtui does not re-implement the lookup, the
+  renderer or the insertion.
 - **The entry's filter narrows the logs and spans lists.** The rewrite is
   applied to the composed query of `:logs` and `:traces`, after the lens, the
   facets and the searches are in it. The pattern analysis (`a`) takes that
@@ -140,16 +141,17 @@ nothing about the format.
   all and the header says why, since dropping some segments would change the
   rows unseen. They belong to the scope, not to the selection: `alt+s` pauses
   the user's segments only, the picker shows the entry's as locked rows, and
-  the switch for the scope switches them with the filter. While `alt+s` pauses the user's segments, a segment both name is sent as the
-  entry's, with the entry's variables, and with the user's again when the
-  pause ends. Before a scoped query is sent dtui checks, once per context and
-  not per view or per query, that the environment returns each of the entry's
-  segments to this user. If one is missing or not
-  readable, the whole entry is not applied, filter included: half a scope
-  shows rows that look scoped. If the check itself fails, the entry is not
-  applied either, the header says the check failed, and a refresh tries again.
-  dtctl fails the command in that last case; dtui shows the page, because a
-  header is read on every page where a script reads only an exit code.
+  the switch for the scope switches them with the filter. While `alt+s` pauses
+  the user's segments, a segment both name is sent as the entry's, with the
+  entry's variables, and with the user's again when the pause ends. Before a
+  scoped query is sent dtui checks, once per context and not per view or per
+  query, that the environment returns each of the entry's segments to this
+  user. If one is missing or not readable, the whole entry is not applied,
+  filter included: half a scope shows rows that look scoped. If the check
+  itself fails, the entry is not applied either, the header says the check
+  failed, and a refresh tries again. dtctl fails the command in that last
+  case; dtui shows the page, because a header is read on every page where a
+  script reads only an exit code.
 - **The workspace's segments stay independent.** `.dtui.yaml` segments and the
   entry's filter are ANDed and neither replaces the other.
 - **Claim what was sent.** The header names the entry on every view whose
@@ -247,12 +249,12 @@ header. A view that carries neither shows no scope.
   use. dtui's context is session-local (`--context`, `DTCTL_CONTEXT` or the
   workspace file), so without it a pasted command runs on dtctl's current
   context. Every argument is quoted for a POSIX shell by one helper of the
-  catalog, which every echo goes through, and no whitespace inside the query is folded: a service name may hold an
-  apostrophe or two spaces, and a segment's variables are joined with `&`.
-  Today's `echoQuery` wraps the text in bare single quotes and folds
-  whitespace, which would let a committed name end the quoting and run the
-  rest as shell commands. It is corrected before any code reads the scope
-  file.
+  catalog, which every echo goes through, and no whitespace inside the query
+  is folded: a service name may hold an apostrophe or two spaces, and a
+  segment's variables are joined with `&`. Today's `echoQuery` wraps the text
+  in bare single quotes and folds whitespace, which would let a committed name
+  end the quoting and run the rest as shell commands. It is corrected before
+  any code reads the scope file.
 - While an entry resolves for the session's context, every `dtctl query` echo
   starts with `DTCTL_NO_REPO_SCOPE=1 `, whether the view was scoped or not and
   whether the scope is switched on or off. dtctl run in that directory would
@@ -285,13 +287,14 @@ header. A view that carries neither shows no scope.
   the query that was sent; a context switch from one host to a second and on
   to a host without an entry, asserting the request each executor receives; a
   command of the first context released after the switch, asserting that the
-  second executor receives nothing; an entry that holds only segments; an entry whose filter is refused while its
-  segments are sent; one segment id named by the entry and by the user with
-  different variables, and the roster's dimensions after `alt+s` paused the
-  user's; eleven segments in total; a missing segment and a
-  failed check; `:traces` without `--lens` under an applied filter; a pinned
-  `:logs` page; the analyzer input of the pattern analysis for an entry that
-  holds only segments and for a bound name with two spaces.
+  second executor receives nothing; an entry that holds only segments; an
+  entry whose filter is refused while its segments are sent; one segment id
+  named by the entry and by the user with different variables, and the
+  roster's dimensions after `alt+s` paused the user's; eleven segments in
+  total; a missing segment and a failed check; `:traces` without `--lens`
+  under an applied filter; a pinned `:logs` page; the analyzer input of the
+  pattern analysis for an entry that holds only segments and for a bound name
+  with two spaces.
 - Zero configuration still works
   ([ADR-0010](0010-curated-defaults-runtime-discovery.md)): no scope file
   means no scope, and every view opens as it does today.
