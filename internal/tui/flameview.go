@@ -473,7 +473,7 @@ func (v *flameView) handleKey(msg tea.KeyMsg) tea.Cmd {
 	key := msg.String()
 	switch key {
 	case "tab", "shift+tab":
-		return func() tea.Msg { return popViewMsg{} }
+		return func() tea.Msg { return popViewMsg{view: v} }
 	case "[", "]":
 		step := 1
 		if key == "[" {

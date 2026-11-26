@@ -238,10 +238,11 @@ type bodySizeMsg struct {
 	width, height int
 }
 
-// popViewMsg leaves the visible view for the one it covers, as esc does: a
-// view sends it for a key of its own that means "back" (tab on the flame
-// graph returns to the functions).
-type popViewMsg struct{}
+// popViewMsg leaves the view that sends it for the one it covers, as esc
+// does: for a key of its own that means "back" (tab on the flame graph
+// returns to the functions). It names its sender, so that one that arrives
+// after the view was left leaves nothing else.
+type popViewMsg struct{ view viewModel }
 
 // claimKey is a no-op command a view returns to consume a key press the app
 // would otherwise act on itself, e.g. esc that clears a filter instead of

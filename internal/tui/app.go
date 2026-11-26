@@ -510,6 +510,9 @@ func (a *app) dispatch(msg tea.Msg) tea.Cmd {
 		return a.navigate(newMetricChartView(a.ds, msg.key, entity, a.tf), false)
 
 	case flameOpenMsg:
+		if a.top() == viewModel(msg.view) {
+			return nil // a second tab, read before the first one's graph was on top
+		}
 		return tea.Batch(a.navigate(msg.view, false), a.ds.source.warm())
 
 	case sourceAskMsg:
@@ -527,6 +530,9 @@ func (a *app) dispatch(msg tea.Msg) tea.Cmd {
 		return msg.view.Update(msg)
 
 	case popViewMsg:
+		if a.top() != msg.view {
+			return nil // the view that asked has been left already
+		}
 		return a.pop()
 
 	case waterfallMsg:

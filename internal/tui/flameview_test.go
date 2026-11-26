@@ -320,6 +320,42 @@ func TestFlameGraphSearchLine(t *testing.T) {
 	}
 }
 
+// Keys can arrive faster than the screen answers them (a paste, a slow
+// connection): two tabs are then both read by the view that was on top for
+// the first. The second must not act on a view the first has already left:
+// neither a second graph on the trail nor the functions table gone with it.
+func TestFlameGraphTabTwiceBeforeTheFirstIsAnswered(t *testing.T) {
+	twice := func(a *app) {
+		_, first := a.Update(key("tab"))
+		_, second := a.Update(key("tab"))
+		deliver(a, first)
+		deliver(a, second)
+	}
+	trail := func(a *app) string {
+		var names []string
+		for _, v := range a.stack {
+			names = append(names, fmt.Sprintf("%T", v))
+		}
+		return strings.Join(names, " ")
+	}
+
+	a, fv := walkFlame(t)
+	press(a, key("tab"))
+	twice(a)
+	if got := trail(a); got != "*tui.tableView *tui.flameView" || a.top() != viewModel(fv) {
+		t.Errorf("two tabs on the functions left the trail %s", got)
+	}
+
+	// The functions table with a view under it: the processes it was
+	// opened from.
+	a, fv = walkFlame(t)
+	a.stack = append([]viewModel{newTableView(a.ds, catalog.Lookup("problems"), catalog.Scope{})}, a.stack...)
+	twice(a)
+	if got := trail(a); got != "*tui.tableView *tui.tableView" || a.top() != a.stack[1] || a.stack[1].(*tableView).flame != fv {
+		t.Errorf("two tabs on the graph left the trail %s", got)
+	}
+}
+
 // A pattern longer than the terminal scrolls inside the search line: no line
 // of the screen gets wider than the terminal, and what was typed last stays
 // in view.
