@@ -221,7 +221,9 @@ func goFirstGoroutine(lines []string) []StackFrame {
 			if len(out) > 0 {
 				return out
 			}
-		case framed:
+		// Few file lines hold what shows a dependency; only those are read
+		// for where their path ends.
+		case framed && goDependencyRe.MatchString(line):
 			if m := goFileRe.FindStringSubmatch(line); m != nil && goDependencyRe.MatchString(m[1]) {
 				out[len(out)-1].Dependency = true
 			}
