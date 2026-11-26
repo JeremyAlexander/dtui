@@ -487,3 +487,24 @@ func TestEscapeFieldExported(t *testing.T) {
 		t.Errorf("EscapeField(map-index) = %q, want base[`key`]", got)
 	}
 }
+
+// Counting a trailing `| fields` as tail moves where stages land in a query
+// that ends that way. Only a sampled view's query may: every other query,
+// in every lens, still ends on its sort or limit line, so the rule changed
+// nothing for it.
+func TestOnlyASampledQueryProjectsAfterItsTail(t *testing.T) {
+	for _, spec := range All() {
+		if spec.Query == nil {
+			continue
+		}
+		for lens := range max(1, len(spec.Lenses)) {
+			dql := StageLines(spec.Query(Scope{Timeframe: DefaultTimeframe, Lens: lens}))
+			lines := strings.Split(dql, "\n")
+			projected := !sortOrLimit(lines[len(lines)-1])
+			if projected != (spec.Sample != nil) {
+				t.Errorf("%s (lens %d): ends on %q; only a view with a Sample projects after its tail",
+					spec.Name, lens, lines[len(lines)-1])
+			}
+		}
+	}
+}
