@@ -6,7 +6,7 @@
  all threads, leaf: total
  SELF%     SELF  SELF ▇    TOTAL%    TOTAL  TOTAL ▇   PATHS  FUNCTION
 
-  ∅ no lock samples in this window — [ and ] switch the thread state
+       ∅ no lock samples in this window — [ and ] switch the thread state
 
 
 

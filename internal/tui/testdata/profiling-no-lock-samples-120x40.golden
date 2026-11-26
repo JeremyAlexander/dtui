@@ -5,7 +5,7 @@
  last 2h (10:00–12:00 UTC) · 0 lock samples (stacks seen, not time) · all threads, leaf: total
  SELF%     SELF  SELF ▇    TOTAL%    TOTAL  TOTAL ▇   PATHS  FUNCTION
 
-  ∅ no lock samples in this window — [ and ] switch the thread state
+                           ∅ no lock samples in this window — [ and ] switch the thread state
 
 
 

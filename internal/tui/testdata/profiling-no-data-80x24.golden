@@ -6,7 +6,7 @@
  all threads, leaf: total
  SELF%     SELF  SELF ▇    TOTAL%    TOTAL  TOTAL ▇   PATHS  FUNCTION
 
-  ∅ no samples in this window — the process may have been idle or restarted
+   ∅ no samples in this window — the process may have been idle or restarted
 
 
 

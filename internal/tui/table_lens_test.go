@@ -158,3 +158,53 @@ func TestTableHeaderAndRows(t *testing.T) {
 		t.Errorf("visible rows must stop at the height:\n%q", out)
 	}
 }
+
+// emptyLine is the line of a rendered table that carries its empty message.
+func emptyLine(t *testing.T, out string) string {
+	t.Helper()
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "∅") {
+			return strings.TrimRight(line, " ")
+		}
+	}
+	t.Fatalf("no empty message in:\n%s", out)
+	return ""
+}
+
+// The empty message of a table sits in the middle of the body, in every view:
+// a DQL view, one with lenses, an API view.
+func TestEmptyMessageIsCentred(t *testing.T) {
+	for _, tc := range []struct {
+		view  string
+		width int
+		want  string
+	}{
+		{"hosts", 100, strings.Repeat(" ", 34) + "∅ no data in timeframe (last 2h)"},
+		{"hosts", 81, strings.Repeat(" ", 24) + "∅ no data in timeframe (last 2h)"},
+		{"slos", 100, strings.Repeat(" ", 34) + "∅ no data in timeframe (last 2h)"},
+		{"traces", 100, strings.Repeat(" ", 23) + "∅ no roots in timeframe (last 2h) — [/] switches lens"},
+	} {
+		v := newTableView(&dataSource{previewOff: true}, catalog.Lookup(tc.view), catalog.Scope{Timeframe: catalog.DefaultTimeframe})
+		if got := emptyLine(t, ansi.Strip(v.View(tc.width, 12))); got != tc.want {
+			t.Errorf("%s at %d columns:\n got %q\nwant %q", tc.view, tc.width, got, tc.want)
+		}
+	}
+}
+
+// A message wider than the body wraps inside it instead of being cut.
+func TestLongEmptyMessageWraps(t *testing.T) {
+	spec := &catalog.Spec{Name: "t", Columns: []catalog.Column{{Title: "A", Field: "a"}},
+		Empty: func(catalog.Scope, map[string]any) string {
+			return "nothing was sampled in this window because the process was idle"
+		}}
+	v := newTableView(&dataSource{previewOff: true}, spec, catalog.Scope{})
+	lines := strings.Split(strings.TrimRight(ansi.Strip(v.View(40, 12)), "\n "), "\n")
+	got := []string{strings.TrimRight(lines[len(lines)-2], " "), strings.TrimRight(lines[len(lines)-1], " ")}
+	want := []string{"  ∅ nothing was sampled in this window", "  because the process was idle"}
+	if got[0] != want[0] || got[1] != want[1] {
+		t.Errorf("wrapped empty message:\n got %q\nwant %q", got, want)
+	}
+	if got := emptyLine(t, ansi.Strip(v.View(100, 12))); got != strings.Repeat(" ", 17)+"∅ nothing was sampled in this window because the process was idle" {
+		t.Errorf("the same message where it fits is centred, got %q", got)
+	}
+}

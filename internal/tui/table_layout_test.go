@@ -2,7 +2,10 @@ package tui
 
 import (
 	"slices"
+	"strings"
 	"testing"
+
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/dynatrace-oss/dtui/internal/tui/catalog"
 )
@@ -104,5 +107,34 @@ func TestTableSortKeysReportStatus(t *testing.T) {
 	}
 	if v.rows[0]["a"] != "x" {
 		t.Errorf("ascending text sort should put x first, got %v", v.rows[0])
+	}
+}
+
+// A caption and a footnote take lines from the rows, never from each other:
+// on a body too short for all of them the footnote still has its own line and
+// a page is still at least one row.
+func TestFootnoteKeepsItsOwnLine(t *testing.T) {
+	spec := &catalog.Spec{Name: "t", API: "t",
+		Columns:  []catalog.Column{{Title: "A", Field: "a"}},
+		Lenses:   []catalog.Lens{{Name: "one"}, {Name: "two"}},
+		Caption:  func(catalog.Scope, map[string]any) []string { return []string{"caption"} },
+		Footnote: func(catalog.Scope, map[string]any, map[string]any) string { return "* footnote" },
+	}
+	v := newTableView(&dataSource{previewOff: true}, spec, catalog.Scope{})
+	v.all = []map[string]any{{"a": "row-0"}, {"a": "row-1"}, {"a": "row-2"}}
+	v.applyFilter()
+
+	for _, height := range []int{12, 6, 5, 4} {
+		lines := strings.Split(ansi.Strip(v.View(60, height)), "\n")
+		last := strings.TrimSpace(lines[len(lines)-1])
+		if last != "* footnote" {
+			t.Errorf("height %d: last line is %q, want the footnote alone", height, last)
+		}
+	}
+	for _, c := range []struct{ h, want int }{{12, 6}, {7, 1}, {6, 1}, {5, 1}, {4, 10}} {
+		v.height = c.h
+		if got := v.pageSize(); got != c.want {
+			t.Errorf("pageSize at height %d = %d, want %d", c.h, got, c.want)
+		}
 	}
 }

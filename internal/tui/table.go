@@ -1050,20 +1050,22 @@ func (v *tableView) selected() map[string]any {
 }
 
 func (v *tableView) pageSize() int {
-	chrome := 3 + len(v.captionLines(v.tableWidth()))
+	chrome := 3
 	if len(v.spec.Lenses) > 0 {
 		chrome++ // the lens strip line
-	}
-	if v.footnote() != "" {
-		chrome++
 	}
 	if v.previewBottom() {
 		chrome += previewBottomH + 1 // panel plus its rule
 	}
-	if v.height > chrome {
-		return v.height - chrome
+	if v.height <= chrome {
+		return 10 // not sized yet
 	}
-	return 10
+	// A caption and a footnote take their lines from the rows, down to one.
+	chrome += len(v.captionLines(v.tableWidth()))
+	if v.footnote() != "" {
+		chrome++
+	}
+	return max(v.height-chrome, 1)
 }
 
 // applyFilter recomputes rows from the fetched page (client-side, consistent
@@ -1124,7 +1126,7 @@ func (v *tableView) captionLines(width int) []string {
 		switch {
 		case line == "":
 			line = seg
-		case lipgloss.Width(line)+len(sep)+lipgloss.Width(seg) <= width-2:
+		case lipgloss.Width(line)+lipgloss.Width(sep)+lipgloss.Width(seg) <= width-2:
 			line += sep + seg
 		default:
 			lines = append(lines, line)
@@ -1285,15 +1287,19 @@ func (v *tableView) renderTable(width, height int) string {
 				empty = fmt.Sprintf("∅ no %s in timeframe (last %s) — [/] switches lens",
 					what, v.scope.Timeframe.Label)
 			}
-			b.WriteString("\n" + lipgloss.PlaceHorizontal(width, lipgloss.Center, theme.Dim.Render(wrap(empty, width-4))))
+			// Only a message wider than the body wraps: wrapping pads to the
+			// wrap width, which would push a short one to the left margin.
+			if lipgloss.Width(empty) > width-4 {
+				empty = wrap(empty, width-4)
+			}
+			b.WriteString("\n" + lipgloss.PlaceHorizontal(width, lipgloss.Center, theme.Dim.Render(empty)))
 		}
 	}
 	if foot != "" {
-		// Pinned to the body's last line, under however many rows there are.
-		if gap := height - 1 - strings.Count(b.String(), "\n"); gap > 0 {
-			b.WriteString(strings.Repeat("\n", gap))
-		}
-		b.WriteString(" " + theme.Dim.Render(ansi.Truncate(foot, width-1, "…")))
+		// Pinned to the body's last line, under however many rows there are,
+		// and always on a line of its own.
+		gap := max(height-1-strings.Count(b.String(), "\n"), 1)
+		b.WriteString(strings.Repeat("\n", gap) + " " + theme.Dim.Render(ansi.Truncate(foot, width-1, "…")))
 	}
 	return b.String()
 }

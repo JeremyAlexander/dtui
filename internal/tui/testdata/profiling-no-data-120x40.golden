@@ -5,7 +5,7 @@
  last 2h (10:00–12:00 UTC) · 0 running samples (stacks seen, not time) · all threads, leaf: total
  SELF%     SELF  SELF ▇    TOTAL%    TOTAL  TOTAL ▇   PATHS  FUNCTION
 
-  ∅ no samples in this window — the process may have been idle or restarted
+                       ∅ no samples in this window — the process may have been idle or restarted
 
 
 
