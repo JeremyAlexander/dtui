@@ -1,4 +1,7 @@
+e1:2e4a458c71da	dotnet: a namespace of its own
+e1:2e4a458c71da	dotnet: as Mono prints it
 e1:1db4a2a583dd	dotnet: baseline
+e1:2e4a458c71da	dotnet: one event whose stack text holds the inner exception
 e1:1db4a2a583dd	dotnet: other state machine numbers
 e1:60fce246ec5d	go: a module path without a host, under a router from the module cache
 e1:aa0a6599e206	go: another goroutine, arguments and offsets
@@ -18,16 +21,46 @@ e1:659adbb1b972	java: sendError from a resource handler, under the same filters
 e1:9b9e9062b219	java: sendError from the default servlet, under two filters
 e1:9b9e9062b219	java: the same under another container build
 e1:fbfc39713625	java: the wrapper alone
+e1:731c50d6f8fb	message: a URL
+e1:d8d4393aa116	message: a UUID
+e1:625051314fb8	message: a bare IPv6 address
+e1:c1591c44fdba	message: a database error code
+e1:90b7c162ee08	message: a date and a time
+e1:2ce2fcbfa917	message: a file
+e1:2ce2fcbfa917	message: a file on another system
+e1:a1da2f6386e6	message: a hex run
+e1:a1da2f6386e6	message: a pointer
+e1:3cf04d20bb73	message: a prefixed id
+e1:b69cd7ec9e61	message: a route
+e1:22bf3d19dd0a	message: a status code
+e1:90b7c162ee08	message: a timestamp
+e1:625051314fb8	message: an IPv4 address and port
+e1:625051314fb8	message: an IPv6 address and port
 e1:0f6361b9f805	message: an unknown stack notation
+e1:731c50d6f8fb	message: another URL
+e1:d8d4393aa116	message: another UUID
+e1:7b436a6a3404	message: another database error code
+e1:8e57e456c7da	message: another kind of prefixed id
+e1:3cf04d20bb73	message: another prefixed id
+e1:185be79a9d50	message: another route
+e1:ae36b3e9a436	message: another status code
 e1:0797a9e5ed04	message: another type, same message
 e1:fcb400accbc7	message: baseline
+e1:02b4cf849644	message: numbers with signs and units
 e1:fcb400accbc7	message: other ids
+e1:02b4cf849644	message: other numbers and units
+e1:797786ba3dbd	message: quoted values
+e1:797786ba3dbd	message: quoted values, other quotes
+e1:b69cd7ec9e61	message: the route with another id
 e1:d488fbab93f9	node: async frames
 e1:d488fbab93f9	node: baseline
 e1:d488fbab93f9	node: deployed under another root
+e1:6950e460f231	node: in a browser
+e1:6950e460f231	node: in a browser, another host and build
 e1:012201a68864	python: baseline
 e1:012201a68864	python: deployed into a release directory
 e1:012201a68864	python: other line numbers and interpreter
+e1:2f4d1b752254	python: raised in a task group
 e1:ab20807b6ead	python: same function name in another file
 e1:ce7e09661781	type: no message, no stack
 e1:ce7e09661781	type: without a chain the last event counts

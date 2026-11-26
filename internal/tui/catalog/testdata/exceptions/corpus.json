@@ -264,6 +264,30 @@
     ]
   },
   {
+    "name": "node: in a browser",
+    "group": "browser-cart-add",
+    "rung": "app frames",
+    "events": [
+      {
+        "type": "TypeError",
+        "message": "undefined is not an object (evaluating 'item.sku')",
+        "stack": "browser-sku-a.txt"
+      }
+    ]
+  },
+  {
+    "name": "node: in a browser, another host and build",
+    "group": "browser-cart-add",
+    "rung": "app frames",
+    "events": [
+      {
+        "type": "TypeError",
+        "message": "undefined is not an object (evaluating 'item.sku')",
+        "stack": "browser-sku-b.txt"
+      }
+    ]
+  },
+  {
     "name": "dotnet: baseline",
     "group": "dotnet-cart-add",
     "rung": "app frames",
@@ -284,6 +308,42 @@
         "type": "System.InvalidOperationException",
         "message": "Cart 1190 is locked",
         "stack": "dotnet-locked-b.txt"
+      }
+    ]
+  },
+  {
+    "name": "dotnet: a namespace of its own",
+    "group": "dotnet-example-cart-add",
+    "rung": "app frames",
+    "events": [
+      {
+        "type": "System.InvalidOperationException",
+        "message": "Cart 7 is locked",
+        "stack": "dotnet-locked-plain.txt"
+      }
+    ]
+  },
+  {
+    "name": "dotnet: one event whose stack text holds the inner exception",
+    "group": "dotnet-example-cart-add",
+    "rung": "app frames",
+    "events": [
+      {
+        "type": "Example.Shop.Checkout.CheckoutException",
+        "message": "checkout failed",
+        "stack": "dotnet-locked-inner.txt"
+      }
+    ]
+  },
+  {
+    "name": "dotnet: as Mono prints it",
+    "group": "dotnet-example-cart-add",
+    "rung": "app frames",
+    "events": [
+      {
+        "type": "System.InvalidOperationException",
+        "message": "Cart 1190 is locked",
+        "stack": "dotnet-locked-mono.txt"
       }
     ]
   },
@@ -336,6 +396,18 @@
     ]
   },
   {
+    "name": "python: raised in a task group",
+    "group": "python-views-add",
+    "rung": "app frames",
+    "events": [
+      {
+        "type": "ExceptionGroup",
+        "message": "unhandled errors in a TaskGroup (1 sub-exception)",
+        "stack": "python-locked-group.txt"
+      }
+    ]
+  },
+  {
     "name": "message: baseline",
     "group": "message-timeout",
     "rung": "message",
@@ -377,6 +449,303 @@
         "type": "NoMethodError",
         "message": "undefined method 'sku' for nil",
         "stack": "ruby-nil.txt"
+      }
+    ]
+  },
+  {
+    "name": "message: quoted values",
+    "group": "message-quoted",
+    "rung": "message",
+    "events": [
+      {
+        "type": "com.example.shop.ShopException",
+        "message": "no handler for \"checkout\""
+      }
+    ]
+  },
+  {
+    "name": "message: quoted values, other quotes",
+    "group": "message-quoted",
+    "rung": "message",
+    "events": [
+      {
+        "type": "com.example.shop.ShopException",
+        "message": "no handler for 'refund'"
+      }
+    ]
+  },
+  {
+    "name": "message: a URL",
+    "group": "message-url",
+    "rung": "message",
+    "events": [
+      {
+        "type": "com.example.shop.ShopException",
+        "message": "GET https://shop.example.com/cart/7 failed"
+      }
+    ]
+  },
+  {
+    "name": "message: another URL",
+    "group": "message-url",
+    "rung": "message",
+    "events": [
+      {
+        "type": "com.example.shop.ShopException",
+        "message": "GET http://api.example.net/orders?id=3 failed"
+      }
+    ]
+  },
+  {
+    "name": "message: a UUID",
+    "group": "message-uuid",
+    "rung": "message",
+    "events": [
+      {
+        "type": "com.example.shop.ShopException",
+        "message": "session 3f2b8c1e-9d4a-4b7c-8e21-0a1b2c3d4e5f expired"
+      }
+    ]
+  },
+  {
+    "name": "message: another UUID",
+    "group": "message-uuid",
+    "rung": "message",
+    "events": [
+      {
+        "type": "com.example.shop.ShopException",
+        "message": "session 0A1B2C3D-4E5F-4B7C-8E21-3F2B8C1E9D4A expired"
+      }
+    ]
+  },
+  {
+    "name": "message: an IPv4 address and port",
+    "group": "message-ip",
+    "rung": "message",
+    "events": [
+      {
+        "type": "com.example.shop.ShopException",
+        "message": "connect to 10.0.0.7:443 refused"
+      }
+    ]
+  },
+  {
+    "name": "message: an IPv6 address and port",
+    "group": "message-ip",
+    "rung": "message",
+    "events": [
+      {
+        "type": "com.example.shop.ShopException",
+        "message": "connect to [2001:db8::1]:443 refused"
+      }
+    ]
+  },
+  {
+    "name": "message: a bare IPv6 address",
+    "group": "message-ip",
+    "rung": "message",
+    "events": [
+      {
+        "type": "com.example.shop.ShopException",
+        "message": "connect to 2001:db8::7 refused"
+      }
+    ]
+  },
+  {
+    "name": "message: a timestamp",
+    "group": "message-date",
+    "rung": "message",
+    "events": [
+      {
+        "type": "com.example.shop.ShopException",
+        "message": "job started 2026-03-01T10:11:12Z overran"
+      }
+    ]
+  },
+  {
+    "name": "message: a date and a time",
+    "group": "message-date",
+    "rung": "message",
+    "events": [
+      {
+        "type": "com.example.shop.ShopException",
+        "message": "job started 2025-12-24 08:00:01 overran"
+      }
+    ]
+  },
+  {
+    "name": "message: a file",
+    "group": "message-file",
+    "rung": "message",
+    "events": [
+      {
+        "type": "com.example.shop.ShopException",
+        "message": "cannot open /var/data/export/cart-7.csv"
+      }
+    ]
+  },
+  {
+    "name": "message: a file on another system",
+    "group": "message-file",
+    "rung": "message",
+    "events": [
+      {
+        "type": "com.example.shop.ShopException",
+        "message": "cannot open C:\\data\\export\\cart-9.csv"
+      }
+    ]
+  },
+  {
+    "name": "message: a route",
+    "group": "message-route-items",
+    "rung": "message",
+    "events": [
+      {
+        "type": "com.example.shop.ShopException",
+        "message": "GET /cart/7/items failed"
+      }
+    ]
+  },
+  {
+    "name": "message: the route with another id",
+    "group": "message-route-items",
+    "rung": "message",
+    "events": [
+      {
+        "type": "com.example.shop.ShopException",
+        "message": "GET /cart/1190/items failed"
+      }
+    ]
+  },
+  {
+    "name": "message: another route",
+    "group": "message-route-pay",
+    "rung": "message",
+    "events": [
+      {
+        "type": "com.example.shop.ShopException",
+        "message": "GET /checkout/pay failed"
+      }
+    ]
+  },
+  {
+    "name": "message: a pointer",
+    "group": "message-hex",
+    "rung": "message",
+    "events": [
+      {
+        "type": "com.example.shop.ShopException",
+        "message": "object at 0x7f3a2c001b40 is stale"
+      }
+    ]
+  },
+  {
+    "name": "message: a hex run",
+    "group": "message-hex",
+    "rung": "message",
+    "events": [
+      {
+        "type": "com.example.shop.ShopException",
+        "message": "object at 9fceb02d0ae598e9 is stale"
+      }
+    ]
+  },
+  {
+    "name": "message: a prefixed id",
+    "group": "message-id",
+    "rung": "message",
+    "events": [
+      {
+        "type": "com.example.shop.ShopException",
+        "message": "payment pay_1Nq8Zt2eZvKYlo2C declined"
+      }
+    ]
+  },
+  {
+    "name": "message: another prefixed id",
+    "group": "message-id",
+    "rung": "message",
+    "events": [
+      {
+        "type": "com.example.shop.ShopException",
+        "message": "payment pay_3Kx9Ab7cDwLMnp4E declined"
+      }
+    ]
+  },
+  {
+    "name": "message: another kind of prefixed id",
+    "group": "message-id-refund",
+    "rung": "message",
+    "events": [
+      {
+        "type": "com.example.shop.ShopException",
+        "message": "payment re_3Kx9Ab7cDwLMnp4E declined"
+      }
+    ]
+  },
+  {
+    "name": "message: numbers with signs and units",
+    "group": "message-number",
+    "rung": "message",
+    "events": [
+      {
+        "type": "com.example.shop.ShopException",
+        "message": "balance is -12.50 after 3 retries in 250ms"
+      }
+    ]
+  },
+  {
+    "name": "message: other numbers and units",
+    "group": "message-number",
+    "rung": "message",
+    "events": [
+      {
+        "type": "com.example.shop.ShopException",
+        "message": "balance is 7 after 12 retries in 3s"
+      }
+    ]
+  },
+  {
+    "name": "message: a status code",
+    "group": "message-http-404",
+    "rung": "message",
+    "events": [
+      {
+        "type": "com.example.shop.ShopException",
+        "message": "upstream returned HTTP 404"
+      }
+    ]
+  },
+  {
+    "name": "message: another status code",
+    "group": "message-http-500",
+    "rung": "message",
+    "events": [
+      {
+        "type": "com.example.shop.ShopException",
+        "message": "upstream returned HTTP 500"
+      }
+    ]
+  },
+  {
+    "name": "message: a database error code",
+    "group": "message-ora-942",
+    "rung": "message",
+    "events": [
+      {
+        "type": "com.example.shop.ShopException",
+        "message": "ORA-00942: table or view does not exist"
+      }
+    ]
+  },
+  {
+    "name": "message: another database error code",
+    "group": "message-ora-1017",
+    "rung": "message",
+    "events": [
+      {
+        "type": "com.example.shop.ShopException",
+        "message": "ORA-01017: table or view does not exist"
       }
     ]
   },
