@@ -320,6 +320,33 @@ func TestFlameGraphSearchLine(t *testing.T) {
 	}
 }
 
+// A pattern longer than the terminal scrolls inside the search line: no line
+// of the screen gets wider than the terminal, and what was typed last stays
+// in view.
+func TestFlameGraphSearchLineFitsALongPattern(t *testing.T) {
+	a, fv := walkFlame(t)
+	press(a, key("/"))
+	for _, r := range strings.Repeat("io\\.example\\.tracing|", 12) + "theEnd" {
+		press(a, key(string(r)))
+	}
+	for _, width := range []int{flameMinWidth, 80, 200} {
+		a.Update(tea.WindowSizeMsg{Width: width, Height: 24})
+		out := screen(a)
+		for i, line := range strings.Split(out, "\n") {
+			if w := lipgloss.Width(line); w > width {
+				t.Fatalf("at %d columns line %d is %d cells wide:\n%s", width, i, w, out)
+			}
+		}
+		if !strings.Contains(out, "theEnd") {
+			t.Errorf("at %d columns the end of the pattern is out of view:\n%s", width, out)
+		}
+	}
+	press(a, key("enter"))
+	if want := strings.Repeat("io\\.example\\.tracing|", 12) + "theEnd"; fv.graph.Pattern() != want {
+		t.Errorf("searched for %q, want all that was typed", fv.graph.Pattern())
+	}
+}
+
 // What the table hands over: its thread state and the function of its
 // selected row, each only when it changed since the last time, so that what
 // was set in the graph stays until the table says something new.

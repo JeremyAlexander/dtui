@@ -8,6 +8,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/dynatrace-oss/dtui/internal/tui/catalog"
 	"github.com/dynatrace-oss/dtui/internal/tui/flame"
@@ -450,6 +451,12 @@ func (v *flameView) built(msg flameBuiltMsg) {
 // levels there is room for depends on the lines the selected frame needs.
 func (v *flameView) resize(width, height int) {
 	v.width, v.height = width, height
+	// The search line scrolls inside the body's width: a lead, the prompt
+	// and the cursor's cell are not the pattern's.
+	if w := max(width-lipgloss.Width(" "+v.input.Prompt)-2, 1); w != v.input.Width {
+		v.input.Width = w
+		v.input.SetCursor(v.input.Position()) // has the input scroll to its new width
+	}
 	if v.graph == nil {
 		return
 	}
