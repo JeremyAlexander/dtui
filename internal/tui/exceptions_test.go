@@ -458,3 +458,22 @@ func TestExceptionsAltEnterSearchesTheSpans(t *testing.T) {
 		t.Errorf("the search did not reach the query:\n%s", tv.DQL())
 	}
 }
+
+// A sample that was cut short and holds nothing says only that: the table
+// must not add that the timeframe has no data, which nothing showed.
+func TestExceptionsEmptyCutSampleClaimsNoEmptyTimeframe(t *testing.T) {
+	for _, notices := range [][]exec.QueryNotification{
+		warning("SCAN_LIMIT_GBYTES", ""), warning("FETCH_TIMEOUT", ""), warning("BYTE_LIMIT_ADDED", ""),
+	} {
+		a := testApp(t, "exceptions")
+		disablePreview(a)
+		seedSample(t, a, nil, notices)
+		out := screen(a)
+		if strings.Contains(out, "no data in timeframe") {
+			t.Errorf("%s: an empty cut sample reads as an empty timeframe:\n%s", notices[0].NotificationType, out)
+		}
+		if !strings.Contains(out, "hit: ") && !strings.Contains(out, "timed out: ") {
+			t.Errorf("%s: no sample line:\n%s", notices[0].NotificationType, out)
+		}
+	}
+}

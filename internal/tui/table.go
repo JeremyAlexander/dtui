@@ -1180,7 +1180,10 @@ func (v *tableView) renderTable(width, height int) string {
 	if len(v.rows) == 0 && !v.loading {
 		if v.filter != "" && len(v.all) > 0 {
 			b.WriteString(theme.Dim.Render(fmt.Sprintf("  no rows match %q (%d fetched — esc clears the filter)", v.filter, len(v.all))))
-		} else {
+		} else if _, cut := v.sampleLine(); !cut {
+			// A sample that was cut short is not known to be empty: its
+			// line above the header says what happened, and nothing here
+			// may add that the timeframe holds no data.
 			empty := "∅ no data in timeframe (last " + v.scope.Timeframe.Label + ")"
 			if len(v.spec.Lenses) > 0 {
 				what := v.spec.LensAt(v.scope.Lens).Name
