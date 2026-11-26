@@ -903,3 +903,18 @@ func BenchmarkFlameGraphZoom(b *testing.B) {
 		}
 	}
 }
+
+// With the details off, d has nothing to give room to: it says so and
+// changes nothing, so P brings the details back the size they were.
+func TestFlameGraphDetailsKeyWithTheDetailsOff(t *testing.T) {
+	a, fv := walkFlame(t)
+	press(a, key("P"))
+	press(a, key("d"))
+	if a.status != "the details are off: P shows them" {
+		t.Errorf("status %q", a.status)
+	}
+	press(a, key("P"))
+	if fv.detailsFirst {
+		t.Error("d with the details off gave them the room for when they come back")
+	}
+}

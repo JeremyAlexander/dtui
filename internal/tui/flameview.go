@@ -514,11 +514,10 @@ func (v *flameView) handleKey(msg tea.KeyMsg) tea.Cmd {
 		fn, _ := v.selectedFunction()
 		return func() tea.Msg { return sourceAskMsg{view: v, label: fn} }
 	case "d":
-		v.detailsFirst = !v.detailsFirst
-		switch {
-		case !v.ds.previewOn():
+		if !v.ds.previewOn() {
 			return status("the details are off: P shows them")
-		case v.detailsFirst:
+		}
+		if v.detailsFirst = !v.detailsFirst; v.detailsFirst {
 			return status("the details have the room, the graph keeps a few levels: d gives it back")
 		}
 		return status("the graph has the room again")
