@@ -35,8 +35,8 @@ rest how the view uses it.
   key reads is such a change: the vendor prefixes, the pass-through names, the
   message rules. Until that release `e1` may be repinned. Two golden files
   make the step a conscious one: the `e1` keys of a corpus, and one digest per
-  table, expression and limit the key is computed from. The digests cover
-  declarations; the code of a function is covered by the corpus and the tests
+  declaration the key is computed from (a `const` block is one). The digests
+  cover declarations; the code of a function is covered by the corpus and the tests
   alone. The readers and the corpus are
   the specification; this record names the rules and does not replace them.
   One vector for another implementation: an event with the type `é` and
@@ -164,7 +164,8 @@ rest how the view uses it.
   holds, and `alt+enter` sends the text as a server search over the spans.
   `--search` and a preset's searches stay server-side.
 - **A row opens its newest span, and the exits hand over the query.** Enter
-  opens the trace of the group's newest span. `y` yanks the key. `o` opens the
+  opens the trace of the group's newest span, and `l` the logs of that trace.
+  `y` yanks the key. `o` opens the
   primary query in a Notebook and `c` echoes it. Both hand over the query that
   fetched the sample, not the sample: run again it returns the spans of that
   moment, one by one and ungrouped, because no DQL computes the key, and both
@@ -207,7 +208,7 @@ needs a further ADR:
   same key. It is a leaf package for that reason; moving it means the import
   allowlist of `internal/tui` gains the SDK package.
 
-Rejected:
+## Rejected alternatives
 
 - **Grouping in DQL.** DQL cannot pick the root of a cause chain across a
   span's events, read frames out of five stack notations or drop pass-through
@@ -233,8 +234,8 @@ Rejected:
   no keys, so nothing migrates. If Grail gains a grouping key for exceptions,
   this ADR is superseded.
 - A rare exception outside the sample is absent, not counted as zero; the
-  sample line says how far back the sample reaches, and narrowing the scope is
-  how the user reaches it.
+  sample line says how far back the sample reaches, and narrowing the scope or
+  the timeframe is how the user reaches it.
 - The command echo (`c`) is `dtctl query` with the view's primary query. Run
   later it returns the spans that match then, ungrouped, which need not be
   the spans on screen. The keys, rungs and counts are computed in Go and no
