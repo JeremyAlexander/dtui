@@ -61,10 +61,16 @@ func (r FingerprintRung) String() string {
 type ExceptionFingerprint struct {
 	Key  string // ExceptionKeyVersion + ":" + 12 hex characters
 	Rung FingerprintRung
-	// Type and Message describe the event the key was computed from, the
-	// message parameterised (ParameterizeMessage). Message is set on every
-	// rung, hashed only on RungMessage.
-	Type    string
+	// Type is the exception type that went into the key. It names the same
+	// exception as Frames: where the stack text of the event holds a chain
+	// ("Caused by:", an inner exception, an earlier traceback), that is the
+	// root cause, whose type is read from the text.
+	Type string
+	// EventType is the exception.type of the event the key was computed
+	// from, for display: the outermost exception where Type is a deeper one.
+	EventType string
+	// Message is the event's message, parameterised (ParameterizeMessage).
+	// It is set on every rung and hashed only on RungMessage.
 	Message string
 	// Frames are the frames that went into the key; nil below RungFrames.
 	Frames []StackFrame
@@ -85,12 +91,18 @@ func FingerprintExceptions(excs []SpanException, classify FrameClassifier) (Exce
 	}
 	root := rootException(excs)
 	fp := ExceptionFingerprint{
-		Rung:    RungType,
-		Type:    strings.TrimSpace(root.Type),
-		Message: ParameterizeMessage(root.Message),
+		Rung:      RungType,
+		EventType: strings.TrimSpace(root.Type),
+		Message:   ParameterizeMessage(root.Message),
 	}
+	fp.Type = fp.EventType
 
-	all := ParseStackFrames(root.StackTrace)
+	// The type and the frames of a key come from one exception. Below the
+	// frame rungs that is the event's, which the message belongs to as well.
+	all, rootType := parseStack(root.StackTrace)
+	if rootType != "" && len(all) > 0 {
+		fp.Type = rootType
+	}
 	var app []StackFrame
 	for _, f := range all {
 		if inApp(f) {

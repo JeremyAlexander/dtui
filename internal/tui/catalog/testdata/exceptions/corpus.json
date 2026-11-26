@@ -108,6 +108,18 @@
     ]
   },
   {
+    "name": "java: one event whose stack text holds the chain",
+    "group": "java-cart-add",
+    "rung": "app frames",
+    "events": [
+      {
+        "type": "com.acme.shop.checkout.CheckoutException",
+        "message": "checkout failed",
+        "stack": "java-locked-chain.txt"
+      }
+    ]
+  },
+  {
     "name": "go: baseline",
     "group": "go-cart-add",
     "rung": "app frames",

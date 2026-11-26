@@ -100,7 +100,7 @@ func goFrame(line string) (StackFrame, bool) {
 
 // goRootCause returns the frames of the first goroutine, the one that
 // panicked.
-func goRootCause(lines []string) []StackFrame {
+func goRootCause(lines []string) ([]StackFrame, string) {
 	var out []StackFrame
 	goroutines := 0
 	framed := false // the line before was a frame; this one may be its file
@@ -112,7 +112,7 @@ func goRootCause(lines []string) []StackFrame {
 			out = append(out, f)
 		case goGoroutineRe.MatchString(line):
 			if goroutines++; goroutines > 1 {
-				return out
+				return out, ""
 			}
 		case framed:
 			if m := goFileRe.FindStringSubmatch(line); m != nil && goDependencyRe.MatchString(m[1]) {
@@ -121,7 +121,7 @@ func goRootCause(lines []string) []StackFrame {
 		}
 		framed = ok
 	}
-	return out
+	return out, ""
 }
 
 func goInApp(f StackFrame) bool {

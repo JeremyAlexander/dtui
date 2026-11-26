@@ -238,6 +238,147 @@ func TestFingerprintGoApplicationFrames(t *testing.T) {
 	}
 }
 
+// The type and the frames of a fingerprint describe the same exception. Where
+// the stack text of one event holds a chain, that is the root cause: its
+// type is read from the text, and the event's own type is kept for display.
+func TestFingerprintTypeIsTheRootCauses(t *testing.T) {
+	cases := []struct {
+		name, eventType, stack string
+		wantType               string
+		wantTop                string // function of the first frame
+	}{
+		{"java: the last cause", "com.example.shop.CheckoutException", `com.example.shop.CheckoutException: checkout failed
+	at com.example.shop.Checkout.run(Checkout.java:30)
+Caused by: com.example.shop.CartException: cart failed
+	at com.example.shop.Cart.add(Cart.java:12)
+Caused by: java.lang.IllegalStateException: Cart 7 is locked
+	at com.example.shop.CartService.addItem(CartService.java:42)`,
+			"java.lang.IllegalStateException", "addItem"},
+		{"java: a cause without a message", "com.example.shop.CheckoutException", `	at com.example.shop.Checkout.run(Checkout.java:30)
+Caused by: java.lang.NullPointerException
+	at com.example.shop.CartService.addItem(CartService.java:42)`,
+			"java.lang.NullPointerException", "addItem"},
+		{"java: a last cause without frames is not the root", "com.example.shop.CheckoutException", `	at com.example.shop.Checkout.run(Checkout.java:30)
+Caused by: com.example.shop.CartException: cart failed
+	at com.example.shop.Cart.add(Cart.java:12)
+Caused by: java.lang.IllegalStateException: Cart 7 is locked`,
+			"com.example.shop.CartException", "add"},
+		{"java: no chain", "com.example.shop.CheckoutException", `java.lang.Error: the text names another type
+	at com.example.shop.Checkout.run(Checkout.java:30)`,
+			"com.example.shop.CheckoutException", "run"},
+		{"java: a cause whose type cannot be read", "com.example.shop.CheckoutException", `	at com.example.shop.Checkout.run(Checkout.java:30)
+Caused by: <unknown>
+	at com.example.shop.CartService.addItem(CartService.java:42)`,
+			"com.example.shop.CheckoutException", "addItem"},
+		{"java: the cause of a suppressed exception is nobody's root", "com.example.shop.CheckoutException", `	at com.example.shop.Checkout.run(Checkout.java:30)
+	Suppressed: java.io.IOException: close failed
+		at com.example.shop.Conn.close(Conn.java:5)
+	Caused by: java.net.SocketException: broken pipe
+		at com.example.shop.Socket.write(Socket.java:9)`,
+			"com.example.shop.CheckoutException", "run"},
+		{"dotnet: the innermost exception", "Example.Shop.CheckoutException", `Example.Shop.CheckoutException: checkout failed
+ ---> Example.Shop.CartException: cart failed
+ ---> System.InvalidOperationException: Cart 7 is locked
+   at Example.Shop.CartService.AddItem(String sku)
+   --- End of inner exception stack trace ---
+   at Example.Shop.Cart.Add(String sku)
+   --- End of inner exception stack trace ---
+   at Example.Shop.Checkout.Run()`,
+			"System.InvalidOperationException", "AddItem"},
+		{"dotnet: inner exceptions on the first line", "System.AggregateException",
+			"System.AggregateException: One or more errors occurred. ---> (Inner Exception #0) System.TimeoutException: timed out\n" +
+				"   at Example.Shop.Stock.Reserve(String sku)\n   --- End of inner exception stack trace ---\n   at Example.Shop.Checkout.Run()",
+			"System.TimeoutException", "Reserve"},
+		{"dotnet: no chain", "Example.Shop.CheckoutException", `System.Exception: the text names another type
+   at Example.Shop.Checkout.Run()`,
+			"Example.Shop.CheckoutException", "Run"},
+		{"python: the first exception raised", "RuntimeError", `Traceback (most recent call last):
+  File "/app/shop/cart.py", line 42, in add_item
+    raise ValueError("locked")
+ValueError: locked
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/app/shop/api.py", line 17, in post
+    cart.add_item(sku)
+RuntimeError: failed`,
+			"ValueError", "add_item"},
+		{"python: a qualified type", "RuntimeError", `Traceback (most recent call last):
+  File "/app/shop/cart.py", line 42, in add_item
+    self.session.commit()
+sqlalchemy.exc.OperationalError: (psycopg2.OperationalError) server closed the connection
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/app/shop/api.py", line 17, in post
+    cart.add_item(sku)
+RuntimeError: failed`,
+			"sqlalchemy.exc.OperationalError", "add_item"},
+		{"python: the first member of a group", "ExceptionGroup", `  + Exception Group Traceback (most recent call last):
+  |   File "/app/shop/api.py", line 17, in post
+  |     async with asyncio.TaskGroup() as tg:
+  | ExceptionGroup: unhandled errors in a TaskGroup (2 sub-exceptions)
+  +-+---------------- 1 ----------------
+    | Traceback (most recent call last):
+    |   File "/app/shop/cart.py", line 42, in add_item
+    |     raise ValueError("locked")
+    | ValueError: locked
+    +---------------- 2 ----------------
+    | Traceback (most recent call last):
+    |   File "/app/shop/stock.py", line 9, in reserve
+    |     raise KeyError(sku)
+    | KeyError: 'kettle'
+    +------------------------------------`,
+			"ValueError", "add_item"},
+		{"python: no chain", "RuntimeError", `Traceback (most recent call last):
+  File "/app/shop/cart.py", line 42, in add_item
+    raise ValueError("locked")
+ValueError: the text names another type`,
+			"RuntimeError", "add_item"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fp := mustFingerprint(t, SpanException{Type: " " + tc.eventType + " ", Message: "checkout failed", StackTrace: tc.stack})
+			if fp.Type != tc.wantType || fp.EventType != tc.eventType {
+				t.Errorf("type %q of event type %q, want %q of %q", fp.Type, fp.EventType, tc.wantType, tc.eventType)
+			}
+			if len(fp.Frames) == 0 || fp.Frames[0].Function != tc.wantTop {
+				t.Errorf("frames %+v, want %s on top", fp.Frames, tc.wantTop)
+			}
+			// The key is the one of the root cause recorded on its own.
+			alone := mustFingerprint(t, SpanException{Type: tc.wantType, StackTrace: stackOf(fp.Frames)})
+			if tc.wantType != tc.eventType && alone.Key != fp.Key {
+				t.Errorf("key %s, want that of the root cause alone, %s (%+v)", fp.Key, alone.Key, alone.Frames)
+			}
+		})
+	}
+	// Below the frame rungs there is no root cause to read: the type is the
+	// event's, like the message.
+	fp := mustFingerprint(t, SpanException{Type: "A", Message: "m", StackTrace: "Caused by: B: no frames anywhere"})
+	if fp.Rung != RungMessage || fp.Type != "A" || fp.EventType != "A" {
+		t.Errorf("rung %v type %q event type %q", fp.Rung, fp.Type, fp.EventType)
+	}
+}
+
+// stackOf writes frames back as a trace in their notation, one exception.
+func stackOf(frames []StackFrame) string {
+	var b strings.Builder
+	for i := len(frames) - 1; i >= 0 && frames[0].Syntax == StackPython; i-- {
+		fmt.Fprintf(&b, "  File \"/app/%s\", line 1, in %s\n    pass\n", frames[i].Module, frames[i].Function)
+	}
+	for _, f := range frames {
+		switch f.Syntax {
+		case StackJava:
+			fmt.Fprintf(&b, "\tat %s.%s(File.java:1)\n", f.Module, f.Function)
+		case StackDotNet:
+			fmt.Fprintf(&b, "   at %s.%s()\n", f.Module, f.Function)
+		}
+	}
+	return b.String()
+}
+
 // onlyModule treats one module as the application.
 type onlyModule string
 

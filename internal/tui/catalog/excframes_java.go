@@ -18,6 +18,8 @@ var (
 	javaFrameRe = regexp.MustCompile(
 		`^(?:at )?([\w$.<>/@-]+\.[\w$<>]+) ?\((?:[\w$-]+\.\w+(?::\d+)?|Native Method|Unknown Source|<generated>)\)`)
 	javaMoreRe = regexp.MustCompile(`^\.\.\. (\d+) (?:more|common frames omitted)`)
+	// The type a "Caused by:" line names, before its message.
+	javaCauseRe = regexp.MustCompile(`^Caused by: ([\w.$]+)`)
 
 	// Classes generated at run time are named after the class they stand in
 	// for plus a suffix that differs in every process: CGLIB subclasses
@@ -72,15 +74,18 @@ func javaFrame(line string) (StackFrame, bool) {
 	return StackFrame{Module: module, Function: function, Syntax: StackJava}, true
 }
 
-// javaSection is one exception of a trace: its frames, and how many frames
-// of the enclosing exception a "... N more" line stands for.
+// javaSection is one exception of a trace: its type where a "Caused by:"
+// line names it, its frames, and how many frames of the enclosing exception
+// a "... N more" line stands for.
 type javaSection struct {
+	typ    string
 	frames []StackFrame
 	more   int
 }
 
-// javaRootCause returns the frames of the last "Caused by:" section that has
-// any, completed from the enclosing one where it ends in "... N more"; a
+// javaRootCause returns the type and the frames of the last "Caused by:"
+// section that has any, completed from the enclosing one where it ends in
+// "... N more"; a
 // last cause printed without frames (cut off, or thrown without a stack)
 // leaves the one before it as the root.
 //
@@ -89,7 +94,7 @@ type javaSection struct {
 // at least as deep as its first: Java indents a suppressed exception and its
 // causes one step further than the exception they belong to. A trace whose
 // indentation was stripped therefore ends at its first suppressed block.
-func javaRootCause(lines []string) []StackFrame {
+func javaRootCause(lines []string) (root []StackFrame, typ string) {
 	sections := make([]javaSection, 1)
 	suppressed := -1 // indentation of the suppressed block being skipped
 	for _, raw := range lines {
@@ -106,7 +111,11 @@ func javaRootCause(lines []string) []StackFrame {
 		case strings.HasPrefix(line, "Suppressed:"):
 			suppressed = indent
 		case strings.HasPrefix(line, "Caused by:"):
-			sections = append(sections, javaSection{})
+			cause := javaSection{}
+			if m := javaCauseRe.FindStringSubmatch(line); m != nil {
+				cause.typ = m[1]
+			}
+			sections = append(sections, cause)
 		default:
 			if m := javaMoreRe.FindStringSubmatch(line); m != nil {
 				cur.more, _ = strconv.Atoi(m[1])
@@ -115,16 +124,16 @@ func javaRootCause(lines []string) []StackFrame {
 			}
 		}
 	}
-	var full, root []StackFrame
+	var full []StackFrame
 	for _, sec := range sections {
 		// "... N more": the last N frames of the enclosing exception.
 		shared := min(sec.more, len(full))
 		full = append(sec.frames[:len(sec.frames):len(sec.frames)], full[len(full)-shared:]...)
 		if len(full) > 0 {
-			root = full
+			root, typ = full, sec.typ
 		}
 	}
-	return root
+	return root, typ
 }
 
 func javaInApp(f StackFrame) bool {

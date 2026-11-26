@@ -6,6 +6,7 @@ e1:38bf58cd20f1	go: another panic under the same router
 e1:60fce246ec5d	go: another router version, goroutine and offsets
 e1:aa0a6599e206	go: baseline
 e1:333a05087d31	java: baseline
+e1:333a05087d31	java: one event whose stack text holds the chain
 e1:333a05087d31	java: other ids, line numbers and proxy suffixes
 e1:333a05087d31	java: root cause flagged, wrapper last
 e1:333a05087d31	java: root cause linked by id, wrapper last

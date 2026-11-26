@@ -18,6 +18,8 @@ var (
 	// a type name.
 	dotnetMonoParamsRe = regexp.MustCompile("^(?:[A-Z][\\w.`\\[\\]<>&*+]*(?: \\w+)?(?:, |$))*$")
 	dotnetTypeArgsRe   = regexp.MustCompile(`\[[^\]]*\]`)
+	// An inner exception's type, after the arrow that introduces it.
+	dotnetInnerRe = regexp.MustCompile("---> (?:\\(Inner Exception #\\d+\\) )?([\\w.+`]+)")
 	// Compiler-generated names: the method of top-level statements
 	// ("<Main>$"), local functions ("<Run>g__Validate|5_0"), async state
 	// machines, closure classes and the lambdas in them.
@@ -70,19 +72,21 @@ func dotnetFrame(line string) (StackFrame, bool) {
 }
 
 // dotnetRootCause returns the frames of the innermost exception, which is
-// printed first.
-func dotnetRootCause(lines []string) []StackFrame {
-	var out []StackFrame
+// printed first, and its type: the last one an arrow introduces ("--->")
+// above the first frame.
+func dotnetRootCause(lines []string) (frames []StackFrame, typ string) {
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
-		if len(out) > 0 && strings.HasPrefix(line, dotnetInnerEnd) {
+		if len(frames) > 0 && strings.HasPrefix(line, dotnetInnerEnd) {
 			break
 		}
 		if f, ok := dotnetFrame(line); ok {
-			out = append(out, f)
+			frames = append(frames, f)
+		} else if inner := dotnetInnerRe.FindAllStringSubmatch(line, -1); inner != nil && len(frames) == 0 {
+			typ = inner[len(inner)-1][1]
 		}
 	}
-	return out
+	return frames, typ
 }
 
 func dotnetInApp(f StackFrame) bool {

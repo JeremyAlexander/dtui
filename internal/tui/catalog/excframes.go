@@ -55,8 +55,10 @@ type stackNotation struct {
 	// frame reads one line, already trimmed, as a frame.
 	frame func(line string) (StackFrame, bool)
 	// rootCause reads a trace written in this notation and returns the
-	// frames of its root cause, throw site first.
-	rootCause func(lines []string) []StackFrame
+	// frames of its root cause, throw site first, and that exception's type
+	// where the trace is a chain and names it; a trace of one exception
+	// does not have to say what it is, so its type is "".
+	rootCause func(lines []string) (frames []StackFrame, typ string)
 	// inApp reports whether a frame is application code rather than the
 	// runtime's or a framework's.
 	inApp func(f StackFrame) bool
@@ -80,16 +82,24 @@ var stackNotations = [...]stackNotation{
 // one where it ends in "... N more"), the innermost .NET exception, the
 // first Python traceback, the first goroutine. Unparseable text yields nil.
 func ParseStackFrames(stack string) []StackFrame {
+	frames, _ := parseStack(stack)
+	return frames
+}
+
+// parseStack is ParseStackFrames plus the type of the root cause, where the
+// trace is a chain of exceptions and names it.
+func parseStack(stack string) (frames []StackFrame, typ string) {
 	lines := stackLines(stack)
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		for i := range stackNotations {
 			if _, ok := stackNotations[i].frame(line); ok {
-				return collapseFrames(stackNotations[i].rootCause(lines))
+				frames, typ = stackNotations[i].rootCause(lines)
+				return collapseFrames(frames), typ
 			}
 		}
 	}
-	return nil
+	return nil, ""
 }
 
 var (

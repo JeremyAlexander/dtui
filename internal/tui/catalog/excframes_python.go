@@ -17,6 +17,8 @@ var (
 	// The rule above a sub-exception of a group, numbered, and the
 	// unnumbered one that closes the group.
 	pythonGroupRuleRe = regexp.MustCompile(`^\+[-+]{3,}(?: (\d+) -+)?$`)
+	// The line under a traceback: what was raised, and its message.
+	pythonRaisedRe = regexp.MustCompile(`^([A-Za-z_][\w.]*)(?::|$)`)
 )
 
 // pythonPackageDirs are where installed packages live, and what their
@@ -64,28 +66,41 @@ func pythonModule(path string) string {
 // pythonRootCause returns the frames of the first traceback, which is the
 // first exception raised, reversed so that the throw site comes first. An
 // exception group is a wrapper around the exceptions it collected, so there
-// the first sub-exception is the root, at any depth of nesting.
-func pythonRootCause(lines []string) []StackFrame {
-	var out []StackFrame
-	source := false // the line is the source text of the frame before it
+// the first sub-exception is the root, at any depth of nesting. Where the
+// root is not the last exception of the trace, its type is the one the line
+// under its traceback names.
+func pythonRootCause(lines []string) (frames []StackFrame, typ string) {
+	chained := false // another exception follows the root's, or wraps it
+	source := false  // the line is the source text of the frame before it
+scan:
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		if f, ok := pythonFrame(line); ok {
-			out = append(out, f)
+			frames = append(frames, f)
 			source = true
 			continue
 		}
-		if m := pythonGroupRuleRe.FindStringSubmatch(line); m != nil && m[1] == "1" {
-			out = nil
-		} else if len(out) > 0 && (m != nil || !source && strings.Contains(line, pythonTraceback)) {
-			break
+		rule := pythonGroupRuleRe.FindStringSubmatch(line)
+		switch {
+		case rule != nil && rule[1] == "1":
+			frames, typ, chained = nil, "", true
+		case len(frames) > 0 && (rule != nil || !source && strings.Contains(line, pythonTraceback)):
+			chained = chained || rule == nil
+			break scan
+		case len(frames) > 0 && !source && typ == "":
+			if m := pythonRaisedRe.FindStringSubmatch(strings.TrimLeft(line, pythonGutter)); m != nil {
+				typ = m[1]
+			}
 		}
 		source = false
 	}
-	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
-		out[i], out[j] = out[j], out[i]
+	if !chained {
+		typ = ""
 	}
-	return out
+	for i, j := 0, len(frames)-1; i < j; i, j = i+1, j-1 {
+		frames[i], frames[j] = frames[j], frames[i]
+	}
+	return frames, typ
 }
 
 func pythonInApp(f StackFrame) bool {

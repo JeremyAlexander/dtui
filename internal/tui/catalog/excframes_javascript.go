@@ -96,8 +96,8 @@ func jsModule(loc string) string {
 	return jsContentHashRe.ReplaceAllString(sourceModule(loc), "$1$2")
 }
 
-func jsRootCause(lines []string) []StackFrame {
-	return framesOf(lines, jsFrame)
+func jsRootCause(lines []string) ([]StackFrame, string) {
+	return framesOf(lines, jsFrame), ""
 }
 
 func jsInApp(f StackFrame) bool {
