@@ -84,9 +84,11 @@ require (
 )
 
 // TEMPORARY, prototype only: the profiling views read code-level profiling
-// through dtctl's pkg/resources/profiling, which is importable from dtctl
-// 0.47.0 on. Until that release these two lines build against a local dtctl
-// checkout; remove them and require v0.47.0 above before this branch merges.
+// through dtctl's pkg/resources/profiling, which is not in a dtctl release
+// yet. Until one carries it these two lines build against a local dtctl
+// checkout, and the versions required above are the ones that checkout
+// names: they do not provide the package. Before this branch merges, remove
+// both lines and require the first dtctl release that has the package.
 replace github.com/Dynatrace/dtctl => ../dtctl-profiling
 
 replace github.com/Dynatrace/dtctl/sdk => ../dtctl-profiling/sdk
