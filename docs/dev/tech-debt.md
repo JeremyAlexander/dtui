@@ -96,8 +96,9 @@ The rows marked partial and missing in
 [profiling-flamegraph.md](../design/profiling-flamegraph.md): the matched
 part of a label is not highlighted, callees are ordered by name only, there
 is no single reset key and no `h` / `l`, the functions table filters by plain
-text and does not show the graph's search, and the two readings are a pushed
-view, not one page with a strip. Fix: one at a time, each with the row in
+text and does not show the graph's search, the two readings are a pushed
+view, not one page with a strip, and there is no mouse (a decision for the
+whole application: it changes how text is selected in every view). Fix: one at a time, each with the row in
 that table changed.
 
 ## Flame graph: two measures of a label's width
@@ -112,3 +113,28 @@ measure for both, in the catalog.
 `internal/tui/testdata/profiling/stacks.json` is 600 KB for 518 stacks,
 because every stack repeats its callers. Fix: record the stacks once dtctl
 exports a tree, or keep a smaller synthetic analysis for the graph alone.
+
+## Flame graph: a frame's file is found by its name alone
+
+`internal/source` maps a frame to a file by rules per notation (class and
+package, import path, module, the path a script carries) and finds the line
+by scanning for the function's name. It does not read build files, source
+roots or source maps, so a class whose file is named differently, a
+transpiled script and generated code miss or land on the type. The analysis
+carries no line numbers, so the line is never the line sampled. Fix: take
+file and line from the analysis once dtctl exports them per frame, and keep
+the scan as the fallback.
+
+## Flame graph: the editor is named by the environment only
+
+`O` picks the editor from `DTUI_EDITOR`, the terminal or `VISUAL`/`EDITOR`;
+there is no personal settings file to keep the choice in, and a JetBrains
+terminal is taken for IntelliJ IDEA whichever IDE it is. Fix: when dtui gets
+a personal settings file, an `editor` key there; until then the variable.
+
+## Flame graph: details that do not fit are cut, not scrolled
+
+The details under the graph show what fits and count the rest; `d` gives
+them most of the screen, and a stack of 70 frames still does not fit. Fix: a
+scroll position for the details, or `d` as a page of its own.
+

@@ -49,6 +49,9 @@ narrowly:
   key, dtui's meaning wins: `r` refreshes (reset is `esc`), `f` and `b` are
   `ctrl+f` and `ctrl+b`, and `h` and `l` are not bound, because they are
   drill letters everywhere else. The arrows and `j`/`k` carry the movement.
+- **The details of the selected frame follow the preview preference** (`P`)
+  but sit under the graph, never beside it: a graph's width is its
+  resolution. They are read off the tree in memory.
 - **This is the depth cap of profiling.** A differential between two
   windows, a timeline to pick a sub-window from, a bottom-up orientation and
   a per-function sandwich view are out of scope. Asking for one is asking to
@@ -70,6 +73,47 @@ Alternatives rejected:
 - **Folded-stack output only**, for flamelens, speedscope or flamegraph.pl to
   read. That is dtctl's to offer and worth having, but it serves the people
   who already have such a viewer and gives the others nothing to look at.
+
+## Opening a frame's source
+
+`O` on a frame opens the file it was compiled from in the reader's editor.
+It is the one place dtui acts on the machine it runs on beyond the clipboard
+and the browser, so its limits are part of this decision.
+
+- **It is local and read-only.** It reads files under one directory and asks
+  the system to open one. Nothing is sent to or changed in Dynatrace
+  ([ADR-0011](0011-strictly-read-only.md)).
+- **A frame's name is hostile text.** It comes from the environment, and
+  whoever names a class or a script there chooses it. It is parsed, compared
+  with the names of files a walk of the directory found, and quoted before it
+  is used as a pattern. It is never executed, never passed to a shell, never
+  joined to a path and never put into a link. The path in a link is the
+  walk's own, resolved again and refused if it is no longer inside the
+  directory, and percent-encoded.
+- **The directory is the repository dtui was started in**, and nothing
+  outside it is read or opened. The walk does not follow symbolic links, is
+  bounded in entries, files and time, and runs off the update loop.
+- **dtui starts no editor.** It hands the system a link in the editor's
+  scheme, as `o` hands it a Dynatrace link. A terminal editor in dtui's
+  terminal would need the alternate-screen handling dtui chose never to
+  have, so a terminal editor gets the place copied instead.
+- **No configuration is needed and none is added to the project file.** The
+  editor is taken from the terminal dtui runs in, or from `VISUAL`/`EDITOR`
+  read as a name; `DTUI_EDITOR` overrides both. An editor is a person's, and
+  `.dtui.yaml` is committed and must not behave differently per machine, so
+  the setting is an environment variable and not a key of that file. There
+  is no personal settings file to put it in, and this is not the feature to
+  add one for.
+- **It is honest about the line.** The analysis has no line numbers. The
+  line is where the function's name is declared, and the status line says
+  whether that is exact, a guess among several, the type's line or the top
+  of the file.
+- **The browser build refuses it.** It has no directory; the key says so.
+
+It must never: run a program named by the environment or by a setting; open a
+path the walk did not see; read outside the source directory; follow a
+symbolic link out of it; search for a runtime's frame; show a line it did not
+find in the file; or take the terminal away from dtui.
 
 ## Consequences
 

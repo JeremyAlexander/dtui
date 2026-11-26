@@ -297,7 +297,10 @@ pod → workload → namespace → the sibling workload that's actually broken.
 | `?` | help overlay (all bindings, per-view) |
 
 On `:hotspots`, `tab` switches between the functions table and the flame
-graph of the same analysis, and the brackets keep the lens strip. The graph's
+graph of the same analysis, and the brackets keep the lens strip. On the
+graph the arrows select a frame, whose details follow under it (`P`, `d`),
+and `O` opens its source in the editor: `o` is the Dynatrace UI, `O` the
+file on this machine. The graph's
 own keys (movement along callers and callees, zoom, search) are listed in
 [profiling-flamegraph.md](profiling-flamegraph.md) and at the top of `?` when
 it is opened there.
@@ -957,7 +960,9 @@ internal/tui/
   detail.go              # tabbed entity detail page driven by DetailSpec
   problem.go, vulnerability.go   # bespoke tabbed pages
   waterfall.go, timeline.go      # trace waterfall, RUM session timeline
-  flame/, flameview.go           # flame graph of the hotspots analysis: the model
+  flame/, flameview.go,          # flame graph of the hotspots analysis: the model
+  flamedraw.go, flamedetails.go, #   its screen, the selected frame's details and
+  flamesource.go                 #   the key that opens its source (internal/source)
                                  #   (no terminal framework) and its screen (ADR-0023)
   inspector.go, render.go        # record inspector + typed value rendering
   navigator.go           # smartscape navigator (overview / browser / walk)
