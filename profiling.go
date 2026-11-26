@@ -418,14 +418,25 @@ func profileKey(kind, subject string, tf catalog.Timeframe) string {
 	return fmt.Sprintf("%s|%s|%d-%d", kind, subject, w.From.UnixMilli(), w.To.UnixMilli())
 }
 
-// profileSummary starts the record a profiling source leads its result with.
-func profileSummary(w catalog.ProfileWindow) map[string]any {
+// profileSummary starts the record a profiling source leads its result with:
+// the window the analysis covers, and whether that is less than the reader of
+// tf selected. The second is said per reader, never taken from the analysis:
+// views of different selections share one (profileKey), and each caption has
+// to be true of its own selection (ADR-0007).
+func profileSummary(tf catalog.Timeframe, w catalog.ProfileWindow) map[string]any {
 	summary := map[string]any{
 		catalog.SummaryKey:  true,
 		catalog.ProfSumFrom: w.From.UTC().Format(time.RFC3339),
 		catalog.ProfSumTo:   w.To.UTC().Format(time.RFC3339),
 	}
-	if w.Clamped {
+	// A relative selection ends where the analysis does, so it is cut exactly
+	// when it is longer than one analysis covers; an absolute one is cut when
+	// it starts before the analysis does.
+	clamped := tf.Dur > catalog.ProfileMaxWindow
+	if tf.Absolute() {
+		clamped = tf.From.Before(w.From)
+	}
+	if clamped {
 		summary[catalog.ProfSumClamped] = true
 	}
 	return summary
@@ -460,7 +471,7 @@ func hotspotsSource(p profiler, runs *profileRuns) tui.Source {
 		if !ok || reading == nil {
 			return nil, errors.New("the hotspots analysis returned nothing to read")
 		}
-		summary := profileSummary(window)
+		summary := profileSummary(scope.Timeframe, window)
 		state := catalog.HotspotState(scope)
 
 		if scope.Arg != "" {
@@ -547,7 +558,7 @@ func allocationsSource(p profiler, runs *profileRuns) tui.Source {
 			return nil, errors.New("the allocations analysis returned nothing to read")
 		}
 		rows, allocBytes, survivedBytes, empty := reading.Paths()
-		summary := profileSummary(window)
+		summary := profileSummary(scope.Timeframe, window)
 		summary[catalog.ProfSumAlloc] = float64(allocBytes)
 		summary[catalog.ProfSumSurvived] = float64(survivedBytes)
 		summary[catalog.ProfSumRows] = float64(len(rows))

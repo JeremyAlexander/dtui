@@ -1374,3 +1374,61 @@ func TestProfilingAllocationRowsCarryTheirShare(t *testing.T) {
 		t.Errorf("the top path is %s%% of the bytes (set=%v), want 13.27", got, ok)
 	}
 }
+
+// The caption words the reader's own selection, whoever started the analysis
+// it reads: a two hour run that a longer selection shares says it is only the
+// end of that selection, and a two hour selection that reads a run started by
+// a longer one is not called cut (ADR-0007).
+func TestProfilingCaptionWordsTheReadersSelection(t *testing.T) {
+	prev := catalog.Now
+	catalog.Now = func() time.Time { return scenarioNow }
+	t.Cleanup(func() { catalog.Now = prev })
+	spec := catalog.Lookup("hotspots")
+	at := func(hour int) time.Time { return time.Date(2026, 7, 15, hour, 0, 0, 0, time.UTC) }
+	closed := func(from, to int) catalog.Timeframe {
+		return catalog.Timeframe{From: at(from), To: at(to), Dur: at(to).Sub(at(from))}
+	}
+	open := func(from int) catalog.Timeframe { return catalog.Timeframe{From: at(from)} }
+
+	const clock = " (10:00–12:00 UTC)"
+	for _, tc := range []struct {
+		name string
+		// selections read in this order, and the window label each is shown
+		selections []catalog.Timeframe
+		want       []string
+		analyses   int
+	}{
+		{"2h, then 24h",
+			[]catalog.Timeframe{timeframe(t, "2h"), timeframe(t, "24h")},
+			[]string{"last 2h" + clock, "last 2h of the selected 24h" + clock}, 1},
+		{"24h, then 2h",
+			[]catalog.Timeframe{timeframe(t, "24h"), timeframe(t, "2h")},
+			[]string{"last 2h of the selected 24h" + clock, "last 2h" + clock}, 1},
+		{"a closed two hours, then five closed hours with the same end",
+			[]catalog.Timeframe{closed(10, 12), closed(7, 12)},
+			[]string{"selected window" + clock, "last 2h of the selected window" + clock}, 1},
+		{"five closed hours, then their last two",
+			[]catalog.Timeframe{closed(7, 12), closed(10, 12)},
+			[]string{"last 2h of the selected window" + clock, "selected window" + clock}, 1},
+		{"an open window that starts where the analysis does",
+			[]catalog.Timeframe{open(10), open(10)},
+			[]string{"selected window" + clock, "selected window" + clock}, 1},
+	} {
+		p := &recordingProfiler{}
+		hotspots, _ := sourcesAt(p)
+		for i, tf := range tc.selections {
+			scope := catalog.Scope{Entity: shopProcess, Timeframe: tf}
+			records, err := hotspots(context.Background(), scope, "")
+			if err != nil {
+				t.Fatalf("%s: %v", tc.name, err)
+			}
+			summary, _ := catalog.SplitSummary(records)
+			if got := spec.Caption(scope, summary)[0]; got != tc.want[i] {
+				t.Errorf("%s: selection %d is captioned %q, want %q", tc.name, i+1, got, tc.want[i])
+			}
+		}
+		if got := p.asked(); got != tc.analyses {
+			t.Errorf("%s: %d analyses, want %d", tc.name, got, tc.analyses)
+		}
+	}
+}
