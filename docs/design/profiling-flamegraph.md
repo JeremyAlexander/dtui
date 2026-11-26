@@ -258,9 +258,10 @@ function's self and total samples are those of its frames in the graph
 Measured on a synthetic profile of 50,000 stacks, each 100 frames deep (about
 half a million frames), on an Apple M5 Pro: building the tree once takes
 about 155 ms and runs off the update loop; a layout for 250 columns 0.44 ms;
-a search 1.8 ms; a cursor key with the screen drawn again in full colour
-about 1.1 ms, a zoom or a thread state about 1.2 ms
-(`BenchmarkBuild`, `BenchmarkLayout`, `BenchmarkSearch`,
+a search 1.8 ms; adding a function up over the whole
+tree 0.5 ms; a cursor key or a zoom with the screen and the details drawn
+again in full colour about 1.5 ms
+(`BenchmarkBuild`, `BenchmarkLayout`, `BenchmarkSearch`, `BenchmarkFunction`,
 `BenchmarkFlameGraphKey`, `BenchmarkFlameGraphZoom`).
 
 ## Parity with flamelens
