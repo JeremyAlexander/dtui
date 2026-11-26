@@ -1,4 +1,4 @@
-package catalog
+package exckey
 
 import (
 	"fmt"
@@ -841,8 +841,8 @@ func TestBareLocationsAloneAreNotJavaScript(t *testing.T) {
 	rust := func(fn string) string {
 		return "   0: shop::" + fn + "\n             at ./src/lib.rs:12:5\n   1: shop::main\n             at ./src/main.rs:4:5\n"
 	}
-	read := mustFingerprint(t, SpanException{Type: "shop::Error", Message: "cannot read the cart", StackTrace: rust("read")})
-	write := mustFingerprint(t, SpanException{Type: "shop::Error", Message: "cannot write the cart", StackTrace: rust("write")})
+	read := mustFingerprint(t, Event{Type: "shop::Error", Message: "cannot read the cart", StackTrace: rust("read")})
+	write := mustFingerprint(t, Event{Type: "shop::Error", Message: "cannot write the cart", StackTrace: rust("write")})
 	if read.Rung != RungMessage || write.Rung != RungMessage || read.Key == write.Key {
 		t.Errorf("rungs %v and %v, keys %s and %s; want two keys on the message rung", read.Rung, write.Rung, read.Key, write.Key)
 	}
@@ -987,7 +987,7 @@ func TestDriversAndSDKsAreNotTheApplication(t *testing.T) {
 		}
 	}
 	// The driver's frames do not push the application's out of the key.
-	fp := mustFingerprint(t, SpanException{Type: "org.postgresql.util.PSQLException", StackTrace: javaStack(
+	fp := mustFingerprint(t, Event{Type: "org.postgresql.util.PSQLException", StackTrace: javaStack(
 		"org.postgresql.core.v3.QueryExecutorImpl.receiveErrorResponse", "org.postgresql.core.v3.QueryExecutorImpl.processResults",
 		"org.postgresql.core.v3.QueryExecutorImpl.execute", "org.postgresql.jdbc.PgStatement.executeInternal",
 		"org.postgresql.jdbc.PgStatement.execute", "org.postgresql.jdbc.PgPreparedStatement.executeWithFlags",
@@ -1022,7 +1022,7 @@ func TestVendorTablesApplyWhole(t *testing.T) {
 			t.Errorf("%+v counts as application code", f)
 		}
 	}
-	fp := mustFingerprint(t, SpanException{Type: "T", StackTrace: `   at Newtonsoft.Json.JsonConvert.DeserializeObject(String value)
+	fp := mustFingerprint(t, Event{Type: "T", StackTrace: `   at Newtonsoft.Json.JsonConvert.DeserializeObject(String value)
    at Example.Shop.Cart.Load(String id)
    at Newtonsoft.Json.Linq.JToken.ToObject(Type objectType)
    at Example.Shop.Api.Get(String id)`})
@@ -1172,8 +1172,8 @@ Caused by: java.lang.IllegalStateException: Cart 7 is locked
 			t.Errorf("%s: frames %+v type %q, want %+v", name, got, typ, want)
 		}
 	}
-	a := mustFingerprint(t, SpanException{Type: "T", StackTrace: head + "\t... 2 more\n"})
-	b := mustFingerprint(t, SpanException{Type: "T", StackTrace: head + "\t... 3 more\n"})
+	a := mustFingerprint(t, Event{Type: "T", StackTrace: head + "\t... 2 more\n"})
+	b := mustFingerprint(t, Event{Type: "T", StackTrace: head + "\t... 3 more\n"})
 	if a.Key == b.Key {
 		t.Error("the number of shared frames must matter")
 	}
@@ -1390,8 +1390,8 @@ ValueError: locked
 	}
 	// The key of a chain is that of its root cause alone, with or without
 	// source lines.
-	chain := mustFingerprint(t, SpanException{Type: "RuntimeError", StackTrace: cases[2].stack})
-	alone := mustFingerprint(t, SpanException{Type: "KeyError",
+	chain := mustFingerprint(t, Event{Type: "RuntimeError", StackTrace: cases[2].stack})
+	alone := mustFingerprint(t, Event{Type: "KeyError",
 		StackTrace: "Traceback (most recent call last):\n  File \"/app/shop/cart.py\", line 42, in add_item\nKeyError: 'sku'"})
 	if chain.Key != alone.Key || chain.Type != "KeyError" {
 		t.Errorf("chain %s (%s), root cause alone %s", chain.Key, chain.Type, alone.Key)
@@ -1440,8 +1440,8 @@ func TestDotNetInnerExceptionTypes(t *testing.T) {
 			}
 		})
 	}
-	a := mustFingerprint(t, SpanException{Type: "Example.Shop.StateException", StackTrace: moved("Pending")})
-	b := mustFingerprint(t, SpanException{Type: "Example.Shop.StateException", StackTrace: moved("Closed")})
+	a := mustFingerprint(t, Event{Type: "Example.Shop.StateException", StackTrace: moved("Pending")})
+	b := mustFingerprint(t, Event{Type: "Example.Shop.StateException", StackTrace: moved("Closed")})
 	if a.Key != b.Key || a.Type != "Example.Shop.StateException" {
 		t.Errorf("a word of the message is in the key: %s (%s) and %s (%s)", a.Key, a.Type, b.Key, b.Type)
 	}
@@ -1497,8 +1497,8 @@ goroutine 2 gp=0xc000002a80 m=nil [force gc (idle)]:
 		if got := ParseStackFrames(dump(header, "main.background")); !reflect.DeepEqual(got, want) {
 			t.Errorf("%s: %+v, want %+v", name, got, want)
 		}
-		a := mustFingerprint(t, SpanException{Type: "panic", StackTrace: dump(header, "main.background")})
-		b := mustFingerprint(t, SpanException{Type: "panic", StackTrace: dump(header, "main.sweeper")})
+		a := mustFingerprint(t, Event{Type: "panic", StackTrace: dump(header, "main.background")})
+		b := mustFingerprint(t, Event{Type: "panic", StackTrace: dump(header, "main.sweeper")})
 		if a.Key != b.Key {
 			t.Errorf("%s: another goroutine's function is in the key: %s, %s", name, a.Key, b.Key)
 		}
@@ -1617,8 +1617,8 @@ func TestJavaScriptAccessors(t *testing.T) {
 		}
 	}
 	caller := "\n    at render (/app/src/page.js:9:3)"
-	a := mustFingerprint(t, SpanException{Type: "TypeError", StackTrace: "TypeError: x\n    at get left (/app/src/box.js:4:11)" + caller})
-	b := mustFingerprint(t, SpanException{Type: "TypeError", StackTrace: "TypeError: x\n    at get right (/app/src/box.js:5:11)" + caller})
+	a := mustFingerprint(t, Event{Type: "TypeError", StackTrace: "TypeError: x\n    at get left (/app/src/box.js:4:11)" + caller})
+	b := mustFingerprint(t, Event{Type: "TypeError", StackTrace: "TypeError: x\n    at get right (/app/src/box.js:5:11)" + caller})
 	if a.Key == b.Key {
 		t.Errorf("two getters share the key %s", a.Key)
 	}

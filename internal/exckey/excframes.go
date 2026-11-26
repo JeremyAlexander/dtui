@@ -1,4 +1,4 @@
-package catalog
+package exckey
 
 import (
 	"regexp"
@@ -438,4 +438,13 @@ func hasAnyPrefix(s string, prefixes []string) bool {
 		}
 	}
 	return false
+}
+
+func firstNonEmpty(parts ...string) string {
+	for _, p := range parts {
+		if p != "" {
+			return p
+		}
+	}
+	return ""
 }

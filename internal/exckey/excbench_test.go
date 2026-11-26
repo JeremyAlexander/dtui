@@ -1,4 +1,4 @@
-package catalog
+package exckey
 
 import (
 	"fmt"
@@ -8,7 +8,7 @@ import (
 
 // benchJavaEvent is a 70-frame exception of a servlet application: a few
 // application frames on top of the framework's dispatch and filter chain.
-func benchJavaEvent() SpanException {
+func benchJavaEvent() Event {
 	var b strings.Builder
 	b.WriteString("java.lang.IllegalStateException: Cart 7 is locked by order 3f2b8c1e-9d4a-4b7c-8e21-0a1b2c3d4e5f\n")
 	frame := func(name, file string, line int) { fmt.Fprintf(&b, "\tat %s(%s.java:%d)\n", name, file, line) }
@@ -29,7 +29,7 @@ func benchJavaEvent() SpanException {
 	frame("org.apache.tomcat.util.net.SocketProcessorBase.run", "SocketProcessorBase", 52)
 	frame("java.base/java.util.concurrent.ThreadPoolExecutor.runWorker", "ThreadPoolExecutor", 1136)
 	frame("java.base/java.lang.Thread.run", "Thread", 833)
-	return SpanException{
+	return Event{
 		Type:       "java.lang.IllegalStateException",
 		Message:    "Cart 7 is locked by order 3f2b8c1e-9d4a-4b7c-8e21-0a1b2c3d4e5f",
 		StackTrace: b.String(),
@@ -37,7 +37,7 @@ func benchJavaEvent() SpanException {
 }
 
 func BenchmarkFingerprintExceptions(b *testing.B) {
-	excs := []SpanException{benchJavaEvent()}
+	excs := []Event{benchJavaEvent()}
 	if n := strings.Count(excs[0].StackTrace, "\n\tat "); n != 70 {
 		b.Fatalf("the event has %d frames, want 70", n)
 	}

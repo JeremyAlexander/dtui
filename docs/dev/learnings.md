@@ -561,7 +561,7 @@ Validated live on both tenants (box 24h, demo 2h windows):
   `catalog.SpanEvent.Exception()` coalesces both. Cause chains produce
   multiple exception events per span (2–31 seen), and the chain's root is
   the event flagged `exception.is_caused_by_root`. `exception.caused_by_id`
-  was on no event seen on either tenant, so `catalog.rootException` does
+  was on no event seen on either tenant, so `exckey.rootException` does
   not read it.
 - **Raw iterative expressions are rejected in `filter` — but `iAny()` makes
   them legal.** `filter in("exception", span.events[][span_event.name])`

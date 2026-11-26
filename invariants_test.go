@@ -115,14 +115,31 @@ func TestOnlyEntryPointsImportTUI(t *testing.T) {
 	}
 }
 
+// exckeyPath is the one package of this module the catalog may import: a
+// leaf that computes exception keys from text.
+const exckeyPath = modulePath + "/internal/exckey"
+
 // TestCatalogIsFrameworkFree pins the catalog as declarative data (ADR-0003):
-// no terminal framework and nothing from this module, so a Spec stays a pure
-// value any front end can render and test.
+// no terminal framework and nothing from this module but the exception-key
+// leaf, so a Spec stays a pure value any front end can render and test.
 func TestCatalogIsFrameworkFree(t *testing.T) {
 	for file, imports := range importsByFile(t, "internal/tui/catalog") {
 		for _, imp := range imports {
-			if strings.HasPrefix(imp, "github.com/charmbracelet/") || strings.HasPrefix(imp, modulePath+"/") {
+			if strings.HasPrefix(imp, "github.com/charmbracelet/") || strings.HasPrefix(imp, modulePath+"/") && imp != exckeyPath {
 				t.Errorf("%s imports %s: the catalog is data; rendering and app state live in internal/tui", file, imp)
+			}
+		}
+	}
+}
+
+// TestExceptionKeyPackageIsALeaf keeps internal/exckey free of this module,
+// of dtctl and of any framework: the key of an exception depends on the
+// text of its events and on nothing else.
+func TestExceptionKeyPackageIsALeaf(t *testing.T) {
+	for file, imports := range importsByFile(t, "internal/exckey") {
+		for _, imp := range imports {
+			if strings.Contains(imp, ".") {
+				t.Errorf("%s imports %s: internal/exckey uses the standard library only", file, imp)
 			}
 		}
 	}

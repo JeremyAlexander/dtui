@@ -1,4 +1,4 @@
-package catalog
+package exckey
 
 import (
 	"crypto/sha256"
@@ -23,7 +23,7 @@ const cartStack = `java.lang.IllegalStateException: Cart 7 is locked
 	at org.springframework.web.Dispatcher.dispatch(Dispatcher.java:9)
 	at com.acme.shop.CartController.post(CartController.java:17)`
 
-func mustFingerprint(t *testing.T, excs ...SpanException) ExceptionFingerprint {
+func mustFingerprint(t *testing.T, excs ...Event) ExceptionFingerprint {
 	t.Helper()
 	fp, ok := FingerprintExceptions(excs)
 	if !ok {
@@ -37,7 +37,7 @@ func TestFingerprintExceptionsLadder(t *testing.T) {
 	runtimeStack := "\tat java.base/java.util.ArrayList.get(ArrayList.java:427)\n\tat java.base/java.lang.Thread.run(Thread.java:833)"
 
 	t.Run("in-app frames", func(t *testing.T) {
-		fp := mustFingerprint(t, SpanException{Type: " " + typ + "\n", Message: "Cart 7 is locked", StackTrace: cartStack})
+		fp := mustFingerprint(t, Event{Type: " " + typ + "\n", Message: "Cart 7 is locked", StackTrace: cartStack})
 		want := frames(StackJava, "com.acme.shop.CartService", "addItem", "com.acme.shop.CartController", "post")
 		if fp.Rung != RungAppFrames || !reflect.DeepEqual(fp.Frames, want) {
 			t.Errorf("rung %v frames %+v", fp.Rung, fp.Frames)
@@ -47,27 +47,27 @@ func TestFingerprintExceptionsLadder(t *testing.T) {
 		}
 	})
 	t.Run("all frames when none is in-app", func(t *testing.T) {
-		fp := mustFingerprint(t, SpanException{Type: typ, Message: "Cart 7 is locked", StackTrace: runtimeStack})
+		fp := mustFingerprint(t, Event{Type: typ, Message: "Cart 7 is locked", StackTrace: runtimeStack})
 		want := frames(StackJava, "java.util.ArrayList", "get", "java.lang.Thread", "run")
 		if fp.Rung != RungFrames || !reflect.DeepEqual(fp.Frames, want) {
 			t.Errorf("rung %v frames %+v", fp.Rung, fp.Frames)
 		}
 	})
 	t.Run("message when no frame parses", func(t *testing.T) {
-		fp := mustFingerprint(t, SpanException{Type: typ, Message: "Cart 7 is locked", StackTrace: "no frames here"})
+		fp := mustFingerprint(t, Event{Type: typ, Message: "Cart 7 is locked", StackTrace: "no frames here"})
 		if fp.Rung != RungMessage || fp.Frames != nil || fp.Message != "Cart <n> is locked" {
 			t.Errorf("rung %v frames %+v message %q", fp.Rung, fp.Frames, fp.Message)
 		}
 	})
 	t.Run("type alone", func(t *testing.T) {
-		fp := mustFingerprint(t, SpanException{Type: typ, Message: " \n "})
+		fp := mustFingerprint(t, Event{Type: typ, Message: " \n "})
 		if fp.Rung != RungType || fp.Frames != nil || fp.Message != "" {
 			t.Errorf("rung %v frames %+v message %q", fp.Rung, fp.Frames, fp.Message)
 		}
 	})
 	t.Run("each rung keys differently", func(t *testing.T) {
 		keys := map[string]string{}
-		for name, ex := range map[string]SpanException{
+		for name, ex := range map[string]Event{
 			"app frames": {Type: typ, Message: "Cart 7 is locked", StackTrace: cartStack},
 			"frames":     {Type: typ, Message: "Cart 7 is locked", StackTrace: runtimeStack},
 			"message":    {Type: typ, Message: "Cart 7 is locked"},
@@ -88,7 +88,7 @@ func TestFingerprintExceptionsLadder(t *testing.T) {
 }
 
 func TestFingerprintKeyShape(t *testing.T) {
-	fp := mustFingerprint(t, SpanException{Type: "java.lang.IllegalStateException", StackTrace: cartStack})
+	fp := mustFingerprint(t, Event{Type: "java.lang.IllegalStateException", StackTrace: cartStack})
 	if !exceptionKeyRe.MatchString(fp.Key) {
 		t.Errorf("key = %q, want %s: and 12 hex characters", fp.Key, ExceptionKeyVersion)
 	}
@@ -119,8 +119,8 @@ func TestFingerprintKeyShape(t *testing.T) {
 // No two different inputs may write the same canonical string: a separator
 // that can also occur inside a field lets one field run into the next.
 func TestFingerprintKeyFieldsCannotRunTogether(t *testing.T) {
-	a := mustFingerprint(t, SpanException{Type: "T\x00a.b\x1fc", StackTrace: javaStack("d.e.f")})
-	b := mustFingerprint(t, SpanException{Type: "T", StackTrace: javaStack("a.b.c", "d.e.f")})
+	a := mustFingerprint(t, Event{Type: "T\x00a.b\x1fc", StackTrace: javaStack("d.e.f")})
+	b := mustFingerprint(t, Event{Type: "T", StackTrace: javaStack("a.b.c", "d.e.f")})
 	if a.Rung != RungAppFrames || b.Rung != RungAppFrames || len(a.Frames) != 1 || len(b.Frames) != 2 {
 		t.Fatalf("frames %+v and %+v", a.Frames, b.Frames)
 	}
@@ -169,10 +169,10 @@ func javaStack(methods ...string) string {
 func TestFingerprintUsesTopFiveFrames(t *testing.T) {
 	key := func(methods ...string) string {
 		t.Helper()
-		return mustFingerprint(t, SpanException{Type: "T", StackTrace: javaStack(methods...)}).Key
+		return mustFingerprint(t, Event{Type: "T", StackTrace: javaStack(methods...)}).Key
 	}
 	base := []string{"com.acme.A.a", "com.acme.B.b", "com.acme.C.c", "com.acme.D.d", "com.acme.E.e", "com.acme.F.f"}
-	fp := mustFingerprint(t, SpanException{Type: "T", StackTrace: javaStack(base...)})
+	fp := mustFingerprint(t, Event{Type: "T", StackTrace: javaStack(base...)})
 	if len(fp.Frames) != FingerprintFrames || fp.Frames[4].Function != "e" {
 		t.Fatalf("frames = %+v, want the top %d", fp.Frames, FingerprintFrames)
 	}
@@ -191,7 +191,7 @@ func TestFingerprintUsesTopFiveFrames(t *testing.T) {
 	// Five runtime frames on top do not push the in-app frame out, and the
 	// topmost of them, the throw site, is part of the key.
 	deep := []string{"java.util.A.a", "java.util.B.b", "java.util.C.c", "java.util.D.d", "java.util.E.e", "com.acme.A.a"}
-	fp = mustFingerprint(t, SpanException{Type: "T", StackTrace: javaStack(deep...)})
+	fp = mustFingerprint(t, Event{Type: "T", StackTrace: javaStack(deep...)})
 	if want := frames(StackJava, "java.util.A", "a", "com.acme.A", "a"); fp.Rung != RungAppFrames || !reflect.DeepEqual(fp.Frames, want) {
 		t.Errorf("rung %v frames %+v, want the throw site and the in-app frame", fp.Rung, fp.Frames)
 	}
@@ -200,13 +200,13 @@ func TestFingerprintUsesTopFiveFrames(t *testing.T) {
 	}
 	// The throw site comes on top of the five in-app frames, not instead of
 	// one of them.
-	fp = mustFingerprint(t, SpanException{Type: "T", StackTrace: javaStack(append([]string{"java.util.A.a"}, base...)...)})
+	fp = mustFingerprint(t, Event{Type: "T", StackTrace: javaStack(append([]string{"java.util.A.a"}, base...)...)})
 	if len(fp.Frames) != FingerprintFrames+1 || fp.Frames[0].Module != "java.util.A" || fp.Frames[5].Function != "e" {
 		t.Errorf("frames = %+v, want the throw site and the top %d in-app frames", fp.Frames, FingerprintFrames)
 	}
 	// The same holds on the all-frames rung: top five, in order.
 	runtime := []string{"java.util.A.a", "java.util.B.b", "java.util.C.c", "java.util.D.d", "java.util.E.e", "java.util.F.f"}
-	fp = mustFingerprint(t, SpanException{Type: "T", StackTrace: javaStack(runtime...)})
+	fp = mustFingerprint(t, Event{Type: "T", StackTrace: javaStack(runtime...)})
 	if fp.Rung != RungFrames || len(fp.Frames) != FingerprintFrames || fp.Frames[4].Function != "e" {
 		t.Errorf("rung %v frames %+v", fp.Rung, fp.Frames)
 	}
@@ -216,8 +216,8 @@ func TestFingerprintCollapsesRecursionAcrossFrameworkFrames(t *testing.T) {
 	direct := javaStack("com.acme.Tree.walk", "com.acme.Tree.start")
 	viaProxy := javaStack("com.acme.Tree.walk", "org.springframework.aop.Proxy.invoke",
 		"com.acme.Tree.walk", "org.springframework.aop.Proxy.invoke", "com.acme.Tree.walk", "com.acme.Tree.start")
-	a := mustFingerprint(t, SpanException{Type: "T", StackTrace: direct})
-	b := mustFingerprint(t, SpanException{Type: "T", StackTrace: viaProxy})
+	a := mustFingerprint(t, Event{Type: "T", StackTrace: direct})
+	b := mustFingerprint(t, Event{Type: "T", StackTrace: viaProxy})
 	if a.Key != b.Key || len(b.Frames) != 2 {
 		t.Errorf("recursion through a proxy split the group: %+v vs %+v", a.Frames, b.Frames)
 	}
@@ -226,13 +226,13 @@ func TestFingerprintCollapsesRecursionAcrossFrameworkFrames(t *testing.T) {
 // A panic in a handler of a Go service: the application's module has no host
 // in its path, the router is a dependency from the module cache.
 func TestFingerprintGoApplicationFrames(t *testing.T) {
-	read := func(name string) SpanException {
+	read := func(name string) Event {
 		t.Helper()
 		stack, err := os.ReadFile(filepath.Join(exceptionCorpusDir, name))
 		if err != nil {
 			t.Fatal(err)
 		}
-		return SpanException{Type: "runtime.Error", StackTrace: string(stack)}
+		return Event{Type: "runtime.Error", StackTrace: string(stack)}
 	}
 	add, addAgain, remove := mustFingerprint(t, read("go-handler-add.txt")),
 		mustFingerprint(t, read("go-handler-add-b.txt")), mustFingerprint(t, read("go-handler-remove.txt"))
@@ -350,7 +350,7 @@ ValueError: the text names another type`,
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			fp := mustFingerprint(t, SpanException{Type: " " + tc.eventType + " ", Message: "checkout failed", StackTrace: tc.stack})
+			fp := mustFingerprint(t, Event{Type: " " + tc.eventType + " ", Message: "checkout failed", StackTrace: tc.stack})
 			if fp.Type != tc.wantType || fp.EventType != tc.eventType {
 				t.Errorf("type %q of event type %q, want %q of %q", fp.Type, fp.EventType, tc.wantType, tc.eventType)
 			}
@@ -358,7 +358,7 @@ ValueError: the text names another type`,
 				t.Errorf("frames %+v, want %s on top", fp.Frames, tc.wantTop)
 			}
 			// The key is the one of the root cause recorded on its own.
-			alone := mustFingerprint(t, SpanException{Type: tc.wantType, StackTrace: stackOf(fp.Frames)})
+			alone := mustFingerprint(t, Event{Type: tc.wantType, StackTrace: stackOf(fp.Frames)})
 			if tc.wantType != tc.eventType && alone.Key != fp.Key {
 				t.Errorf("key %s, want that of the root cause alone, %s (%+v)", fp.Key, alone.Key, alone.Frames)
 			}
@@ -366,7 +366,7 @@ ValueError: the text names another type`,
 	}
 	// Below the frame rungs there is no root cause to read: the type is the
 	// event's, like the message.
-	fp := mustFingerprint(t, SpanException{Type: "A", Message: "m", StackTrace: "Caused by: B: no frames anywhere"})
+	fp := mustFingerprint(t, Event{Type: "A", Message: "m", StackTrace: "Caused by: B: no frames anywhere"})
 	if fp.Rung != RungMessage || fp.Type != "A" || fp.EventType != "A" {
 		t.Errorf("rung %v type %q event type %q", fp.Rung, fp.Type, fp.EventType)
 	}
@@ -394,9 +394,9 @@ func stackOf(frames []StackFrame) string {
 // under them are the same.
 func TestFingerprintIncludesTheThrowSite(t *testing.T) {
 	under := []string{"com.example.shop.web.ErrorPages.render", "com.example.shop.web.AuthFilter.doFilter"}
-	sendError := mustFingerprint(t, SpanException{Type: "T",
+	sendError := mustFingerprint(t, Event{Type: "T",
 		StackTrace: javaStack(append([]string{"org.apache.catalina.connector.ResponseFacade.sendError"}, under...)...)})
-	redirect := mustFingerprint(t, SpanException{Type: "T",
+	redirect := mustFingerprint(t, Event{Type: "T",
 		StackTrace: javaStack(append([]string{"org.apache.catalina.connector.Response.sendRedirect"}, under...)...)})
 	if sendError.Key == redirect.Key {
 		t.Errorf("two throw sites share key %s: %+v", sendError.Key, sendError.Frames)
@@ -406,19 +406,19 @@ func TestFingerprintIncludesTheThrowSite(t *testing.T) {
 		t.Errorf("rung %v frames %+v", sendError.Rung, sendError.Frames)
 	}
 	// An in-app throw site is not listed twice.
-	own := mustFingerprint(t, SpanException{Type: "T", StackTrace: javaStack(under...)})
+	own := mustFingerprint(t, Event{Type: "T", StackTrace: javaStack(under...)})
 	if want := frames(StackJava, "com.example.shop.web.ErrorPages", "render"); !reflect.DeepEqual(own.Frames, want) {
 		t.Errorf("frames %+v", own.Frames)
 	}
 	// A pass-through frame that throws is the throw site all the same.
-	filter := mustFingerprint(t, SpanException{Type: "T",
+	filter := mustFingerprint(t, Event{Type: "T",
 		StackTrace: javaStack("com.example.shop.web.AuthFilter.doFilter", "com.example.shop.web.Api.get")})
 	want = frames(StackJava, "com.example.shop.web.AuthFilter", "doFilter", "com.example.shop.web.Api", "get")
 	if filter.Rung != RungAppFrames || !reflect.DeepEqual(filter.Frames, want) {
 		t.Errorf("rung %v frames %+v", filter.Rung, filter.Frames)
 	}
 	// It does not count toward the top frames, though: five more follow it.
-	filter = mustFingerprint(t, SpanException{Type: "T", StackTrace: javaStack("com.example.shop.web.AuthFilter.doFilter",
+	filter = mustFingerprint(t, Event{Type: "T", StackTrace: javaStack("com.example.shop.web.AuthFilter.doFilter",
 		"com.example.A.a", "com.example.B.b", "com.example.C.c", "com.example.D.d", "com.example.E.e", "com.example.F.f")})
 	want = frames(StackJava, "com.example.shop.web.AuthFilter", "doFilter",
 		"com.example.A", "a", "com.example.B", "b", "com.example.C", "c", "com.example.D", "d", "com.example.E", "e")
@@ -497,7 +497,7 @@ main.main()`, RungAppFrames,
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			fp := mustFingerprint(t, SpanException{Type: "T", StackTrace: tc.stack})
+			fp := mustFingerprint(t, Event{Type: "T", StackTrace: tc.stack})
 			if fp.Rung != tc.rung || !reflect.DeepEqual(fp.Frames, tc.want) {
 				t.Errorf("rung %v frames %+v\nwant %v %+v", fp.Rung, fp.Frames, tc.rung, tc.want)
 			}
@@ -540,8 +540,8 @@ func TestFingerprintKeepsPassThroughFramesOnTheAllFramesRung(t *testing.T) {
 		"python": {pythonMiddleware("charge.py"), pythonMiddleware("refund.py")},
 		"dotnet": {dotnetMiddleware("AuthMiddleware"), dotnetMiddleware("QuotaMiddleware")},
 	} {
-		a := mustFingerprint(t, SpanException{Type: "T", StackTrace: pair[0]})
-		b := mustFingerprint(t, SpanException{Type: "T", StackTrace: pair[1]})
+		a := mustFingerprint(t, Event{Type: "T", StackTrace: pair[0]})
+		b := mustFingerprint(t, Event{Type: "T", StackTrace: pair[1]})
 		if a.Rung != RungFrames || b.Rung != RungFrames || len(a.Frames) < 2 || !isPassThrough(a.Frames[1]) {
 			t.Errorf("%s: rungs %v and %v, frames %+v; want the pass-through frame on the all-frames rung", name, a.Rung, b.Rung, a.Frames)
 		}
@@ -551,7 +551,7 @@ func TestFingerprintKeepsPassThroughFramesOnTheAllFramesRung(t *testing.T) {
 	}
 	// The limit is the same on both rungs: five frames, the throw site
 	// among them where it counts.
-	fp := mustFingerprint(t, SpanException{Type: "T", StackTrace: javaStack("java.util.A.a", "java.util.B.doFilter",
+	fp := mustFingerprint(t, Event{Type: "T", StackTrace: javaStack("java.util.A.a", "java.util.B.doFilter",
 		"java.util.C.invoke", "java.util.D.d", "java.util.E.proceed", "java.util.F.f")})
 	want := frames(StackJava, "java.util.A", "a", "java.util.B", "doFilter", "java.util.C", "invoke", "java.util.D", "d", "java.util.E", "proceed")
 	if fp.Rung != RungFrames || !reflect.DeepEqual(fp.Frames, want) {
@@ -589,8 +589,8 @@ func TestEntryPointNamesCountTowardTheKey(t *testing.T) {
 			StackFrame{Module: "shop/checkout.py", Function: "__call__", Syntax: StackPython}},
 	}
 	for _, tc := range cases {
-		a := mustFingerprint(t, SpanException{Type: "T", StackTrace: tc.pair[0]})
-		b := mustFingerprint(t, SpanException{Type: "T", StackTrace: tc.pair[1]})
+		a := mustFingerprint(t, Event{Type: "T", StackTrace: tc.pair[0]})
+		b := mustFingerprint(t, Event{Type: "T", StackTrace: tc.pair[1]})
 		if a.Rung != RungAppFrames || len(a.Frames) != 3 || a.Frames[1] != tc.want {
 			t.Errorf("%s: rung %v, frames %+v, want %+v second", tc.name, a.Rung, a.Frames, tc.want)
 		}
@@ -617,7 +617,7 @@ net/http.serverHandler.ServeHTTP({0xc0000a2000?}, {0x7b2a40, 0xc0000a2000}, 0xc0
 	/usr/local/go/src/net/http/server.go:3137 +0x8e
 `
 	seen := func(msg string) ExceptionFingerprint {
-		return mustFingerprint(t, SpanException{Type: "*errors.errorString", Message: msg, StackTrace: recorded})
+		return mustFingerprint(t, Event{Type: "*errors.errorString", Message: msg, StackTrace: recorded})
 	}
 	locked, lockedAgain, missing := seen("cart 7 is locked"), seen("cart 9 is locked"), seen("sku kettle not found")
 	if locked.Rung != RungMessage || locked.Frames != nil || locked.Message != "cart <n> is locked" {
@@ -629,10 +629,10 @@ net/http.serverHandler.ServeHTTP({0xc0000a2000?}, {0x7b2a40, 0xc0000a2000}, 0xc0
 	if locked.Key == missing.Key {
 		t.Errorf("two errors seen at one place share the key %s", locked.Key)
 	}
-	if bare := mustFingerprint(t, SpanException{Type: "*errors.errorString", Message: "cart 7 is locked"}); bare.Key != locked.Key {
+	if bare := mustFingerprint(t, Event{Type: "*errors.errorString", Message: "cart 7 is locked"}); bare.Key != locked.Key {
 		t.Errorf("the same error without a trace: %s, with one %s", bare.Key, locked.Key)
 	}
-	if got := mustFingerprint(t, SpanException{Type: "*errors.errorString", StackTrace: recorded}); got.Rung != RungType {
+	if got := mustFingerprint(t, Event{Type: "*errors.errorString", StackTrace: recorded}); got.Rung != RungType {
 		t.Errorf("no message: rung %v, want the type alone", got.Rung)
 	}
 
@@ -651,14 +651,14 @@ shop/internal/api.(*Handler).PostItem(0xc000012345, {0x7b2a40, 0xc0000a2000}, 0x
 		"a signal": "panic: runtime error: invalid memory address or nil pointer dereference\n" +
 			"[signal SIGSEGV: segmentation violation code=0x1 addr=0x0 pc=0x48a2bd]\n\ngoroutine 34 [running]:\n" + fault,
 	} {
-		got := mustFingerprint(t, SpanException{Type: "panic", Message: "cart 7 is locked", StackTrace: stack})
+		got := mustFingerprint(t, Event{Type: "panic", Message: "cart 7 is locked", StackTrace: stack})
 		if got.Rung != RungAppFrames || !reflect.DeepEqual(got.Frames, want) {
 			t.Errorf("%s: rung %v, frames %+v", name, got.Rung, got.Frames)
 		}
 	}
 
 	// Other runtimes throw where the fault is: their frames stay the key.
-	java := mustFingerprint(t, SpanException{Type: "java.lang.IllegalStateException", Message: "Cart 7 is locked", StackTrace: cartStack})
+	java := mustFingerprint(t, Event{Type: "java.lang.IllegalStateException", Message: "Cart 7 is locked", StackTrace: cartStack})
 	if java.Rung != RungAppFrames {
 		t.Errorf("java: rung %v", java.Rung)
 	}
@@ -668,50 +668,31 @@ shop/internal/api.(*Handler).PostItem(0xc000012345, {0x7b2a40, 0xc0000a2000}, 0x
 // stack) is not one to key on: it would give every such span one key, and
 // as the last event hide the real one before it.
 func TestFingerprintSkipsEventsThatSayNothing(t *testing.T) {
-	real := SpanException{Type: "java.lang.IllegalStateException", Message: "Cart 7 is locked",
+	real := Event{Type: "java.lang.IllegalStateException", Message: "Cart 7 is locked",
 		StackTrace: "java.lang.IllegalStateException: Cart 7 is locked\n\tat com.example.shop.Cart.add(Cart.java:42)\n"}
 	want := mustFingerprint(t, real)
-	for name, excs := range map[string][]SpanException{
+	for name, excs := range map[string][]Event{
 		"an empty event after it":         {real, {}},
 		"an event of white space after":   {real, {Type: " ", Message: "\n", StackTrace: "\t"}},
-		"an empty event flagged as root":  {real, {CauseRoot: true}},
+		"an empty event flagged as root":  {real, {Root: true}},
 		"an empty event before and after": {{}, real, {}},
 	} {
 		if got, ok := FingerprintExceptions(excs); !ok || got.Key != want.Key || got.Type != want.Type {
 			t.Errorf("%s: key %s (%s) %v, want %s", name, got.Key, got.Type, ok, want.Key)
 		}
 	}
-	for name, excs := range map[string][]SpanException{
+	for name, excs := range map[string][]Event{
 		"one empty event":   {{}},
-		"only empty events": {{}, {CauseRoot: true}, {Type: "  "}},
-		"only a location":   {{Location: "Cart.java:42"}},
+		"only empty events": {{}, {Root: true}, {Type: "  "}},
 	} {
 		if got, ok := FingerprintExceptions(excs); ok {
 			t.Errorf("%s: got the key %s on rung %s", name, got.Key, got.Rung)
 		}
 	}
 	// One of the three is enough.
-	for _, ex := range []SpanException{{Type: "A"}, {Message: "locked"}, {StackTrace: "no frames in here"}} {
-		if _, ok := FingerprintExceptions([]SpanException{ex, {}}); !ok {
+	for _, ex := range []Event{{Type: "A"}, {Message: "locked"}, {StackTrace: "no frames in here"}} {
+		if _, ok := FingerprintExceptions([]Event{ex, {}}); !ok {
 			t.Errorf("%+v has no key", ex)
-		}
-	}
-}
-
-// The root flag is a boolean, or the word a string attribute spells it
-// with. Anything else is not the flag.
-func TestSpanExceptionRootFlag(t *testing.T) {
-	for _, tc := range []struct {
-		value any
-		want  bool
-	}{
-		{true, true}, {"true", true}, {false, false}, {"false", false}, {nil, false}, {"", false},
-		{[]any{true}, false}, {[]any{"true"}, false}, {map[string]any{"true": true}, false}, {1.0, false}, {"TRUE", false},
-	} {
-		excs := SpanExceptions(map[string]any{"span.events": []any{
-			map[string]any{"span_event.name": "exception", "exception.type": "A", "exception.is_caused_by_root": tc.value}}})
-		if len(excs) != 1 || excs[0].CauseRoot != tc.want {
-			t.Errorf("exception.is_caused_by_root = %#v: %+v, want root %v", tc.value, excs, tc.want)
 		}
 	}
 }
@@ -719,16 +700,16 @@ func TestSpanExceptionRootFlag(t *testing.T) {
 func TestRootException(t *testing.T) {
 	cases := []struct {
 		name string
-		excs []SpanException
+		excs []Event
 		want string
 	}{
-		{"a single event", []SpanException{{Type: "A"}}, "A"},
-		{"the last event without a chain", []SpanException{{Type: "A"}, {Type: "B"}, {Type: "C"}}, "C"},
-		{"the flagged root", []SpanException{{Type: "A"}, {Type: "B", CauseRoot: true}, {Type: "C"}}, "B"},
-		{"several flagged roots: the last", []SpanException{
-			{Type: "A", CauseRoot: true}, {Type: "B"}, {Type: "C", CauseRoot: true}, {Type: "D"}}, "C"},
-		{"every event flagged: the last", []SpanException{
-			{Type: "A", CauseRoot: true}, {Type: "B", CauseRoot: true}}, "B"},
+		{"a single event", []Event{{Type: "A"}}, "A"},
+		{"the last event without a chain", []Event{{Type: "A"}, {Type: "B"}, {Type: "C"}}, "C"},
+		{"the flagged root", []Event{{Type: "A"}, {Type: "B", Root: true}, {Type: "C"}}, "B"},
+		{"several flagged roots: the last", []Event{
+			{Type: "A", Root: true}, {Type: "B"}, {Type: "C", Root: true}, {Type: "D"}}, "C"},
+		{"every event flagged: the last", []Event{
+			{Type: "A", Root: true}, {Type: "B", Root: true}}, "B"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -736,27 +717,6 @@ func TestRootException(t *testing.T) {
 				t.Errorf("root = %s, want %s", got.Type, tc.want)
 			}
 		})
-	}
-}
-
-func TestSpanExceptionCarriesTheRootFlag(t *testing.T) {
-	// What live spans carry: an id per event and the flag on the root.
-	live := SpanExceptions(map[string]any{"span.events": []any{
-		map[string]any{"span_event.name": "exception", "exception.type": "Wrapper", "exception.id": "00000000000000a7"},
-		map[string]any{"span_event.name": "exception", "exception.type": "Root",
-			"exception.id": "00000000000000b8", "exception.is_caused_by_root": true},
-		map[string]any{"span_event.name": "exception", "exception.type": "Outer", "exception.is_caused_by_root": false},
-	}})
-	want := []SpanException{{Type: "Wrapper"}, {Type: "Root", CauseRoot: true}, {Type: "Outer"}}
-	if !reflect.DeepEqual(live, want) {
-		t.Errorf("exceptions = %+v\nwant %+v", live, want)
-	}
-	if fp := mustFingerprint(t, live...); fp.Type != "Root" {
-		t.Errorf("fingerprinted %s, want the flagged root", fp.Type)
-	}
-	live[1].CauseRoot = false
-	if fp := mustFingerprint(t, live...); fp.Type != "Outer" {
-		t.Errorf("fingerprinted %s, want the last event where nothing marks a chain", fp.Type)
 	}
 }
 
@@ -793,9 +753,9 @@ func loadExceptionCorpus(t *testing.T) []corpusCase {
 
 func (c corpusCase) fingerprint(t *testing.T) ExceptionFingerprint {
 	t.Helper()
-	var excs []SpanException
+	var excs []Event
 	for _, ev := range c.Events {
-		ex := SpanException{Type: ev.Type, Message: ev.Message, CauseRoot: ev.Root}
+		ex := Event{Type: ev.Type, Message: ev.Message, Root: ev.Root}
 		if ev.Stack != "" {
 			stack, err := os.ReadFile(filepath.Join(exceptionCorpusDir, ev.Stack))
 			if err != nil {
@@ -885,9 +845,9 @@ func FuzzFingerprintExceptions(f *testing.F) {
 	f.Add("T", "x", "Caused by: a.B\n... 9 more\nat a.b(C.java:1)\nSuppressed: x", false)
 	f.Add("E", "m", "Traceback (most recent call last):\n  File \"/app/a.py\", line 1, in __call__", true)
 	f.Fuzz(func(t *testing.T, typ, msg, stack string, root bool) {
-		excs := []SpanException{
+		excs := []Event{
 			{Type: "Wrapper", Message: msg},
-			{Type: typ, Message: msg, StackTrace: stack, CauseRoot: root},
+			{Type: typ, Message: msg, StackTrace: stack, Root: root},
 			{Type: typ, StackTrace: stack},
 		}
 		fp, ok := FingerprintExceptions(excs)

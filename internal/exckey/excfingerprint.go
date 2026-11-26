@@ -1,4 +1,12 @@
-package catalog
+// Package exckey derives a grouping key for the exception events of a span.
+// Span exceptions carry no such key, so one is computed: a hash over the
+// exception type plus the most specific stable evidence the event offers,
+// found by walking a fallback ladder from in-app stack frames down to the
+// type alone. Same input, same key — on every machine, in every locale.
+//
+// The package imports nothing of this module. A caller hands it the fields
+// of its events (Event) and gets the key and what it was computed from.
+package exckey
 
 import (
 	"crypto/sha256"
@@ -7,11 +15,15 @@ import (
 	"strings"
 )
 
-// Exception fingerprinting: span exceptions carry no grouping key, so one is
-// derived here. The key is a hash over the exception type plus the most
-// specific stable evidence the event offers, found by walking a fallback
-// ladder from in-app stack frames down to the type alone. Same input, same
-// key — on every machine, in every locale.
+// Event is one exception event of a span: what the fingerprint reads of it.
+type Event struct {
+	Type       string
+	Message    string
+	StackTrace string
+	// Root is exception.is_caused_by_root: of the events of a cause chain,
+	// the one that is the root cause.
+	Root bool
+}
 
 // ExceptionKeyVersion prefixes every key. Once a release has shipped keys of
 // a version, a change to the fingerprint, the frame parser or the message
@@ -92,7 +104,7 @@ type ExceptionFingerprint struct {
 // of one span. The event is the root of the cause chain, the last one where
 // no chain is marked (rootException); false when no event says anything
 // about an exception.
-func FingerprintExceptions(excs []SpanException) (ExceptionFingerprint, bool) {
+func FingerprintExceptions(excs []Event) (ExceptionFingerprint, bool) {
 	root, ok := rootException(excs)
 	if !ok {
 		return ExceptionFingerprint{}, false
@@ -194,13 +206,13 @@ func appendKeyField(b []byte, field string) []byte {
 // none does: the last event flagged exception.is_caused_by_root, else the
 // last event. Instrumentation that records a chain flags its root; without
 // a flag the last event is the exception the span ended with.
-func rootException(excs []SpanException) (SpanException, bool) {
-	var last *SpanException
+func rootException(excs []Event) (Event, bool) {
+	var last *Event
 	for i := len(excs) - 1; i >= 0; i-- {
 		if saysNothing(excs[i]) {
 			continue
 		}
-		if excs[i].CauseRoot {
+		if excs[i].Root {
 			return excs[i], true
 		}
 		if last == nil {
@@ -208,7 +220,7 @@ func rootException(excs []SpanException) (SpanException, bool) {
 		}
 	}
 	if last == nil {
-		return SpanException{}, false
+		return Event{}, false
 	}
 	return *last, true
 }
@@ -217,7 +229,7 @@ func rootException(excs []SpanException) (SpanException, bool) {
 // trace. A key for it would be the same for every such event of every
 // service, and as the last event of a span it would stand in for the real
 // one before it.
-func saysNothing(ex SpanException) bool {
+func saysNothing(ex Event) bool {
 	return strings.TrimSpace(ex.Type) == "" && strings.TrimSpace(ex.Message) == "" &&
 		strings.TrimSpace(ex.StackTrace) == ""
 }

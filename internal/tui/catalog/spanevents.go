@@ -1,6 +1,10 @@
 package catalog
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/dynatrace-oss/dtui/internal/exckey"
+)
 
 // Span-event / exception helpers. Validated live on two tenants: span.events
 // is an array of records discriminated by span_event.name — "exception",
@@ -102,6 +106,17 @@ func SpanExceptions(rec map[string]any) []SpanException {
 	}
 	rec[spanExcKey] = excs
 	return excs
+}
+
+// FingerprintExceptions computes the grouping key of a span's exception
+// events (exckey.FingerprintExceptions); false when no event says anything
+// about an exception.
+func FingerprintExceptions(excs []SpanException) (exckey.ExceptionFingerprint, bool) {
+	events := make([]exckey.Event, len(excs))
+	for i, ex := range excs {
+		events[i] = exckey.Event{Type: ex.Type, Message: ex.Message, StackTrace: ex.StackTrace, Root: ex.CauseRoot}
+	}
+	return exckey.FingerprintExceptions(events)
 }
 
 // ExceptionTypeShort compresses a fully-qualified exception type for a

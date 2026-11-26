@@ -1,8 +1,11 @@
 package catalog
 
 import (
+	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/dynatrace-oss/dtui/internal/exckey"
 )
 
 // exceptionSpan mirrors the live shapes: a OneAgent/Java exception event with
@@ -185,5 +188,60 @@ func TestSpanPreviewHTTPStatusWithoutMethod(t *testing.T) {
 	})
 	if f := factByLabel(facts, "http"); f.Value != "503" || f.Class != "error" {
 		t.Errorf("http fact = %+v, want 503/error", f)
+	}
+}
+
+// The root flag is a boolean, or the word a string attribute spells it
+// with. Anything else is not the flag.
+func TestSpanExceptionRootFlag(t *testing.T) {
+	for _, tc := range []struct {
+		value any
+		want  bool
+	}{
+		{true, true}, {"true", true}, {false, false}, {"false", false}, {nil, false}, {"", false},
+		{[]any{true}, false}, {[]any{"true"}, false}, {map[string]any{"true": true}, false}, {1.0, false}, {"TRUE", false},
+	} {
+		excs := SpanExceptions(map[string]any{"span.events": []any{
+			map[string]any{"span_event.name": "exception", "exception.type": "A", "exception.is_caused_by_root": tc.value}}})
+		if len(excs) != 1 || excs[0].CauseRoot != tc.want {
+			t.Errorf("exception.is_caused_by_root = %#v: %+v, want root %v", tc.value, excs, tc.want)
+		}
+	}
+}
+
+func TestSpanExceptionCarriesTheRootFlag(t *testing.T) {
+	// What live spans carry: an id per event and the flag on the root.
+	live := SpanExceptions(map[string]any{"span.events": []any{
+		map[string]any{"span_event.name": "exception", "exception.type": "Wrapper", "exception.id": "00000000000000a7"},
+		map[string]any{"span_event.name": "exception", "exception.type": "Root",
+			"exception.id": "00000000000000b8", "exception.is_caused_by_root": true},
+		map[string]any{"span_event.name": "exception", "exception.type": "Outer", "exception.is_caused_by_root": false},
+	}})
+	want := []SpanException{{Type: "Wrapper"}, {Type: "Root", CauseRoot: true}, {Type: "Outer"}}
+	if !reflect.DeepEqual(live, want) {
+		t.Errorf("exceptions = %+v\nwant %+v", live, want)
+	}
+	if fp, _ := FingerprintExceptions(live); fp.Type != "Root" {
+		t.Errorf("fingerprinted %s, want the flagged root", fp.Type)
+	}
+	live[1].CauseRoot = false
+	if fp, _ := FingerprintExceptions(live); fp.Type != "Outer" {
+		t.Errorf("fingerprinted %s, want the last event where nothing marks a chain", fp.Type)
+	}
+}
+
+// The key is computed from the type, the message, the stack trace and the
+// root flag of the events; a location alone says nothing.
+func TestFingerprintExceptionsHandsTheEventsOn(t *testing.T) {
+	excs := SpanExceptions(exceptionSpan())
+	fp, ok := FingerprintExceptions(excs)
+	if !ok || !strings.HasPrefix(fp.Key, exckey.ExceptionKeyVersion+":") || fp.EventType != excs[len(excs)-1].Type {
+		t.Errorf("fingerprint %+v, %v", fp, ok)
+	}
+	if fp, ok := FingerprintExceptions([]SpanException{{Location: "Cart.java:42"}}); ok {
+		t.Errorf("a location alone got the key %s", fp.Key)
+	}
+	if _, ok := FingerprintExceptions(nil); ok {
+		t.Error("no events got a key")
 	}
 }

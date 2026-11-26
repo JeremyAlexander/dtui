@@ -34,7 +34,7 @@ keeps growing, split section 1 (DQL facts) by data object.
 
 ## Exception keys: what the fingerprint does not read
 
-`internal/tui/catalog/exc*.go` groups exceptions by a key. Known gaps, each
+`internal/exckey` groups exceptions by a key. Known gaps, each
 of which splits or merges issues it should not:
 
 - A JavaScript `[cause]:` chain in one stack text is not followed; all

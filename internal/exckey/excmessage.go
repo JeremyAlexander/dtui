@@ -1,4 +1,4 @@
-package catalog
+package exckey
 
 import (
 	"net/netip"
