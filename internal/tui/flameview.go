@@ -16,7 +16,7 @@ import (
 	"github.com/dynatrace-oss/dtui/internal/tui/theme"
 )
 
-// The flame graph of the hotspots analysis (ADR-0021): the second reading of
+// The flame graph of the hotspots analysis (ADR-0023): the second reading of
 // the :hotspots table, which tab switches to and back from. This file is the
 // screen: it fetches the stacks, maps keys onto the model and draws it. What
 // the graph shows for a tree, a size and a key is internal/tui/flame's, which

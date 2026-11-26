@@ -1,4 +1,4 @@
-# ADR-0021: The flame graph is a bespoke screen, and the last depth of profiling
+# ADR-0023: The flame graph is a bespoke screen, and the last depth of profiling
 
 **Status:** Proposed · **Date:** 2026-11-26
 

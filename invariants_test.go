@@ -150,7 +150,7 @@ func TestCatalogIsFrameworkFree(t *testing.T) {
 }
 
 // TestFlameIsFrameworkFree pins the flame graph's model as rules without a
-// screen (ADR-0021): no terminal framework, and of this module only the
+// screen (ADR-0023): no terminal framework, and of this module only the
 // catalog, whose text helpers it shares with the tables. What the graph
 // shows for a tree, a size and a key is then tested as plain values.
 func TestFlameIsFrameworkFree(t *testing.T) {

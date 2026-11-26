@@ -3,7 +3,7 @@
 `tab` on the `:hotspots` table draws the analysis the table shows as a flame
 graph, and `tab` there returns to the table. It is a prototype stacked on the
 [profiling prototype](profiling-prototype.md) and argued in
-[ADR-0021](../adr/0021-flame-graph-is-a-bespoke-screen.md) (proposed). The
+[ADR-0023](../adr/0023-flame-graph-is-a-bespoke-screen.md) (proposed). The
 interaction model is that of [flamelens](https://github.com/YS-L/flamelens)
 (MIT), re-derived from its behaviour; no code of it is in this repository.
 This page says what is built, how to look at it, and, row by row, where it
@@ -266,6 +266,6 @@ Not built, in the order they were asked about in the design brief:
 - the zoom and the selection kept when a new analysis arrives;
 - one page with a `functions | flame` strip in place of a pushed view;
 - a differential, a timeline, a bottom-up orientation, a sandwich view: out
-  of scope by ADR-0021.
+  of scope by ADR-0023.
 
 The shortcuts taken are in [tech-debt.md](../dev/tech-debt.md).

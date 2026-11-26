@@ -958,7 +958,7 @@ internal/tui/
   problem.go, vulnerability.go   # bespoke tabbed pages
   waterfall.go, timeline.go      # trace waterfall, RUM session timeline
   flame/, flameview.go           # flame graph of the hotspots analysis: the model
-                                 #   (no terminal framework) and its screen (ADR-0021)
+                                 #   (no terminal framework) and its screen (ADR-0023)
   inspector.go, render.go        # record inspector + typed value rendering
   navigator.go           # smartscape navigator (overview / browser / walk)
   home.go, query.go, metrics.go, relations.go, segments.go, links.go
