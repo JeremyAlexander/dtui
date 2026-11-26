@@ -79,76 +79,84 @@ rest how the view uses it.
   library only (`TestExceptionKeyPackageIsALeaf`). The catalog may import it
   and nothing else of this module (`TestCatalogIsFrameworkFree`), so the key
   is testable without a tenant.
-- **The view is a catalog `Spec` of its own.** It is not a lens of `:traces`:
-  `Decode` belongs to a `Spec` ([ADR-0003](0003-declarative-view-catalog.md)),
-  so a grouping lens would group every other lens with it. It is a second list
-  over the spans of the traces noun, not a new tab, a chart or a bespoke
-  screen, which keeps it inside the depth cap of
+- **The view is a catalog `Spec` of its own, `:exceptions` with the alias
+  `:exc`.** It is not a lens of `:traces`: sampling belongs to a `Spec`
+  ([ADR-0003](0003-declarative-view-catalog.md)), so a grouping lens would
+  group every other lens with it. It is registered after events, so `:e` still
+  opens events. It is a second list over the spans of the traces noun, not a
+  new tab, a chart or a bespoke screen, which keeps it inside the depth cap of
   [ADR-0014](0014-breadth-not-depth.md).
-- **One primary query; the grouping is done before the rows reach the view.**
-  The query keeps the spans that carry an exception event, newest first.
-  Fingerprinting and grouping run in the query's command, off the UI
-  goroutine, and the view receives groups; `Decode` as it runs today, inside
-  `tableView.Update`, must not parse a thousand stacks. That step does not
-  write into a record another goroutine can read (the cache `SpanExceptions`
-  keeps in the record is such a write). A result for a superseded request is
-  dropped by its sequence number like any other; a running query is not
-  cancelled. The unit is the span throughout: one key per span, from the one
-  event the rules above pick, however many exception events the span carries.
-  The exceptions lens keeps showing a span's first event, so the two can name
-  different types for one span.
+- **One primary query; the grouping is done in the fetch command.** The query
+  keeps the spans that carry an exception event, newest first. The catalog has
+  a hook for this beside `Decode`, `Spec.Sample`: it names the record, the two
+  limits and the function that groups. Fingerprinting and grouping run in the
+  query's command, off the UI goroutine, and the view receives groups;
+  `Decode` runs inside `tableView.Update` and must not parse a thousand
+  stacks. The rows share no memory with the fetched spans, which are released
+  with their stack text, and nothing is written into a record another
+  goroutine can read. A result for a superseded request is dropped by its
+  sequence number like any other; a running query is not cancelled. The unit
+  is the span throughout: one key per span, from the one event the rules above
+  pick, however many exception events the span carries. The exceptions lens
+  keeps showing a span's first event, so the two can name different types for
+  one span.
 - **One query, with a bounded response.** One query per open meets the count
   of [ADR-0013](0013-query-budget.md); that ADR also bounds a query's shape,
   and an unprojected span comes with all of its `span.events` and full stack
   traces. So the query is projected to the fields the key and a row read, it
   has a row limit, and the request sets an explicit result size limit. The
-  mechanism is decided here. The numbers are provisional: 1000 rows and 8 MB,
-  from one measurement on an environment with very few exception spans (see
-  the open list). 1000 rows is the upper bound whatever the measurement says.
-- **A group row is small.** It keeps its key, its rung, its count, its times
-  and the display fields of its newest member, not the member spans or their
-  stack text. The view builds no list of a group's occurrences.
-- **The header says what the sample is.** It gives the number of spans that
-  arrived and the time of the oldest of them, for example
-  `412 spans, newest first, back to 14:02`: a loud bug can fill the sample in
-  seconds, and a count alone hides that. A group's count is the number of
-  sampled spans with its key, a count within the sample and not within the
-  timeframe. When the scan limit, the result size limit or the fetch timeout
-  cut the result short, the header says which, from the same response as the
-  rows. A result cut by the size limit arrives with a notice the notice
-  classifier does not know by name today; the view has to recognise it, and
-  must not present it as a row limit. A result that was cut short can be empty
-  and is not known to hold the newest spans, so an empty one reads "the scan
-  gave up", never "no exceptions". Groups are ordered by count, then by newest
-  span, then by key, so equal counts do not move between refreshes. This
-  extends [ADR-0007](0007-scope-honesty.md) from scope to completeness.
+  mechanism is decided here. The numbers, 1000 rows and 8 MB, are provisional
+  (see the open list). 1000 rows is the upper bound whatever the measurement
+  says.
+- **A group row is small, and the counts add up.** A row keeps its key, its
+  rung, its count, its times, its services and the display fields of its
+  newest member, not the member spans or their stack text. The view builds no
+  list of a group's occurrences. A span whose exception events recorded
+  nothing has no key; such spans are counted in one keyless last row, so the
+  counts add up to the number the sample line gives.
+- **A sample line says what the rows were computed from.** It is built from
+  the same response as the rows. When nothing cut the sample it reads
+  `all 3 exception spans · last 2h`. When something did, the reason leads and
+  the window trails, because a narrow table cuts the line at its end:
+  `limit hit: newest 1000 exception spans, back to 11:48:19; older ones are not counted · last 2h`.
+  The reasons are the row limit, the result size limit, Grail's scan limit and
+  the fetch timeout. The reach (`back to`) is given only when the row or the
+  size limit cut the sample: a loud bug can fill it in seconds, and a count
+  alone hides that. After a scan limit or a timeout the spans are not known to
+  be the newest, so the line says `of what was scanned` and gives no reach. An
+  empty sample that was cut never reads as "no exceptions": it says the scan
+  gave up, or that no span fit the size limit. A group's count is the number
+  of sampled spans with its key, a count within the sample and not within the
+  timeframe. Groups are ordered by count, then by newest span, then by key, so
+  equal counts do not move between refreshes. This extends
+  [ADR-0007](0007-scope-honesty.md) from scope to completeness.
 - **Facets and search act on spans; the key is local.** A facet narrows the
   query before sampling, so it uses fields of the fetched spans, collected
-  before grouping. The key, the rung and the count are stamped under `__` keys
-  ([ADR-0016](0016-detail-panes-show-real-grail-keys.md)) and are never
-  offered as facets or sent to the server. `/` filters the visible groups, the
-  key included, and on this view Enter keeps that local filter instead of
-  promoting the text to a server `search`, which would look for a key no span
-  holds. `--search` and a preset's searches stay server-side, on the spans.
+  before grouping. The issue is stamped on the row under a `__` key
+  ([ADR-0016](0016-detail-panes-show-real-grail-keys.md)) and is never offered
+  as a facet or sent to the server. `/` filters the visible groups and matches
+  the key and the full type as well as the cells. On this view Enter keeps
+  that filter local, since a server `search` would look for a key no span
+  holds, and `alt+enter` sends the text as a server search over the spans.
+  `--search` and a preset's searches stay server-side.
 - **A row opens its newest span, and the exits hand over the sample.** Enter
   opens the trace of the group's newest span. `y` yanks the key. `o` opens the
-  primary query in a Notebook and `c` echoes it, both labelled as the
-  ungrouped sample: no DQL computes the key. That is a stated limit on the two
-  exits of [ADR-0012](0012-navigate-analyze-mutate.md), not a third exit and
-  not an override of [ADR-0001](0001-dql-is-the-substrate.md): what is handed
-  over is still DQL.
+  primary query in a Notebook and `c` echoes it; both hand over the sampled
+  spans, ungrouped, and say so, because no DQL computes the key. That is a
+  stated limit on the two exits of
+  [ADR-0012](0012-navigate-analyze-mutate.md), not a third exit and not an
+  override of [ADR-0001](0001-dql-is-the-substrate.md): what is handed over is
+  still DQL.
 
 Open, to be settled before this is accepted. This record stays Proposed, and
 its pull request open, until this list is empty:
 
-- The row limit and the result size limit as numbers. 1000 rows and 8 MB were
-  measured on an environment with very few exception spans. They are confirmed
-  or changed on a busier one (bytes scanned, bytes returned, time to first
-  rows, against the budgets in [vision.md](../design/vision.md)), and the
-  numbers are written into this record by the view's pull request.
-- The view's name, its alias and how it is reached. A name in the command bar
-  and a drill from the exceptions lens are the candidates; the view's pull
-  request chooses.
+- The row limit and the result size limit as numbers. 1000 rows and 8 MB are
+  provisional: they were chosen from the size of single spans on an
+  environment with very few exception spans and have not been measured on one
+  that fills them. They are confirmed or changed on a busy one (bytes scanned,
+  bytes returned, time to first rows, against the budgets in
+  [vision.md](../design/vision.md)) and then written into this record.
 
 Left undecided on purpose. Nothing above depends on these, and none of them
 needs a further ADR:
@@ -189,8 +197,8 @@ Rejected:
   no keys, so nothing migrates. If Grail gains a grouping key for exceptions,
   this ADR is superseded.
 - A rare exception outside the sample is absent, not counted as zero; the
-  header says how far back the sample reaches, and narrowing the scope is how
-  the user reaches it.
+  sample line says how far back the sample reaches, and narrowing the scope is
+  how the user reaches it.
 - The command echo (`c`) is `dtctl query` with the view's primary query: it
   returns the sampled spans, ungrouped. The keys, rungs and counts are
   computed in Go and no DQL reproduces them, so the echo hands over the input
@@ -199,9 +207,9 @@ Rejected:
   (Rust, Swift, PHP, Ruby) yields no frames and is keyed on the message rung
   rather than failing. The pull request that adds the key lists what the
   readers are known not to read in [../dev/tech-debt.md](../dev/tech-debt.md).
-- Grouping off the UI goroutine needs a step the table engine does not have
-  today, next to `Spec.Decode`. This record states the constraint and leaves
-  the shape of that step to the view's pull request.
+- The table engine gains one hook, `Spec.Sample`, and a line above the table
+  for a sampled view. Any later view that groups a bounded sample uses the
+  same hook.
 - This is a new subsystem (five stack readers, a message parameteriser, a
   versioned key), which [vision.md](../design/vision.md) answers with no by
   default; this record is the override, for the reason in Context. Against the
@@ -211,14 +219,11 @@ Rejected:
 - The golden files of the key are not layout snapshots.
   [CONTRIBUTING.md](../../CONTRIBUTING.md) allows them as versioned
   compatibility fixtures.
-- The view's pull request owes tests for: a result of many older spans of one
-  key and a full sample of newer spans of another, which shows the newer one
-  and claims nothing about the older; a partial response of exactly the row
-  limit; a late clean response after a partial one; a result cut by the size
-  limit, named as that in the header; typing a key, pressing Enter and
-  asserting that no DQL holds it; two spans of one key with disjoint fields in
-  the facet picker; a refresh while a group list is on screen, under the race
-  detector.
+- The view's tests cover: a full sample, which claims nothing about older
+  spans; a sample one short of the row limit; a result cut by the size limit,
+  by the scan limit and by a timeout, each named as that; an empty cut sample;
+  typing a key, pressing Enter and asserting that no DQL holds it; the facet
+  picker's fields taken from the spans; the layout at four sizes.
 
 ## Observed so far
 
@@ -244,6 +249,6 @@ facts about that environment, not about every tenant kind.
   HTTP, status or errno wording or `code` behind the word that says whose it
   is (`error code`, `exit code`), so a 404 and a 500 stay apart on the message
   rung; a bare `code 12345` is a value.
-- The view's query, projected and limited as above, was measured once, on an
-  environment with very few exception spans. That says nothing yet about a
-  busy one.
+- A projected span was about 5 KB there, most of it stack text, and the
+  projection halved the result. The environment had very few exception spans,
+  which says nothing yet about a busy one.
