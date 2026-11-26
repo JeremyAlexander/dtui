@@ -27,7 +27,12 @@ func TestParse(t *testing.T) {
 		{"github.com/acme/shop/internal/cart.(*Service).AddItem.func2", Frame{Notation: Go, Package: "github.com/acme/shop/internal/cart", Type: "Service", Function: "AddItem"}},
 		{"github.com/acme/shop/internal/cart.Map[go.shape.int].Get", Frame{Notation: Go, Package: "github.com/acme/shop/internal/cart", Type: "Map", Function: "Get"}},
 		{"net/http.(*conn).serve", Frame{Notation: Go, Package: "net/http", Type: "conn", Function: "serve", Runtime: "the Go standard library"}},
-		{"sync.(*Mutex).Lock", Frame{Notation: Go, Package: "sync", Type: "Mutex", Function: "Lock"}},
+		// The standard library is a fixed list of names, not "a path without
+		// a domain": a module may be named without one.
+		{"sync.(*Mutex).Lock", Frame{Notation: Go, Package: "sync", Type: "Mutex", Function: "Lock", Runtime: "the Go standard library"}},
+		{"vendor/golang.org/x/net/http2/hpack.(*Decoder).Write", Frame{Notation: Go, Package: "vendor/golang.org/x/net/http2/hpack", Type: "Decoder", Function: "Write", Runtime: "the Go standard library"}},
+		{"shop/internal/cart.(*Service).AddItem", Frame{Notation: Go, Package: "shop/internal/cart", Type: "Service", Function: "AddItem"}},
+		{"main.(*server).serve", Frame{Notation: Go, Package: "main", Type: "server", Function: "serve"}},
 
 		{"src/server/handler.js:resolve", Frame{Notation: Path, File: "src/server/handler.js", Function: "resolve"}},
 		{"/app/src/server/handler.ts:resolve", Frame{Notation: Path, File: "/app/src/server/handler.ts", Function: "resolve"}},
@@ -35,6 +40,14 @@ func TestParse(t *testing.T) {
 		{"node:internal/timers:processTimers", Frame{Notation: Path, File: "node:internal/timers", Function: "processTimers", Runtime: "Node.js"}},
 		{"node:fs:readFileSync", Frame{Notation: Path, File: "node:fs", Function: "readFileSync", Runtime: "Node.js"}},
 		{"src/a.js:", Frame{Notation: Path, File: "src/a.js"}},
+		// A file under a directory of dependencies is not the application's.
+		{"/app/node_modules/express/lib/router/index.js:handle", Frame{Notation: Path, File: "/app/node_modules/express/lib/router/index.js", Function: "handle", Runtime: "a dependency (node_modules)"}},
+		{`C:\app\venv\Lib\site-packages\flask\app.py:wsgi_app`, Frame{Notation: Path, File: `C:\app\venv\Lib\site-packages\flask\app.py`, Function: "wsgi_app", Runtime: "a dependency (site-packages)"}},
+		{"src/node_modules_shim/a.js:f", Frame{Notation: Path, File: "src/node_modules_shim/a.js", Function: "f"}},
+
+		// .NET spells a constructor with a dot of its own.
+		{"Shop.Services.CartService..ctor", Frame{Notation: Dotted, Package: "Shop.Services", Type: "CartService", Function: ".ctor"}},
+		{"Shop.Services.CartService..cctor", Frame{Notation: Dotted, Package: "Shop.Services", Type: "CartService", Function: ".cctor"}},
 
 		{"", Frame{}},
 		{"...", Frame{}},

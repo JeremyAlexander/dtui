@@ -101,7 +101,7 @@ func (ix *Index) candidates(f Frame) (files []string, need needs) {
 		}
 		return bestBySuffix(ix.byName[want[len(want)-1]], want, 1, func(rel string) []string { return segments(rel, "/") }), needs{}
 	case Go:
-		return ix.goFiles(f.Package), needs{function: true}
+		return ix.goFiles(f.Package), needs{function: true, pkg: goPackage(f.Package)}
 	}
 	pkg := segments(f.Package, ".")
 	outer := f.OuterType()
@@ -136,16 +136,33 @@ func (ix *Index) candidates(f Frame) (files []string, need needs) {
 	if len(files) > 0 {
 		return dedupe(files), needs{pkg: f.Package}
 	}
-	// Go spelled without an import path: main.main.
-	if f.Package == "" {
-		return ix.goFiles(f.Type), needs{function: true}
+	// Go spelled without an import path: main.main. The runtime's own
+	// packages are spelled so too (runtime.main), and are not searched.
+	if f.Package == "" && !goStd[f.Type] {
+		return ix.goFiles(f.Type), needs{function: true, pkg: f.Type}
 	}
 	return nil, needs{}
 }
 
+// goPackage is the name a file of an import path declares in its package
+// clause: the path's last element, or the one before a major version.
+func goPackage(importPath string) string {
+	parts := segments(importPath, "/")
+	if n := len(parts); n > 1 && majorVersion.MatchString(parts[n-1]) {
+		parts = parts[:n-1]
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return parts[len(parts)-1]
+}
+
+var majorVersion = regexp.MustCompile(`^v[0-9]+$`)
+
 // goFiles are the Go files of the directory an import path ends in. A path
-// no directory fits (package main, a module's root) leaves every Go file,
-// each of which must then declare the function.
+// no directory fits (package main, a module's root) leaves every Go file.
+// Either way a file must declare the frame's package and its function: a
+// library's function is not the application's of the same name.
 func (ix *Index) goFiles(pkg string) []string {
 	pool := slices.DeleteFunc(slices.Clone(ix.byExt[".go"]), func(rel string) bool { return strings.HasSuffix(rel, "_test.go") })
 	want := segments(pkg, "/")
@@ -205,7 +222,7 @@ func (ix *Index) locate(rel string, f Frame, pkg string) (Match, holds) {
 	defer file.Close()
 	var inPackage *regexp.Regexp
 	if pkg != "" {
-		inPackage = compile(`^\s*(?:package|namespace|Namespace)\s+` + regexp.QuoteMeta(pkg) + `\s*[;{]?\s*$`)
+		inPackage = compile(`^\s*(?:package|namespace|Namespace)\s+` + regexp.QuoteMeta(pkg) + `\s*[;{]?\s*(?://.*)?$`)
 	}
 	pkgSeen := false
 
@@ -307,7 +324,6 @@ func compile(pattern string) *regexp.Regexp {
 	}
 	return re
 }
-
 
 // typeDeclaration is the pattern of the line that declares the frame's type.
 func typeDeclaration(ext string, f Frame) *regexp.Regexp {

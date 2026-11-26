@@ -90,6 +90,9 @@ func Map[K comparable](k K) {}
 	"api/internal/cart/service_test.go":           "package cart\n\nfunc Total() int { return 1 }\n",
 	"api/internal/order/service.go":               "package order\n\ntype Service struct{}\n\nfunc (s *Service) AddItem() {}\n",
 	"api/cmd/api/main.go":                         "package main\n\nfunc main() {\n\trun()\n}\n\nfunc run() {}\n",
+	// Names a library and the runtime have too.
+	"api/internal/lock/lock.go": "package lock // of the cart\n\ntype Mutex struct{}\n\nfunc (m *Mutex) Lock() {}\n\nfunc NewServer() {}\n\nfunc Open() {}\n",
+	"tool.go":                   "package tool\n\nfunc Run() {}\n",
 	"jobs/shop/reports/daily.py":                  "import os\n\nclass Report:\n    def render(self):\n        return render(self)\n\nasync def render(report):\n    pass\n",
 	"web/src/server/handler.ts":                   "export async function resolve(req: Request) {\n  return other(req)\n}\n\nexport const other = (req) => 1\n\nclass Handler {\n  handle(req) {\n    return 1\n  }\n}\n",
 	"web/src/client/handler.ts":                   "export function resolve() {}\n",
@@ -146,6 +149,19 @@ func TestResolve(t *testing.T) {
 		{"main.run", []Match{{"api/cmd/api/main.go", 7, Declaration}}},
 		{"github.com/lib/pq.Open", nil},
 		{"net/http.(*conn).serve", nil},
+		// A module named without a domain is not the standard library.
+		{"shop/api/internal/cart.(*Service).AddItem", []Match{{"api/internal/cart/service.go", 5, Declaration}}},
+		{"github.com/acme/shop/api/internal/lock.(*Mutex).Lock", []Match{{"api/internal/lock/lock.go", 5, Declaration}}},
+		// The module's root, also behind a major version.
+		{"example.com/tool.Run", []Match{{"tool.go", 3, Declaration}}},
+		{"example.com/tool/v2.Run", []Match{{"tool.go", 3, Declaration}}},
+		// The runtime's and a library's functions are not the application's
+		// of the same name: the file must be of the frame's package.
+		{"runtime.main", nil},
+		{"runtime.gopark", nil},
+		{"sync.(*Mutex).Lock", nil},
+		{"google.golang.org/grpc.NewServer", nil},
+		{"database/sql.Open", nil},
 
 		// Python.
 		{"shop.reports.daily.render", []Match{{"jobs/shop/reports/daily.py", 4, FirstOfSeveral}}},
@@ -162,11 +178,14 @@ func TestResolve(t *testing.T) {
 		{"handler.ts:other", []Match{{"web/src/server/handler.ts", 5, Declaration}, {"web/src/client/handler.ts", 0, FileOnly}}},
 		{"handler.ts:resolve", []Match{{"web/src/client/handler.ts", 1, Declaration}, {"web/src/server/handler.ts", 1, Declaration}}},
 		{"graphql/type/definition.js:resolve", nil},
+		// A dependency's file of the same name as one of the application's.
+		{"/app/node_modules/express/lib/router/handler.ts:resolve", nil},
 		{"node:internal/timers:processTimers", nil},
 
 		// .NET: a file named after the type, the namespace's directory first.
 		{"Shop.Services.CartService.AddItem", []Match{{"dotnet/Shop/Services/CartService.cs", 5, Declaration}}},
 		{"Legacy.CartService.Missing", []Match{{"dotnet/Legacy/CartService.cs", 3, TypeOnly}}},
+		{"Legacy.CartService..ctor", []Match{{"dotnet/Legacy/CartService.cs", 3, TypeOnly}}},
 		{"System.Threading.Tasks.Task.Run", nil},
 
 		{"", nil}, {"main", nil}, {"...", nil},
@@ -287,7 +306,7 @@ func TestScanSkipsWhatIsNotSource(t *testing.T) {
 			t.Errorf("%s in the index: %v, want %v", rel, err == nil, want)
 		}
 	}
-	if ix.Partial != "" || ix.Len() != 16 {
+	if ix.Partial != "" || ix.Len() != 18 {
 		t.Errorf("%d files, partial %q", ix.Len(), ix.Partial)
 	}
 }

@@ -49,6 +49,27 @@ var runtimes = []struct{ prefix, name string }{
 	{"System.", ".NET"}, {"Microsoft.", ".NET"},
 }
 
+// goStd are the first elements of the import paths of Go's standard library.
+// It is a list and not a rule: "no domain in the first element" would also
+// refuse an application whose module is named without one.
+var goStd = map[string]bool{
+	"archive": true, "bufio": true, "builtin": true, "bytes": true, "cmp": true, "compress": true,
+	"container": true, "context": true, "crypto": true, "database": true, "debug": true, "embed": true,
+	"encoding": true, "errors": true, "expvar": true, "flag": true, "fmt": true, "go": true, "hash": true,
+	"html": true, "image": true, "index": true, "internal": true, "io": true, "iter": true, "log": true,
+	"maps": true, "math": true, "mime": true, "net": true, "os": true, "path": true, "plugin": true,
+	"reflect": true, "regexp": true, "runtime": true, "slices": true, "sort": true, "strconv": true,
+	"strings": true, "structs": true, "sync": true, "syscall": true, "testing": true, "text": true,
+	"time": true, "unicode": true, "unique": true, "unsafe": true, "vendor": true, "weak": true,
+}
+
+// dependencies are the directories package managers keep other people's code
+// in. A script whose path passes through one is not the application's, and
+// the walk does not index them either.
+var dependencies = map[string]bool{
+	"node_modules": true, "bower_components": true, "site-packages": true, "dist-packages": true, "vendor": true,
+}
+
 // scripts are the extensions a Path frame's file may have.
 var scripts = []string{".js", ".mjs", ".cjs", ".jsx", ".ts", ".mts", ".cts", ".tsx", ".py", ".rb", ".php"}
 
@@ -66,6 +87,10 @@ func Parse(label string) Frame {
 		return parseGo(label)
 	}
 	head, function := cutLast(label, '.')
+	// .NET spells a constructor Type..ctor: the second dot is the name's.
+	if (function == "ctor" || function == "cctor") && strings.HasSuffix(head, ".") {
+		head, function = strings.TrimSuffix(head, "."), "."+function
+	}
 	if function == "" {
 		return Frame{}
 	}
@@ -102,9 +127,16 @@ func parsePath(label string) (Frame, bool) {
 		return Frame{Notation: Path, File: file, Function: function, Runtime: "Node.js"}, true
 	}
 	for _, ext := range scripts {
-		if strings.HasSuffix(file, ext) {
-			return Frame{Notation: Path, File: file, Function: function}, true
+		if !strings.HasSuffix(file, ext) {
+			continue
 		}
+		f := Frame{Notation: Path, File: file, Function: function}
+		for _, dir := range strings.FieldsFunc(file, func(r rune) bool { return r == '/' || r == '\\' }) {
+			if dependencies[dir] {
+				f.Runtime = "a dependency (" + dir + ")"
+			}
+		}
+		return f, true
 	}
 	return Frame{}, false
 }
@@ -139,8 +171,7 @@ func parseGo(label string) Frame {
 	if f.Function == "" {
 		return Frame{}
 	}
-	// A standard library import path has no domain in its first element.
-	if first, _, deep := strings.Cut(f.Package, "/"); deep && !strings.Contains(first, ".") {
+	if first, _, _ := strings.Cut(f.Package, "/"); goStd[first] {
 		f.Runtime = "the Go standard library"
 	}
 	return f
@@ -181,6 +212,8 @@ func (f Frame) Symbol() string {
 	switch {
 	case fn == "<init>" || fn == ".ctor":
 		return f.OuterType()
+	case fn == ".cctor":
+		return "" // a static constructor, like <clinit>
 	case strings.HasPrefix(fn, "lambda$"):
 		// lambda$method$3
 		name, _, _ := strings.Cut(strings.TrimPrefix(fn, "lambda$"), "$")
