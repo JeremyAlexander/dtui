@@ -156,10 +156,13 @@ rest how the view uses it.
   that filter local, since a server `search` would look for a key no span
   holds, and `alt+enter` sends the text as a server search over the spans.
   `--search` and a preset's searches stay server-side.
-- **A row opens its newest span, and the exits hand over the sample.** Enter
+- **A row opens its newest span, and the exits hand over the query.** Enter
   opens the trace of the group's newest span. `y` yanks the key. `o` opens the
-  primary query in a Notebook and `c` echoes it; both hand over the sampled
-  spans, ungrouped, and say so, because no DQL computes the key. That is a
+  primary query in a Notebook and `c` echoes it. Both hand over the query that
+  fetched the sample, not the sample: run again it returns the spans of that
+  moment, one by one and ungrouped, because no DQL computes the key, and both
+  say so. The Notebook link holds the query text and nothing else, so neither
+  the session's segments nor the result size limit go with it. That is a
   stated limit on the two exits of
   [ADR-0012](0012-navigate-analyze-mutate.md), not a third exit and not an
   override of [ADR-0001](0001-dql-is-the-substrate.md): what is handed over is
@@ -216,10 +219,11 @@ Rejected:
 - A rare exception outside the sample is absent, not counted as zero; the
   sample line says how far back the sample reaches, and narrowing the scope is
   how the user reaches it.
-- The command echo (`c`) is `dtctl query` with the view's primary query: it
-  returns the sampled spans, ungrouped. The keys, rungs and counts are
-  computed in Go and no DQL reproduces them, so the echo hands over the input
-  of the grouping, not the grouping.
+- The command echo (`c`) is `dtctl query` with the view's primary query. Run
+  later it returns the spans that match then, ungrouped, which need not be
+  the spans on screen. The keys, rungs and counts are computed in Go and no
+  DQL reproduces them, so the echo hands over the input of the grouping, not
+  the grouping.
 - Grouping quality depends on the stack readers. A notation none of them reads
   (Rust, Swift, PHP, Ruby) yields no frames and is keyed on the message rung
   rather than failing. The pull request that adds the key lists what the
@@ -232,7 +236,7 @@ Rejected:
   default; this record is the override, for the reason in Context. Against the
   gate: it shows what is happening, reads only, costs one primary query, is a
   catalog `Spec` and needs no configuration. At its depth cap it hands over
-  the sample, not the grouping.
+  the query of the sample, not the grouping.
 - The golden files of the key are not layout snapshots.
   [CONTRIBUTING.md](../../CONTRIBUTING.md) allows them as versioned
   compatibility fixtures.
