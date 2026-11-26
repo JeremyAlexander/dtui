@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -8,15 +9,16 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 )
 
 const modulePath = "github.com/dynatrace-oss/dtui"
 
-// dtctlModulePath is the import prefix the guards below match dtctl packages
-// by. A guard keyed on a stale prefix matches nothing and passes whatever the
-// code imports, so TestDtctlModulePathIsWiredEverywhere holds it to go.mod.
+// dtctlModulePath is the dtctl module dtui builds against, and the prefix of
+// the import allowlist below. An allowlist keyed on a stale prefix allows
+// nothing, so TestDtctlModulePathIsWiredEverywhere holds it to go.mod.
 const dtctlModulePath = "github.com/Dynatrace/dtctl"
 
 // allowedTUIDtctlImports are the only dtctl packages internal/tui may use:
@@ -28,10 +30,32 @@ var allowedTUIDtctlImports = map[string]bool{
 	dtctlModulePath + "/pkg/output": true,
 }
 
-// isDtctlImport reports whether imp is dtctl or one of its packages (the sdk
-// module included).
+// dtctlImport matches dtctl or one of its packages (the sdk module included)
+// under any owner. dtctl still resolves under the path it moved from, so a
+// guard that knew one owner would not see a second dtctl in the build.
+var dtctlImport = regexp.MustCompile(`^github\.com/[^/]+/dtctl(?:/|$)`)
+
+// isDtctlImport reports whether imp is dtctl or one of its packages.
 func isDtctlImport(imp string) bool {
-	return imp == dtctlModulePath || strings.HasPrefix(imp, dtctlModulePath+"/")
+	return dtctlImport.MatchString(imp)
+}
+
+// TestIsDtctlImport pins what the import guards count as dtctl.
+func TestIsDtctlImport(t *testing.T) {
+	for imp, want := range map[string]bool{
+		dtctlModulePath:                             true,
+		dtctlModulePath + "/pkg/exec":               true,
+		dtctlModulePath + "/sdk/session":            true,
+		"github.com/dynatrace-oss/dtctl":            true,
+		"github.com/dynatrace-oss/dtctl/pkg/client": true,
+		"github.com/Dynatrace/dtctlx/pkg/exec":      false,
+		modulePath + "/internal/tui":                false,
+		"net/http":                                  false,
+	} {
+		if got := isDtctlImport(imp); got != want {
+			t.Errorf("isDtctlImport(%q) = %v, want %v", imp, got, want)
+		}
+	}
 }
 
 // importsByFile parses the imports of every non-test Go file under root,
@@ -83,9 +107,9 @@ func TestTUIHasNoDirectTenantAccess(t *testing.T) {
 		}
 	}
 	// internal/tui runs its queries through dtctl's executor, so a walk that
-	// meets no dtctl import is matching the wrong prefix, not a clean tree.
+	// meets no dtctl import is not reading the tree, not a clean tree.
 	if seen == 0 {
-		t.Errorf("no import under internal/tui matches %s: the allowlist checks nothing", dtctlModulePath)
+		t.Error("no import under internal/tui is a dtctl package: the allowlist checks nothing")
 	}
 }
 
@@ -116,6 +140,16 @@ func TestTUIOpensNoListener(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestModulePathMatchesGoMod holds modulePath to go.mod's module line. The
+// layering guards below match this module's packages by that prefix, and a
+// stale prefix matches nothing and passes whatever the code imports.
+func TestModulePathMatchesGoMod(t *testing.T) {
+	declared := regexp.MustCompile(`(?m)^module\s+(\S+)`).FindStringSubmatch(readText(t, "go.mod"))
+	if declared == nil || declared[1] != modulePath {
+		t.Errorf("go.mod's module line is %q, modulePath is %s", declared, modulePath)
 	}
 }
 
@@ -169,7 +203,7 @@ const agentsMDMaxLines = 150
 
 var (
 	mdLink      = regexp.MustCompile(`\]\(([^)\s]+)\)`)
-	codePath    = regexp.MustCompile("`([A-Za-z0-9_./-]+\\.(?:go|md|ya?ml))`")
+	codePath    = regexp.MustCompile("`([A-Za-z0-9_./-]+\\.(?:go|md|sh|ya?ml))`")
 	codeTest    = regexp.MustCompile("`(Test[A-Za-z0-9_]+)`")
 	testFuncDef = regexp.MustCompile(`(?m)^func (Test[A-Za-z0-9_]+)\(`)
 )
@@ -253,19 +287,22 @@ func TestAgentDocsStayAccurate(t *testing.T) {
 	}
 }
 
+// readText returns a repository file with LF line endings: Windows checkouts
+// may use CRLF, and the patterns these tests match are newline-sensitive.
+func readText(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.ReplaceAll(string(data), "\r\n", "\n")
+}
+
 // TestLintVersionMatchesCI keeps `make lint` and CI on the same golangci-lint:
 // a drift lets code pass locally and fail the CI gate, or the reverse.
 func TestLintVersionMatchesCI(t *testing.T) {
-	read := func(path string) string {
-		data, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		// Windows checkouts may use CRLF; the YAML pin regex is newline-sensitive.
-		return strings.ReplaceAll(string(data), "\r\n", "\n")
-	}
-	makeVer := regexp.MustCompile(`golangci-lint/v2/cmd/golangci-lint@(v[0-9.]+)`).FindStringSubmatch(read("makefile"))
-	ciVer := regexp.MustCompile(`golangci-lint-action@\S+.*\n\s+with:\n\s+version: (v[0-9.]+)`).FindStringSubmatch(read(".github/workflows/ci.yml"))
+	makeVer := regexp.MustCompile(`golangci-lint/v2/cmd/golangci-lint@(v[0-9.]+)`).FindStringSubmatch(readText(t, "makefile"))
+	ciVer := regexp.MustCompile(`golangci-lint-action@\S+.*\n\s+with:\n\s+version: (v[0-9.]+)`).FindStringSubmatch(readText(t, ".github/workflows/ci.yml"))
 	if makeVer == nil || ciVer == nil {
 		t.Fatalf("golangci-lint pin not found (makefile %v, ci.yml %v)", makeVer, ciVer)
 	}
@@ -274,79 +311,196 @@ func TestLintVersionMatchesCI(t *testing.T) {
 	}
 }
 
-// TestDtctlModulePathIsWiredEverywhere holds every spelling of dtctl's module
-// path to the one go.mod requires. The linker accepts -X for a package that
-// is not in the build and stamps nothing, and an import guard keyed on a
-// stale prefix matches nothing; neither failure shows up anywhere else.
+// TestDtctlModulePathIsWiredEverywhere holds dtctl's module path to the one
+// go.mod requires wherever a stale spelling fails silently: the import guards'
+// constant, the -X flags of makefile and .goreleaser.yaml, the module copies
+// and replaces of wasm/build.sh, and the dependabot group. The linker accepts
+// -X for a package that is not in the build and stamps nothing, an allowlist
+// keyed on a stale prefix allows nothing, and a group that matches no module
+// lets dtctl move without its sdk.
 func TestDtctlModulePathIsWiredEverywhere(t *testing.T) {
-	read := func(path string) string {
-		data, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return strings.ReplaceAll(string(data), "\r\n", "\n")
+	// The other checks compare against dtctlModulePath, so their findings
+	// mean nothing until go.mod and the constant agree.
+	if problems := goModProblems(readText(t, "go.mod")); len(problems) > 0 {
+		t.Fatal(strings.Join(problems, "\n"))
 	}
-	required := regexp.MustCompile(`(?m)^\s*(\S+/dtctl) v\S+`).FindStringSubmatch(read("go.mod"))
-	if required == nil {
-		t.Fatal("go.mod requires no dtctl module")
-	}
-	if required[1] != dtctlModulePath {
-		t.Errorf("go.mod requires %s, dtctlModulePath is %s", required[1], dtctlModulePath)
-	}
-	versionPkg := required[1] + "/pkg/version"
-
-	makeVar := regexp.MustCompile(`(?m)^DTCTL_VERSION_PKG\s*=\s*(\S+)`).FindStringSubmatch(read("makefile"))
-	switch {
-	case makeVar == nil:
-		t.Error("makefile: DTCTL_VERSION_PKG not found")
-	case makeVar[1] != versionPkg:
-		t.Errorf("makefile stamps %s, go.mod builds %s", makeVar[1], versionPkg)
-	}
-
-	// The variable being right proves nothing about the flags that are meant
-	// to use it, so every -X is checked where it is written: its package is
-	// main, the variable, or the path go.mod builds.
+	var problems []string
 	for _, file := range []string{"makefile", ".goreleaser.yaml"} {
-		stamped := map[string]bool{}
-		for _, m := range regexp.MustCompile(`-X (\S+)\.(\w+)=`).FindAllStringSubmatch(read(file), -1) {
-			pkg, name := m[1], m[2]
-			if pkg == "main" {
-				continue
-			}
-			if file == "makefile" && pkg == "$(DTCTL_VERSION_PKG)" {
-				stamped[name] = true
-				continue
-			}
-			if pkg != versionPkg {
-				t.Errorf("%s stamps %s.%s, go.mod builds %s", file, pkg, name, versionPkg)
-				continue
-			}
-			stamped[name] = true
-		}
-		for _, name := range []string{"Version", "Commit", "Date"} {
-			if !stamped[name] {
-				t.Errorf("%s does not stamp %s.%s", file, versionPkg, name)
-			}
-		}
+		problems = append(problems, ldflagProblems(file, readText(t, file))...)
 	}
+	// No workflow runs wasm/build.sh, so a stale path there fails only when
+	// someone next builds the extension.
+	problems = append(problems, wasmScriptProblems(readText(t, "wasm/build.sh"))...)
+	problems = append(problems, dependabotProblems(readText(t, ".github/dependabot.yml"))...)
+	for _, p := range problems {
+		t.Error(p)
+	}
+}
 
-	// wasm/build.sh copies dtctl's two modules out of the module cache and
-	// replaces them in a scoped workspace. No workflow runs it, so a stale
-	// path there fails only when someone next builds the extension.
-	wasm := read("wasm/build.sh")
-	for _, want := range []string{
-		"copy_mod " + required[1] + " dtctl\n",
-		"copy_mod " + required[1] + "/sdk dtctl-sdk\n",
-		"replace " + required[1] + " => ./.deps/dtctl\n",
-		"replace " + required[1] + "/sdk => ./.deps/dtctl-sdk\n",
-	} {
-		if !strings.Contains(wasm, want) {
-			t.Errorf("wasm/build.sh lacks %q", strings.TrimSpace(want))
+// withoutCommentLines drops the lines of a makefile, a YAML file or a shell
+// script that are a comment from their first character on, so a flag or a
+// command that is commented out is not read as a live one.
+func withoutCommentLines(text string) string {
+	var kept []string
+	for _, line := range strings.Split(text, "\n") {
+		if !strings.HasPrefix(strings.TrimSpace(line), "#") {
+			kept = append(kept, line)
 		}
 	}
-	for _, m := range regexp.MustCompile(`(?m)^(?:copy_mod|replace) (\S+/dtctl(?:/\S+)?) `).FindAllStringSubmatch(wasm, -1) {
-		if m[1] != required[1] && m[1] != required[1]+"/sdk" {
-			t.Errorf("wasm/build.sh names %s, go.mod requires %s", m[1], required[1])
+	return strings.Join(kept, "\n")
+}
+
+// goModProblems reports a go.mod that requires anything but dtctlModulePath
+// and its sdk as a dtctl module. A second dtctl under another owner builds,
+// and would be a path to the tenant that the import allowlist does not name.
+func goModProblems(gomod string) []string {
+	var got []string
+	for _, line := range strings.Split(gomod, "\n") {
+		f := strings.Fields(strings.TrimPrefix(strings.TrimSpace(line), "require "))
+		if len(f) < 2 || !strings.HasPrefix(f[1], "v") || (len(f) > 2 && f[2] == "=>") {
+			continue
+		}
+		if strings.HasSuffix(f[0], "/dtctl") || strings.HasSuffix(f[0], "/dtctl/sdk") {
+			got = append(got, f[0])
+		}
+	}
+	slices.Sort(got)
+	if want := []string{dtctlModulePath, dtctlModulePath + "/sdk"}; !slices.Equal(got, want) {
+		return []string{fmt.Sprintf("go.mod requires the dtctl modules %v, dtctlModulePath expects exactly %v", got, want)}
+	}
+	return nil
+}
+
+var (
+	makeVersionPkg = regexp.MustCompile(`(?m)^DTCTL_VERSION_PKG\s*[:?]?=\s*(\S+)`)
+	xFlag          = regexp.MustCompile(`-X (\S+)\.(\w+)=`)
+	wasmDtctlLine  = regexp.MustCompile(`(?m)^(?:copy_mod|replace) (\S+/dtctl(?:/\S+)?) `)
+	dependabotItem = regexp.MustCompile(`(?m)^\s*-\s*"?([^"\s]*/dtctl[^"\s]*)"?\s*$`)
+)
+
+// ldflagProblems reports the -X flags of a makefile or a GoReleaser config
+// that do not stamp dtctl's pkg/version. The makefile's variable being right
+// proves nothing about the flags meant to use it, so each flag for a dtctl
+// package is checked where it is written.
+func ldflagProblems(file, text string) []string {
+	versionPkg := dtctlModulePath + "/pkg/version"
+	text = withoutCommentLines(text)
+	var problems []string
+	if file == "makefile" {
+		switch v := makeVersionPkg.FindStringSubmatch(text); {
+		case v == nil:
+			problems = append(problems, "makefile: DTCTL_VERSION_PKG not found")
+		case v[1] != versionPkg:
+			problems = append(problems, fmt.Sprintf("makefile stamps %s, go.mod builds %s", v[1], versionPkg))
+		}
+	}
+	stamped := map[string]bool{}
+	for _, m := range xFlag.FindAllStringSubmatch(text, -1) {
+		pkg, name := m[1], m[2]
+		switch {
+		case file == "makefile" && pkg == "$(DTCTL_VERSION_PKG)", pkg == versionPkg:
+			stamped[name] = true
+		case strings.Contains(pkg, "/dtctl/"):
+			problems = append(problems, fmt.Sprintf("%s stamps %s.%s, go.mod builds %s", file, pkg, name, versionPkg))
+		}
+	}
+	for _, name := range []string{"Version", "Commit", "Date"} {
+		if !stamped[name] {
+			problems = append(problems, fmt.Sprintf("%s does not stamp %s.%s", file, versionPkg, name))
+		}
+	}
+	return problems
+}
+
+// wasmScriptProblems reports the module copies and workspace replaces of
+// wasm/build.sh that are missing or name another dtctl.
+func wasmScriptProblems(text string) []string {
+	text = withoutCommentLines(text)
+	var problems []string
+	for _, want := range []string{
+		"copy_mod " + dtctlModulePath + " dtctl\n",
+		"copy_mod " + dtctlModulePath + "/sdk dtctl-sdk\n",
+		"replace " + dtctlModulePath + " => ./.deps/dtctl\n",
+		"replace " + dtctlModulePath + "/sdk => ./.deps/dtctl-sdk\n",
+	} {
+		if !strings.Contains(text, want) {
+			problems = append(problems, fmt.Sprintf("wasm/build.sh lacks %q", strings.TrimSpace(want)))
+		}
+	}
+	for _, m := range wasmDtctlLine.FindAllStringSubmatch(text, -1) {
+		if m[1] != dtctlModulePath && m[1] != dtctlModulePath+"/sdk" {
+			problems = append(problems, fmt.Sprintf("wasm/build.sh names %s, go.mod requires %s", m[1], dtctlModulePath))
+		}
+	}
+	return problems
+}
+
+// dependabotProblems reports a dependabot config whose dtctl group does not
+// match dtctlModulePath and its sdk with one pattern.
+func dependabotProblems(text string) []string {
+	want := dtctlModulePath + "*"
+	var problems []string
+	found := false
+	for _, m := range dependabotItem.FindAllStringSubmatch(withoutCommentLines(text), -1) {
+		if m[1] == want {
+			found = true
+			continue
+		}
+		problems = append(problems, fmt.Sprintf(".github/dependabot.yml groups %s, go.mod requires %s", m[1], dtctlModulePath))
+	}
+	if !found && len(problems) == 0 {
+		problems = append(problems, fmt.Sprintf(".github/dependabot.yml has no group pattern %q", want))
+	}
+	return problems
+}
+
+// TestDtctlPathChecksReadOnlyLiveLines pins the checks behind
+// TestDtctlModulePathIsWiredEverywhere on the inputs they exist for: a stale
+// or commented-out spelling is reported, and a valid one that is merely
+// written differently is not.
+func TestDtctlPathChecksReadOnlyLiveLines(t *testing.T) {
+	const old = "github.com/dynatrace-oss/dtctl"
+	versionPkg := dtctlModulePath + "/pkg/version"
+	flags := func(pkg string) string {
+		return "-X main.version=1 -X " + pkg + ".Version=1 -X " + pkg + ".Commit=2 -X " + pkg + ".Date=3\n"
+	}
+	wasm := "copy_mod " + dtctlModulePath + " dtctl\ncopy_mod " + dtctlModulePath + "/sdk dtctl-sdk\n" +
+		"replace " + dtctlModulePath + " => ./.deps/dtctl\nreplace " + dtctlModulePath + "/sdk => ./.deps/dtctl-sdk\n"
+	group := "    patterns:\n      - \"" + dtctlModulePath + "*\"\n"
+
+	for _, tc := range []struct {
+		name string
+		got  []string
+		want string // a substring of the one problem expected; empty for none
+	}{
+		{"go.mod block", goModProblems("require (\n\t" + dtctlModulePath + " v1.0.0\n\t" + dtctlModulePath + "/sdk v1.0.0 // indirect\n)\n"), ""},
+		{"go.mod single-line requires", goModProblems("require " + dtctlModulePath + " v1.0.0\nrequire " + dtctlModulePath + "/sdk v1.0.0\n"), ""},
+		{"go.mod replace is not a requirement", goModProblems("require (\n\t" + dtctlModulePath + " v1.0.0\n\t" + dtctlModulePath + "/sdk v1.0.0\n)\nreplace (\n\t" + dtctlModulePath + " v1.0.0 => ../dtctl\n)\n"), ""},
+		{"go.mod second dtctl", goModProblems("require (\n\t" + dtctlModulePath + " v1.0.0\n\t" + dtctlModulePath + "/sdk v1.0.0\n\t" + old + " v0.9.0\n)\n"), old},
+		{"go.mod without the sdk", goModProblems("require " + dtctlModulePath + " v1.0.0\n"), "expects exactly"},
+
+		{"makefile", ldflagProblems("makefile", "DTCTL_VERSION_PKG = "+versionPkg+"\n"+flags("$(DTCTL_VERSION_PKG)")), ""},
+		{"makefile simple assignment", ldflagProblems("makefile", "DTCTL_VERSION_PKG := "+versionPkg+"\n"+flags("$(DTCTL_VERSION_PKG)")), ""},
+		{"makefile stale variable", ldflagProblems("makefile", "DTCTL_VERSION_PKG = "+old+"/pkg/version\n"+flags("$(DTCTL_VERSION_PKG)")), "makefile stamps " + old},
+		{"makefile commented-out variable", ldflagProblems("makefile", "# DTCTL_VERSION_PKG = "+versionPkg+"\n"+flags("$(DTCTL_VERSION_PKG)")), "DTCTL_VERSION_PKG not found"},
+		{"goreleaser", ldflagProblems(".goreleaser.yaml", flags(versionPkg)), ""},
+		{"goreleaser flag for a dtui package", ldflagProblems(".goreleaser.yaml", flags(versionPkg)+"-X "+modulePath+"/internal/tui.Build=1\n"), ""},
+		{"goreleaser stale flag", ldflagProblems(".goreleaser.yaml", flags(versionPkg)+"-X "+old+"/pkg/version.Version=1\n"), ".goreleaser.yaml stamps " + old},
+		{"goreleaser commented-out flag", ldflagProblems(".goreleaser.yaml", "-X "+versionPkg+".Commit=2 -X "+versionPkg+".Date=3\n  # - -X "+versionPkg+".Version=1\n"), "does not stamp " + versionPkg + ".Version"},
+
+		{"wasm", wasmScriptProblems(wasm), ""},
+		{"wasm commented-out copy", wasmScriptProblems(strings.Replace(wasm, "copy_mod", "# copy_mod", 1)), `lacks "copy_mod ` + dtctlModulePath + ` dtctl"`},
+		{"wasm stale replace", wasmScriptProblems(wasm + "replace " + old + " => ./.deps/old\n"), "names " + old},
+
+		{"dependabot", dependabotProblems(group), ""},
+		{"dependabot stale group", dependabotProblems(strings.Replace(group, dtctlModulePath, old, 1)), "groups " + old},
+		{"dependabot commented-out group", dependabotProblems(strings.Replace(group, "- ", "# - ", 1)), "has no group pattern"},
+	} {
+		switch {
+		case tc.want == "" && len(tc.got) > 0:
+			t.Errorf("%s: unexpected problems %q", tc.name, tc.got)
+		case tc.want != "" && (len(tc.got) != 1 || !strings.Contains(tc.got[0], tc.want)):
+			t.Errorf("%s: problems %q, want one containing %q", tc.name, tc.got, tc.want)
 		}
 	}
 }
