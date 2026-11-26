@@ -11,7 +11,8 @@ func TestClassifyNoticeByType(t *testing.T) {
 	cases := map[string]int{
 		"SCAN_LIMIT_GBYTES":       noticeScanLimit,
 		"RESULT_LIMIT_RECORDS":    noticeResultLimit,
-		"RESULT_LIMIT_BYTES":      noticeResultLimit,
+		"RESULT_LIMIT_BYTES":      noticeSizeLimit,
+		"BYTE_LIMIT_ADDED":        noticeSizeLimit,
 		"FETCH_TIMEOUT":           noticeTimeout,
 		"SAMPLING_APPLIED":        noticeSampling,
 		"QUERY_CONSUMPTION_LIMIT": noticeNone, // no dedicated banner
@@ -33,6 +34,25 @@ func TestClassifyNoticeByMessageFallback(t *testing.T) {
 	}
 	if got := classifyNotice("", "The result has been limited to 1000 records"); got != noticeResultLimit {
 		t.Errorf("result-limit message classified as %d, want result limit", got)
+	}
+}
+
+// A result cut at maxResultBytes is announced as BYTE_LIMIT_ADDED (validated
+// live). Its message also reads "has been limited", which without the type
+// would pass for the row limit.
+func TestNoticeForSizeLimit(t *testing.T) {
+	const live = "Your result has been limited because the maximum bytes (2000) were reached."
+	for _, typ := range []string{"BYTE_LIMIT_ADDED", ""} {
+		if got := classifyNotice(typ, live); got != noticeSizeLimit {
+			t.Errorf("classifyNotice(%q, live message) = %d, want the size limit", typ, got)
+		}
+	}
+	n, ok := noticeFor([]exec.QueryNotification{{Severity: "WARNING", NotificationType: "BYTE_LIMIT_ADDED", Message: live}})
+	if !ok || !n.warn || !strings.Contains(n.text, "size limit") {
+		t.Errorf("notice = %+v ok=%v, want a size-limit warning", n, ok)
+	}
+	if !partialNotice([]exec.QueryNotification{{Severity: "WARNING", NotificationType: "BYTE_LIMIT_ADDED"}}) {
+		t.Error("a result cut at its size limit is partial")
 	}
 }
 

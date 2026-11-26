@@ -21,12 +21,11 @@ type queryNotice struct {
 // reports false when none warrant surfacing. dtctl's exec package owns the
 // same mapping for its CLI/agent output but keeps it unexported; the category
 // set (scan limit, result limit, fetch timeout, sampling) mirrors
-// exec.classifyNotification so the TUI and CLI stay in step.
+// exec.classifyNotification so the TUI and CLI stay in step; the size limit
+// is told apart from the row limit here only.
 func noticeFor(ns []exec.QueryNotification) (queryNotice, bool) {
 	for _, n := range ns {
-		switch strings.ToUpper(n.Severity) {
-		case "WARNING", "WARN", "ERROR":
-		default:
+		if !noticeWarns(n) {
 			continue // INFO and below are noise in a one-line banner
 		}
 		switch classifyNotice(n.NotificationType, n.Message) {
@@ -36,6 +35,9 @@ func noticeFor(ns []exec.QueryNotification) (queryNotice, bool) {
 		case noticeResultLimit:
 			return queryNotice{warn: true,
 				text: "result truncated to the row limit — narrow the timeframe (t) or add a filter"}, true
+		case noticeSizeLimit:
+			return queryNotice{warn: true,
+				text: "result truncated to the size limit — narrow the timeframe (t) or add a filter"}, true
 		case noticeTimeout:
 			return queryNotice{warn: true,
 				text: "fetch timed out — result may be incomplete; narrow the timeframe (t)"}, true
@@ -44,6 +46,15 @@ func noticeFor(ns []exec.QueryNotification) (queryNotice, bool) {
 		}
 	}
 	return queryNotice{}, false
+}
+
+// noticeWarns reports whether a notification is severe enough to act on.
+func noticeWarns(n exec.QueryNotification) bool {
+	switch strings.ToUpper(n.Severity) {
+	case "WARNING", "WARN", "ERROR":
+		return true
+	}
+	return false
 }
 
 // partialNotice reports whether the notifications say the result may be
@@ -59,6 +70,7 @@ const (
 	noticeNone = iota
 	noticeScanLimit
 	noticeResultLimit
+	noticeSizeLimit
 	noticeTimeout
 	noticeSampling
 )
@@ -67,12 +79,19 @@ const (
 // a message-text match — not every deployment stamps a stable type, which is
 // why the live-observed message ("stopped after N gigabytes of data were
 // scanned") is a second signal.
+//
+// A result cut at its size limit (the request's maxResultBytes) arrives as
+// BYTE_LIMIT_ADDED, "Your result has been limited because the maximum bytes
+// (N) were reached." (validated live on a OneAgent-fed tenant); dtctl's own
+// classifier does not know that type.
 func classifyNotice(notificationType, message string) int {
 	switch notificationType {
 	case "SCAN_LIMIT_GBYTES":
 		return noticeScanLimit
-	case "RESULT_LIMIT_RECORDS", "RESULT_LIMIT_BYTES":
+	case "RESULT_LIMIT_RECORDS":
 		return noticeResultLimit
+	case "BYTE_LIMIT_ADDED", "RESULT_LIMIT_BYTES":
+		return noticeSizeLimit
 	case "FETCH_TIMEOUT":
 		return noticeTimeout
 	case "SAMPLING_APPLIED":
@@ -82,6 +101,8 @@ func classifyNotice(notificationType, message string) int {
 	switch {
 	case strings.Contains(msg, "scan") && strings.Contains(msg, "gigabyte"):
 		return noticeScanLimit
+	case strings.Contains(msg, "maximum bytes"):
+		return noticeSizeLimit
 	case strings.Contains(msg, "result has been limited") || strings.Contains(msg, "limited to"):
 		return noticeResultLimit
 	case strings.Contains(msg, "timed out") || strings.Contains(msg, "timeout"):
