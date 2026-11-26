@@ -505,6 +505,10 @@ type SampleSpec struct {
 	// that hit it. Bytes caps the result's size.
 	Rows, Bytes int64
 	Group       func(records []map[string]any) []map[string]any
+	// Match is text of a row that the `/` filter matches beside its cells
+	// (nil = the cells alone): what Group computed and no fetched record
+	// holds, like the issue key someone pasted from a ticket.
+	Match func(row map[string]any) string
 }
 
 // UsesScope reports whether a view's query can compose an entity scope.

@@ -531,6 +531,9 @@ func (v *tableView) Hints() []keyHint {
 		return []keyHint{{"type", "narrow · * = pattern"}, {"↑/↓", "move"}, {"enter", "apply filter"}, {"esc", "back"}}
 	}
 	if v.filtering {
+		if v.spec.Sample != nil {
+			return []keyHint{{"type", "filter rows"}, {"enter", "keep filter"}, {"alt+enter", "server search"}, {"esc", "clear"}}
+		}
 		return []keyHint{{"type", "filter rows"}, {"enter", "add server search"}, {"alt+enter", "replace"}, {"esc", "clear"}}
 	}
 	var hints []keyHint
@@ -798,6 +801,13 @@ func (v *tableView) handleKey(msg tea.KeyMsg) tea.Cmd {
 				if v.spec.Query == nil {
 					return status(fmt.Sprintf("client filter %q (no server search on %s)", term, v.spec.Name))
 				}
+				// The rows of a sampled view are computed here: the text may
+				// name what no fetched record holds (an issue key), and a
+				// server search for it would empty the view. Enter keeps the
+				// filter on the rows; alt+enter still searches the records.
+				if v.spec.Sample != nil && msg.String() == "enter" {
+					return status(fmt.Sprintf("filter %q kept on the rows (alt+enter searches the %ss)", term, v.spec.Sample.Noun))
+				}
 				v.filterInput.SetValue("")
 				v.filter = ""
 				v.applyFilter()
@@ -1040,6 +1050,9 @@ func (v *tableView) applyFilter() {
 			var cells []string
 			for _, c := range v.columns() {
 				cells = append(cells, c.Text(rec))
+			}
+			if s := v.spec.Sample; s != nil && s.Match != nil {
+				cells = append(cells, s.Match(rec))
 			}
 			if strings.Contains(strings.ToLower(strings.Join(cells, " ")), needle) {
 				v.rows = append(v.rows, rec)

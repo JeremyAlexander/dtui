@@ -412,3 +412,49 @@ func TestExceptionsEchoIsOneLineInTheFooter(t *testing.T) {
 		t.Errorf("screen has %d lines, want 40", strings.Count(out, "\n")+1)
 	}
 }
+
+// An issue key exists in dtui only: no span holds it. Typed into the filter
+// it finds its row, and enter keeps the filter on the rows instead of
+// sending the text to the server as a search no span can match.
+func TestExceptionsFilterFindsAKeyAndEnterKeepsItLocal(t *testing.T) {
+	a := testApp(t, "exceptions")
+	tv := seedSample(t, a, issueSpans(), nil)
+	issue, _ := catalog.IssueOf(tv.rows[0])
+	before := tv.DQL()
+
+	press(a, key("/"))
+	if out := screen(a); !strings.Contains(out, "enter keep filter") || strings.Contains(out, "add server search") {
+		t.Errorf("the filter hints promise a server search:\n%s", out)
+	}
+	typeText(a, issue.Key)
+	if len(tv.rows) != 1 {
+		t.Fatalf("typing the key left %d rows, want its one issue", len(tv.rows))
+	}
+	press(a, key("enter"))
+	if len(tv.searches) != 0 || strings.Contains(tv.DQL(), issue.Key) || tv.DQL() != before {
+		t.Errorf("enter sent the key to the server: searches=%q\n%s", tv.searches, tv.DQL())
+	}
+	if tv.filter != issue.Key || len(tv.rows) != 1 || tv.filtering {
+		t.Errorf("enter did not keep the filter: filter=%q rows=%d filtering=%v", tv.filter, len(tv.rows), tv.filtering)
+	}
+	// The full type is findable too, though the column shortens it.
+	tv.setFilter("java.sql.SQLException")
+	if len(tv.rows) != 1 {
+		t.Errorf("the full type matched %d rows, want 1", len(tv.rows))
+	}
+}
+
+// alt+enter is the explicit way to narrow what is sampled by text.
+func TestExceptionsAltEnterSearchesTheSpans(t *testing.T) {
+	a := testApp(t, "exceptions")
+	tv := seedSample(t, a, issueSpans(), nil)
+	press(a, key("/"))
+	typeText(a, "locked")
+	press(a, tea.KeyMsg{Type: tea.KeyEnter, Alt: true})
+	if len(tv.searches) != 1 || tv.searches[0] != "locked" || tv.filter != "" {
+		t.Errorf("searches=%q filter=%q, want one server search and no filter", tv.searches, tv.filter)
+	}
+	if !strings.Contains(tv.DQL(), "\n| search \"*locked*\"\n") {
+		t.Errorf("the search did not reach the query:\n%s", tv.DQL())
+	}
+}

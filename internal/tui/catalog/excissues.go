@@ -63,6 +63,11 @@ var exceptionsSpec = &Spec{
 		Rows:  ExceptionSampleRows,
 		Bytes: ExceptionSampleBytes,
 		Group: GroupExceptionIssues,
+		// The key is in no cell and the EXCEPTION cell shortens the type.
+		Match: func(row map[string]any) string {
+			issue := issueOf(row)
+			return issue.Key + " " + issue.Type
+		},
 	},
 	Columns: []Column{
 		{Title: "COUNT", Width: 5, Right: true,
