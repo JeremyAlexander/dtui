@@ -34,23 +34,31 @@ rest how the view uses it.
   may be repinned. Two golden files make the step a conscious one: the `e1`
   keys of a corpus, and one digest per table, expression and limit the key is
   computed from. The digests cover declarations; the code of a function is
-  covered by the corpus and the tests alone.
+  covered by the corpus and the tests alone. The readers and the corpus are
+  the specification; this record names the rules and does not replace them.
+  One vector for another implementation: an event with the type `é` and
+  nothing else hashes the bytes `1:42:é` to `e1:c7bd5892e50a`.
 - **One event per span is keyed.** Of a span's exception events that say
   anything (a type, a message or a stack), take the last one flagged
   `exception.is_caused_by_root`, else the last one. Where that event's stack
   text holds a whole chain (`Caused by:` in Java, an inner exception in .NET,
-  an earlier traceback in Python), the frames and the type are the root
-  cause's, read from the text, so type and frames belong to one exception. A
-  JavaScript `[cause]` chain is not followed.
+  an earlier traceback in Python), the frames are the root cause's, read from
+  the text, and so is the type where the text names one. A cause whose type
+  cannot be read keeps the event's type, and a cause without frames is not
+  the root: the nearest exception with frames is. A JavaScript `[cause]`
+  chain is not split; its frames are read as one stack under the event's
+  type.
 - **A fallback ladder picks what is hashed.** In order:
   1. *app frames*: the type, the throw-site frame, and the application's
      frames below it that are not pass-through, until five frames that count
      are in. The throw site is one of the five when it is the application's
      own and not pass-through; otherwise it is in the key on top of them, so a
      key holds at most six frames. A frame is its module and function, never a
-     line number, and a frame repeated by recursion counts once.
+     line number. A frame that repeats the frame kept before it counts once,
+     so direct recursion is one frame, also where only skipped frames lie
+     between the two calls; `A, B, A` is three.
   2. *frames*, when no application frame counts: the type, the throw site and
-     the frames below it, five in all, whatever they are.
+     up to four frames below it, whatever they are.
   3. *message*, when no frame was read: the type and the parameterised
      message.
   4. *type*: the type alone.
@@ -69,8 +77,8 @@ rest how the view uses it.
   frame may be all that tells it from the next. A pass-through frame that is
   the throw site stays in the key, and an application's pass-through throw
   site with no other application frame below it still gives an app-frames key
-  of that one frame. The lists are per notation, match the method name alone,
-  and leave out names an application commonly gives its own entry point
+  of that one frame. The lists are per notation, match a function name whole
+  or without the type it is a method of, and leave out names an application commonly gives its own entry point
   (`invoke`, `step`, `dispatch`, `__call__`).
 - **What counts as application code is built in and part of the key version.**
   There is no setting that replaces the rules and no second classifier, so
