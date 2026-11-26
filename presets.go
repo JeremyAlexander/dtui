@@ -297,6 +297,11 @@ func resolveLaunchArg(msg *tui.NavigateMsg, arg string) error {
 		if spec.Name == "records" {
 			spec = catalog.Lookup("tables")
 		}
+		if spec.EntityArg {
+			if err := checkProcessArg(spec.Name, arg); err != nil {
+				return err
+			}
+		}
 		msg.Target, msg.Filter = spec.Name, arg
 	}
 	return nil

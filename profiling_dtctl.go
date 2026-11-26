@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -70,6 +71,24 @@ func (p dtctlProfiler) Allocations(ctx context.Context, q profileQuery) (allocat
 		return nil, profilingFailure(err, q.Entity)
 	}
 	return dtctlAllocations{analysis}, nil
+}
+
+// entityIDRe is the shape of an entity id: TYPE-16HEX, upper case.
+var entityIDRe = regexp.MustCompile(`^[A-Z][A-Z0-9_]*-[0-9A-F]{16}$`)
+
+// checkProcessArg refuses a launch or send argument the profiling view
+// cannot analyse, where the caller still reads the reply: opened anyway it
+// would land on an error screen, or as text in the row filter.
+func checkProcessArg(view, arg string) error {
+	switch {
+	case arg == "":
+		return fmt.Errorf("%s needs the process to analyse: dtui %s PROCESS-<16 hex digits>", view, view)
+	case !entityIDRe.MatchString(arg):
+		return fmt.Errorf("%s: %q is not a process id (PROCESS-<16 hex digits>, upper case)", view, arg)
+	case !profiling.EligibleEntity(arg):
+		return fmt.Errorf("%s: %s is not a process: an analysis runs on a PROCESS, a PROCESS_GROUP_INSTANCE or a PROCESS_GROUP", view, arg)
+	}
+	return nil
 }
 
 // profilingFailure turns the failures of an analysis into dtui's reasons.

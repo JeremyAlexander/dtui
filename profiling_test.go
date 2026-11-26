@@ -1195,3 +1195,39 @@ func TestProfilingFocusHasNoAllocationsReading(t *testing.T) {
 		t.Errorf("asked for %d analyses", n)
 	}
 }
+
+// A launch or a send that opens the profiling view names the process to
+// analyse. Anything else is refused there, with the reason, and not turned
+// into an error screen or a row filter.
+func TestLaunchingProfilingNeedsAProcessID(t *testing.T) {
+	for _, tc := range []struct {
+		view, arg string
+		want      string // "" = accepted
+	}{
+		{"hotspots", "PROCESS-000000000000A001", ""},
+		{"hot", "PROCESS_GROUP_INSTANCE-000000000000A001", ""},
+		{"hotspots", "PROCESS_GROUP-000000000000A001", ""},
+		{"hotspots", "", "hotspots needs the process to analyse: dtui hotspots PROCESS-<16 hex digits>"},
+		{"hotspots", "process-000000000000a001", `hotspots: "process-000000000000a001" is not a process id (PROCESS-<16 hex digits>, upper case)`},
+		{"hotspots", "checkout", `hotspots: "checkout" is not a process id (PROCESS-<16 hex digits>, upper case)`},
+		{"hotspots", "SERVICE-000000000000B001", "hotspots: SERVICE-000000000000B001 is not a process: an analysis runs on a PROCESS, a PROCESS_GROUP_INSTANCE or a PROCESS_GROUP"},
+	} {
+		msg := tui.NavigateMsg{Target: tc.view}
+		err := resolveLaunchArg(&msg, tc.arg)
+		got := ""
+		if err != nil {
+			got = err.Error()
+		}
+		if got != tc.want {
+			t.Errorf("%s %q: %q, want %q", tc.view, tc.arg, got, tc.want)
+		}
+		if err == nil && (msg.Target != "hotspots" || msg.Filter != tc.arg) {
+			t.Errorf("%s %q resolved to %s %q", tc.view, tc.arg, msg.Target, msg.Filter)
+		}
+	}
+	// Another view's argument stays its filter.
+	msg := tui.NavigateMsg{Target: "logs"}
+	if err := resolveLaunchArg(&msg, "checkout"); err != nil || msg.Filter != "checkout" {
+		t.Errorf("logs checkout: %v, filter %q", err, msg.Filter)
+	}
+}

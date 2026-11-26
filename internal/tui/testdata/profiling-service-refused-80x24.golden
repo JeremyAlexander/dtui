@@ -4,8 +4,8 @@
   running    lock    net_io    disk_io    wait    allocations
 
 ✗ SERVICE-000000000000B001 cannot be profiled: an analysis runs on a process
-(PROCESS-… or PROCESS_GROUP-…), not on a service — open the service's
-processes and press h there
+(PROCESS-…, PROCESS_GROUP_INSTANCE-… or PROCESS_GROUP-…) — press h on a row of
+:processes
 
 
 

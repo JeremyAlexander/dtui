@@ -11,8 +11,8 @@ import (
 	"github.com/dynatrace-oss/dtui/internal/tui/catalog"
 )
 
-// The profiling views (catalog "hotspots" and "allocations") in dtui's own
-// terms. Everything here is independent of dtctl: the sources below turn a
+// The profiling view (catalog "hotspots", with its allocations lens) in
+// dtui's own terms. Everything here is independent of dtctl: the sources below turn a
 // profiler's readings into the rows and the summary record the catalog specs
 // render, word the failures, and share one analysis between the lenses and
 // focus drills of a view. The profiler itself — dtctl's profiling package, or
@@ -125,7 +125,7 @@ func (f *profileFailure) Error() string {
 	case profileNoProcess:
 		return "profiling analyses one process — press h on a row of :processes, or open :hotspots PROCESS-…"
 	case profileNotAProcess:
-		return fmt.Sprintf("%s cannot be profiled: an analysis runs on a process (PROCESS-… or PROCESS_GROUP-…), not on a service — open the service's processes and press h there", f.Entity)
+		return fmt.Sprintf("%s cannot be profiled: an analysis runs on a process (PROCESS-…, PROCESS_GROUP_INSTANCE-… or PROCESS_GROUP-…) — press h on a row of :processes", f.Entity)
 	case profileFutureStart:
 		return "the selected window starts in the future: there is nothing to analyse yet — t picks another window"
 	case profileFutureEnd:
