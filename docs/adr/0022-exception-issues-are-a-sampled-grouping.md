@@ -27,7 +27,9 @@ rest how the view uses it.
   SHA-256 over a canonical string of length-prefixed fields: the rung, the
   type, then the evidence (the parameterised message, or a module and a
   function per frame), so no two inputs can run together. It depends on no
-  locale and no map order. `e1` is frozen by the first dtui release that shows
+  locale and no map order. It does depend on the Go toolchain's Unicode
+  tables, which decide what the stack readers take for an identifier; a Go
+  release that changes them is treated as a change to a table. `e1` is frozen by the first dtui release that shows
   a key. From then on a change that can move an exception to another key ships
   as `e2`, and a change to a table the key reads is such a change: the vendor
   prefixes, the pass-through names, the message rules. Until that release `e1`
@@ -103,8 +105,8 @@ rest how the view uses it.
   limits and the function that groups. Fingerprinting and grouping run in the
   query's command, off the UI goroutine, and the view receives groups;
   `Decode` runs inside `tableView.Update` and must not parse a thousand
-  stacks. The rows share no memory with the fetched spans, which are released
-  with their stack text, and nothing is written into a record another
+  stacks. The rows keep no span and no stack text, so the fetched spans are
+  released with their stack text, and nothing is written into a record another
   goroutine can read. A result for a superseded request is dropped by its
   sequence number like any other; a running query is not cancelled. The unit
   is the span throughout: one key per span, from the one event the rules above
@@ -114,8 +116,8 @@ rest how the view uses it.
 - **One query, with a bounded response.** One query per open meets the count
   of [ADR-0013](0013-query-budget.md); that ADR also bounds a query's shape,
   and an unprojected span comes with all of its `span.events` and full stack
-  traces. So the query is projected to the fields the key and a row read, it
-  has a row limit, and the request sets an explicit result size limit. The
+  traces. So the query is projected to the fields the key and a row read and three
+  more that the facet picker offers, it has a row limit, and the request sets an explicit result size limit. The
   mechanism is decided here. The numbers, 1000 rows and 8 MB, are provisional
   (see the open list). 1000 rows is the upper bound whatever the measurement
   says.
