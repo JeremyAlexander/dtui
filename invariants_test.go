@@ -371,17 +371,36 @@ func withoutCommentLines(text string) string {
 	return strings.Join(kept, "\n")
 }
 
+// dtctlModule matches the path of a dtctl module: the root, its sdk, or either
+// under a major version suffix such as /dtctl/v2.
+var dtctlModule = regexp.MustCompile(`/dtctl(?:/|$)`)
+
 // goModProblems reports a go.mod that requires anything but dtctlModulePath
-// and its sdk as a dtctl module. A second dtctl under another owner builds,
-// and would be a path to the tenant that the import allowlist does not name.
+// and its sdk as a dtctl module. A second dtctl under another owner or major
+// version builds, and would be a path to the tenant that the import allowlist
+// does not name. Only requirements count: a replace or an exclude names a
+// module without adding it to the build.
 func goModProblems(gomod string) []string {
 	var got []string
+	block := "" // the directive of the parenthesised block the line is in
 	for _, line := range strings.Split(gomod, "\n") {
-		f := strings.Fields(strings.TrimPrefix(strings.TrimSpace(line), "require "))
-		if len(f) < 2 || !strings.HasPrefix(f[1], "v") || (len(f) > 2 && f[2] == "=>") {
+		line, _, _ = strings.Cut(line, "//")
+		f := strings.Fields(line)
+		switch {
+		case len(f) == 0:
+			continue
+		case f[0] == ")":
+			block = ""
+			continue
+		case block == "" && len(f) == 2 && f[1] == "(":
+			block = f[0]
 			continue
 		}
-		if strings.HasSuffix(f[0], "/dtctl") || strings.HasSuffix(f[0], "/dtctl/sdk") {
+		directive := block
+		if block == "" {
+			directive, f = f[0], f[1:]
+		}
+		if directive == "require" && len(f) > 0 && dtctlModule.MatchString(f[0]) {
 			got = append(got, f[0])
 		}
 	}
@@ -487,6 +506,7 @@ func TestDtctlPathChecksReadOnlyLiveLines(t *testing.T) {
 	}
 	wasm := "copy_mod " + dtctlModulePath + " dtctl\ncopy_mod " + dtctlModulePath + "/sdk dtctl-sdk\n" +
 		"replace " + dtctlModulePath + " => ./.deps/dtctl\nreplace " + dtctlModulePath + "/sdk => ./.deps/dtctl-sdk\n"
+	requires := "require (\n\t" + dtctlModulePath + " v1.0.0\n\t" + dtctlModulePath + "/sdk v1.0.0\n)\n"
 	group := "    patterns:\n      - \"" + dtctlModulePath + "*\"\n"
 
 	for _, tc := range []struct {
@@ -499,6 +519,8 @@ func TestDtctlPathChecksReadOnlyLiveLines(t *testing.T) {
 		{"go.mod replace is not a requirement", goModProblems("require (\n\t" + dtctlModulePath + " v1.0.0\n\t" + dtctlModulePath + "/sdk v1.0.0\n)\nreplace (\n\t" + dtctlModulePath + " v1.0.0 => ../dtctl\n)\n"), ""},
 		{"go.mod second dtctl", goModProblems("require (\n\t" + dtctlModulePath + " v1.0.0\n\t" + dtctlModulePath + "/sdk v1.0.0\n\t" + old + " v0.9.0\n)\n"), old},
 		{"go.mod without the sdk", goModProblems("require " + dtctlModulePath + " v1.0.0\n"), "expects exactly"},
+		{"go.mod exclude is not a requirement", goModProblems(requires + "exclude (\n\t" + old + " v0.9.0\n)\n"), ""},
+		{"go.mod second dtctl major", goModProblems(requires + "require (\n\t" + dtctlModulePath + "/v2 v2.0.0\n\t" + dtctlModulePath + "/v2/sdk v2.0.0\n)\n"), dtctlModulePath + "/v2/sdk"},
 
 		{"makefile", ldflagProblems("makefile", "DTCTL_VERSION_PKG = "+versionPkg+"\n"+flags("$(DTCTL_VERSION_PKG)")), ""},
 		{"makefile simple assignment", ldflagProblems("makefile", "DTCTL_VERSION_PKG := "+versionPkg+"\n"+flags("$(DTCTL_VERSION_PKG)")), ""},
