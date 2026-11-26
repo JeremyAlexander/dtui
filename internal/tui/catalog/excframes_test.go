@@ -538,8 +538,8 @@ func TestStackNotationsMatchTheirSyntax(t *testing.T) {
 			t.Errorf("ParseStackFrames(%q) = %+v, want %+v", line, got, f)
 		}
 	}
-	if DefaultFrameClassifier.InApp(StackFrame{Module: "com.acme.shop.Cart", Syntax: StackSyntax(len(stackNotations))}) ||
-		DefaultFrameClassifier.InApp(StackFrame{Module: "com.acme.shop.Cart", Syntax: -1}) {
+	if builtinInApp(StackFrame{Module: "com.acme.shop.Cart", Syntax: StackSyntax(len(stackNotations))}) ||
+		builtinInApp(StackFrame{Module: "com.acme.shop.Cart", Syntax: -1}) {
 		t.Error("a frame of an unknown notation must not be in-app")
 	}
 }
@@ -669,7 +669,7 @@ func TestParseStackFramesUnparseable(t *testing.T) {
 	}
 }
 
-func TestDefaultFrameClassifier(t *testing.T) {
+func TestBuiltinInApp(t *testing.T) {
 	cases := []struct {
 		frame StackFrame
 		inApp bool
@@ -724,7 +724,7 @@ func TestDefaultFrameClassifier(t *testing.T) {
 		{StackFrame{Module: "<frozen importlib._bootstrap>", Syntax: StackPython}, false},
 	}
 	for _, tc := range cases {
-		if got := DefaultFrameClassifier.InApp(tc.frame); got != tc.inApp {
+		if got := builtinInApp(tc.frame); got != tc.inApp {
 			t.Errorf("InApp(%+v) = %v, want %v", tc.frame, got, tc.inApp)
 		}
 	}
@@ -762,7 +762,7 @@ func FuzzParseStackFrames(f *testing.F) {
 			if strings.ContainsAny(fr.Module+fr.Function, "\n") {
 				t.Fatalf("line break in frame %d for %q", i, in)
 			}
-			DefaultFrameClassifier.InApp(fr)
+			builtinInApp(fr)
 		}
 	})
 }

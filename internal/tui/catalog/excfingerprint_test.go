@@ -93,26 +93,26 @@ func TestFingerprintKeyShape(t *testing.T) {
 	if !regexp.MustCompile(`^e1:[0-9a-f]{12}$`).MatchString(fp.Key) {
 		t.Errorf("key = %q, want e1: and 12 hex characters", fp.Key)
 	}
-	// The hash input: rung number, type, then module and function per frame,
-	// each field behind its length.
-	sum := sha256.Sum256([]byte("1:1" + "31:java.lang.IllegalStateException" +
+	// The hash input: rung number, classifier (none for the built-in one),
+	// type, then module and function per frame, each field behind its length.
+	sum := sha256.Sum256([]byte("1:1" + "0:" + "31:java.lang.IllegalStateException" +
 		"25:com.acme.shop.CartService" + "7:addItem" + "28:com.acme.shop.CartController" + "4:post"))
 	if want := "e1:" + hex.EncodeToString(sum[:])[:12]; fp.Key != want {
 		t.Errorf("key = %s, want %s", fp.Key, want)
 	}
 	// Evidence is positional and ordered.
-	a := fingerprintKey(RungMessage, "a", []string{"b"})
+	a := fingerprintKey(RungMessage, "", "a", []string{"b"})
 	for name, other := range map[string]string{
-		"type and message swapped": fingerprintKey(RungMessage, "b", []string{"a"}),
-		"another rung":             fingerprintKey(RungType, "a", []string{"b"}),
-		"evidence split in two":    fingerprintKey(RungMessage, "a", []string{"", "b"}),
-		"more evidence":            fingerprintKey(RungMessage, "a", []string{"b", "c"}),
+		"type and message swapped": fingerprintKey(RungMessage, "", "b", []string{"a"}),
+		"another rung":             fingerprintKey(RungType, "", "a", []string{"b"}),
+		"evidence split in two":    fingerprintKey(RungMessage, "", "a", []string{"", "b"}),
+		"more evidence":            fingerprintKey(RungMessage, "", "a", []string{"b", "c"}),
 	} {
 		if other == a {
 			t.Errorf("%s: same key %s", name, a)
 		}
 	}
-	if fingerprintKey(RungFrames, "a", []string{"b", "c"}) == fingerprintKey(RungFrames, "a", []string{"c", "b"}) {
+	if fingerprintKey(RungFrames, "", "a", []string{"b", "c"}) == fingerprintKey(RungFrames, "", "a", []string{"c", "b"}) {
 		t.Error("frame order must matter")
 	}
 }
@@ -133,13 +133,13 @@ func TestFingerprintKeyFieldsCannotRunTogether(t *testing.T) {
 		{"ab", "c"}, {"a", "bc"}, {"abc"}, {"abc", ""}, {"", "abc"}, {"a", "b", "c"},
 		{"1:a"}, {"a", "1:b"}, {"a1:b"}, {"a\x00b"}, {"a", "\x00b"}, {"2:ab", "c"}, {"12:ab"},
 	} {
-		key := fingerprintKey(RungFrames, "T", fields)
+		key := fingerprintKey(RungFrames, "", "T", fields)
 		if other, dup := keys[key]; dup {
 			t.Errorf("%q and %q share key %s", fields, other, key)
 		}
 		keys[key] = fields
 	}
-	if fingerprintKey(RungFrames, "T1", []string{"a"}) == fingerprintKey(RungFrames, "T", []string{"1a"}) {
+	if fingerprintKey(RungFrames, "", "T1", []string{"a"}) == fingerprintKey(RungFrames, "", "T", []string{"1a"}) {
 		t.Error("the type runs into the evidence")
 	}
 }
@@ -242,6 +242,7 @@ func TestFingerprintGoApplicationFrames(t *testing.T) {
 type onlyModule string
 
 func (m onlyModule) InApp(f StackFrame) bool { return f.Module == string(m) }
+func (m onlyModule) ID() string              { return "only:" + string(m) }
 
 func TestFingerprintUsesTheGivenClassifier(t *testing.T) {
 	ex := SpanException{Type: "T", StackTrace: cartStack}
@@ -253,6 +254,47 @@ func TestFingerprintUsesTheGivenClassifier(t *testing.T) {
 	fp, _ = FingerprintExceptions([]SpanException{ex}, onlyModule("nothing"))
 	if fp.Rung != RungFrames || len(fp.Frames) != 3 {
 		t.Errorf("rung %v frames %+v", fp.Rung, fp.Frames)
+	}
+}
+
+// namedBuiltin decides exactly as the built-in classifier does, under a name.
+type namedBuiltin string
+
+func (namedBuiltin) InApp(f StackFrame) bool { return builtinInApp(f) }
+func (n namedBuiltin) ID() string            { return string(n) }
+
+// A classifier other than the built-in one is not part of the key version,
+// so its keys must be a family of their own: never equal to a built-in key
+// or to the key of a classifier with another id, on any rung, even where it
+// picks the same frames.
+func TestFingerprintKeysCarryTheClassifier(t *testing.T) {
+	for rung, ex := range map[FingerprintRung]SpanException{
+		RungAppFrames: {Type: "T", Message: "Cart 7 is locked", StackTrace: cartStack},
+		RungFrames:    {Type: "T", StackTrace: javaStack("java.util.ArrayList.get")},
+		RungMessage:   {Type: "T", Message: "Cart 7 is locked"},
+		RungType:      {Type: "T"},
+	} {
+		builtin := mustFingerprint(t, ex)
+		keys := map[string]string{builtin.Key: "the built-in classifier"}
+		for _, id := range []string{"", "team-a", "team-b"} {
+			fp, _ := FingerprintExceptions([]SpanException{ex}, namedBuiltin(id))
+			if fp.Rung != rung || !reflect.DeepEqual(fp.Frames, builtin.Frames) {
+				t.Fatalf("%v: classifier %q chose rung %v frames %+v", rung, id, fp.Rung, fp.Frames)
+			}
+			if other, dup := keys[fp.Key]; dup {
+				t.Errorf("%v: classifier %q shares key %s with %s", rung, id, fp.Key, other)
+			}
+			keys[fp.Key] = "classifier " + id
+			if again, _ := FingerprintExceptions([]SpanException{ex}, namedBuiltin(id)); again.Key != fp.Key {
+				t.Errorf("%v: classifier %q is not stable: %s, %s", rung, id, fp.Key, again.Key)
+			}
+		}
+	}
+	// The id is a field of its own: it cannot run into the type.
+	a, _ := FingerprintExceptions([]SpanException{{Type: "bT"}}, namedBuiltin("a"))
+	b, _ := FingerprintExceptions([]SpanException{{Type: "T"}}, namedBuiltin("ab"))
+	if a.Key == b.Key {
+		t.Error("the classifier id runs into the type")
 	}
 }
 

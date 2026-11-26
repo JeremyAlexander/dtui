@@ -202,17 +202,22 @@ func collapseFrames(frames []StackFrame) []StackFrame {
 // FrameClassifier decides which frames are application code. The fingerprint
 // prefers those: the frames of a runtime or framework are shared by
 // unrelated bugs.
+//
+// The built-in rules (nil wherever a FrameClassifier is taken) are part of
+// the key algorithm and of ExceptionKeyVersion. Any other classifier moves
+// exceptions between keys without the version knowing, so it names itself:
+// ID is hashed into every key computed with it, which keeps its keys apart
+// from the built-in ones and from those of a classifier with another ID. It
+// must be the same in every process that applies the same rules, and change
+// when the rules do.
 type FrameClassifier interface {
 	InApp(f StackFrame) bool
+	ID() string
 }
 
-// DefaultFrameClassifier treats the known runtime and framework modules of
-// each notation as not in-app, and everything else as the application's.
-var DefaultFrameClassifier FrameClassifier = builtinFrameClassifier{}
-
-type builtinFrameClassifier struct{}
-
-func (builtinFrameClassifier) InApp(f StackFrame) bool {
+// builtinInApp treats the known runtime and framework modules of each
+// notation as not in-app, and everything else as the application's.
+func builtinInApp(f StackFrame) bool {
 	if f.Syntax < 0 || int(f.Syntax) >= len(stackNotations) {
 		return false
 	}

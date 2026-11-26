@@ -73,13 +73,15 @@ type ExceptionFingerprint struct {
 // FingerprintExceptions computes the grouping key for the exception events
 // of one span (false when there are none). The event is the root of the
 // cause chain, the last one where no chain is marked. classify decides which
-// frames are application code; nil means DefaultFrameClassifier.
+// frames are application code; nil means the built-in rules, the only ones
+// whose keys are the same for everybody (see FrameClassifier).
 func FingerprintExceptions(excs []SpanException, classify FrameClassifier) (ExceptionFingerprint, bool) {
 	if len(excs) == 0 {
 		return ExceptionFingerprint{}, false
 	}
-	if classify == nil {
-		classify = DefaultFrameClassifier
+	inApp, classifier := builtinInApp, ""
+	if classify != nil {
+		inApp, classifier = classify.InApp, customClassifierField+classify.ID()
 	}
 	root := rootException(excs)
 	fp := ExceptionFingerprint{
@@ -91,7 +93,7 @@ func FingerprintExceptions(excs []SpanException, classify FrameClassifier) (Exce
 	all := ParseStackFrames(root.StackTrace)
 	var app []StackFrame
 	for _, f := range all {
-		if classify.InApp(f) {
+		if inApp(f) {
 			app = append(app, f)
 		}
 	}
@@ -111,16 +113,23 @@ func FingerprintExceptions(excs []SpanException, classify FrameClassifier) (Exce
 	for _, f := range fp.Frames {
 		evidence = append(evidence, f.Module, f.Function)
 	}
-	fp.Key = fingerprintKey(fp.Rung, fp.Type, evidence)
+	fp.Key = fingerprintKey(fp.Rung, classifier, fp.Type, evidence)
 	return fp, true
 }
 
+// customClassifierField starts the classifier field of a key computed with
+// a FrameClassifier; the field is empty for the built-in rules, so that even
+// a classifier without an ID has keys of its own.
+const customClassifierField = "custom:"
+
 // fingerprintKey hashes the canonical form of a fingerprint: the rung's
-// number, the type and the evidence fields in order (a message, or a module
-// and a function per frame). Each field is written behind its length in
-// bytes ("7:addItem"), so no field can run into the next whatever it holds.
-func fingerprintKey(rung FingerprintRung, typ string, evidence []string) string {
+// number, the classifier field, the type and the evidence fields in order (a
+// message, or a module and a function per frame). Each field is written
+// behind its length in bytes ("7:addItem"), so no field can run into the
+// next whatever it holds.
+func fingerprintKey(rung FingerprintRung, classifier, typ string, evidence []string) string {
 	canonical := appendKeyField(nil, strconv.Itoa(int(rung)))
+	canonical = appendKeyField(canonical, classifier)
 	canonical = appendKeyField(canonical, typ)
 	for _, field := range evidence {
 		canonical = appendKeyField(canonical, field)
