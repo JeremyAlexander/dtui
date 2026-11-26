@@ -82,8 +82,8 @@ support.
 |--------|----------------|-----------|
 | `charmbracelet/bubbletea` | no `initInput`/`openInputTTY`/`suspendProcess`/`listenForResize`/`suspendSupported` | `wasm/patches/bubbletea_tty_wasm.go.txt` |
 | `atotto/clipboard` | `readAll`/`writeAll` undefined (platform files exclude js) | `wasm/patches/clipboard_js.go.txt` |
-| `dynatrace-oss/dtctl` (sdk) | `session/refresh_lock_unix.go` is `//go:build !windows`, so it wrongly compiles on js and needs `x/sys/unix` (Flock, …) | retag `!windows && !js` + `refresh_lock_js` stub |
-| `dynatrace-oss/dtctl` (pkg/output) | `live_{unix,windows}.go` define resize hooks for no js variant | `dtctl_output_live_js.go.txt` |
+| `Dynatrace/dtctl` (sdk) | `session/refresh_lock_unix.go` is `//go:build !windows`, so it wrongly compiles on js and needs `x/sys/unix` (Flock, …) | retag `!windows && !js` + `refresh_lock_js` stub |
+| `Dynatrace/dtctl` (pkg/output) | `live_{unix,windows}.go` define resize hooks for no js variant | `dtctl_output_live_js.go.txt` |
 
 > Note: the two dtctl gaps are **newer than the prior prototype's snapshot** — its older
 > vendored dtctl predated the OAuth refresh file-lock and the live-printer

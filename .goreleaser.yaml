@@ -36,9 +36,9 @@ builds:
     ldflags:
       - -s -w
       - -X main.version={{ .Version }}
-      - -X github.com/dynatrace-oss/dtctl/pkg/version.Version={{ .Version }}
-      - -X github.com/dynatrace-oss/dtctl/pkg/version.Commit={{ .ShortCommit }}
-      - -X github.com/dynatrace-oss/dtctl/pkg/version.Date={{ .Date }}
+      - -X github.com/Dynatrace/dtctl/pkg/version.Version={{ .Version }}
+      - -X github.com/Dynatrace/dtctl/pkg/version.Commit={{ .ShortCommit }}
+      - -X github.com/Dynatrace/dtctl/pkg/version.Date={{ .Date }}
 
 archives:
   - id: dtui

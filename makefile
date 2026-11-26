@@ -6,7 +6,7 @@ COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 DATE ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 # dtui stamps its own version plus dtctl's pkg/version vars, which feed
 # code paths in the consumed dtctl packages that read the build version.
-DTCTL_VERSION_PKG = github.com/dynatrace-oss/dtctl/pkg/version
+DTCTL_VERSION_PKG = github.com/Dynatrace/dtctl/pkg/version
 LDFLAGS = -ldflags "-X main.version=$(VERSION) -X $(DTCTL_VERSION_PKG).Version=$(VERSION) -X $(DTCTL_VERSION_PKG).Commit=$(COMMIT) -X $(DTCTL_VERSION_PKG).Date=$(DATE) -s -w"
 INSTALL_BIN_DIR ?= $(if $(GOBIN),$(GOBIN),$(shell go env GOPATH)/bin)
 # Mutation testing: pinned and run via `go run`, so it never enters go.mod.

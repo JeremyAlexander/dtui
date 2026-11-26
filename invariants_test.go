@@ -14,13 +14,24 @@ import (
 
 const modulePath = "github.com/dynatrace-oss/dtui"
 
+// dtctlModulePath is the import prefix the guards below match dtctl packages
+// by. A guard keyed on a stale prefix matches nothing and passes whatever the
+// code imports, so TestDtctlModulePathIsWiredEverywhere holds it to go.mod.
+const dtctlModulePath = "github.com/Dynatrace/dtctl"
+
 // allowedTUIDtctlImports are the only dtctl packages internal/tui may use:
 // the DQL executor and the renderers. Anything else (resource handlers,
 // clients) would be a path to the tenant that bypasses the sources.go seam
 // and, with it, the read-only guarantee (ADR-0011).
 var allowedTUIDtctlImports = map[string]bool{
-	"github.com/dynatrace-oss/dtctl/pkg/exec":   true,
-	"github.com/dynatrace-oss/dtctl/pkg/output": true,
+	dtctlModulePath + "/pkg/exec":   true,
+	dtctlModulePath + "/pkg/output": true,
+}
+
+// isDtctlImport reports whether imp is dtctl or one of its packages (the sdk
+// module included).
+func isDtctlImport(imp string) bool {
+	return imp == dtctlModulePath || strings.HasPrefix(imp, dtctlModulePath+"/")
 }
 
 // importsByFile parses the imports of every non-test Go file under root,
@@ -56,15 +67,25 @@ func importsByFile(t *testing.T, root string) map[string][]string {
 // TestTUIHasNoDirectTenantAccess pins "no HTTP inside internal/tui" and the
 // read-only import graph: every API call goes through an injected Source.
 func TestTUIHasNoDirectTenantAccess(t *testing.T) {
+	seen := 0
 	for file, imports := range importsByFile(t, "internal/tui") {
 		for _, imp := range imports {
 			if imp == "net/http" || strings.HasPrefix(imp, "net/http/") {
 				t.Errorf("%s imports %s: internal/tui must not do HTTP; add a Source in sources.go", file, imp)
 			}
-			if strings.HasPrefix(imp, "github.com/dynatrace-oss/dtctl") && !allowedTUIDtctlImports[imp] {
+			if !isDtctlImport(imp) {
+				continue
+			}
+			seen++
+			if !allowedTUIDtctlImports[imp] {
 				t.Errorf("%s imports %s: only pkg/exec and pkg/output are allowed in internal/tui", file, imp)
 			}
 		}
+	}
+	// internal/tui runs its queries through dtctl's executor, so a walk that
+	// meets no dtctl import is matching the wrong prefix, not a clean tree.
+	if seen == 0 {
+		t.Errorf("no import under internal/tui matches %s: the allowlist checks nothing", dtctlModulePath)
 	}
 }
 
@@ -135,7 +156,7 @@ func TestWorkspaceHasNoTenantAccess(t *testing.T) {
 	for file, imports := range importsByFile(t, "internal/workspace") {
 		for _, imp := range imports {
 			if imp == "net/http" || strings.HasPrefix(imp, "net/http/") ||
-				strings.HasPrefix(imp, "github.com/dynatrace-oss/dtctl") || strings.HasPrefix(imp, modulePath+"/") {
+				isDtctlImport(imp) || strings.HasPrefix(imp, modulePath+"/") {
 				t.Errorf("%s imports %s: internal/workspace holds display defaults only", file, imp)
 			}
 		}
@@ -250,5 +271,51 @@ func TestLintVersionMatchesCI(t *testing.T) {
 	}
 	if makeVer[1] != ciVer[1] {
 		t.Errorf("makefile pins golangci-lint %s, ci.yml %s", makeVer[1], ciVer[1])
+	}
+}
+
+// TestDtctlModulePathIsWiredEverywhere holds every spelling of dtctl's module
+// path to the one go.mod requires. The linker accepts -X for a package that
+// is not in the build and stamps nothing, and an import guard keyed on a
+// stale prefix matches nothing; neither failure shows up anywhere else.
+func TestDtctlModulePathIsWiredEverywhere(t *testing.T) {
+	read := func(path string) string {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return strings.ReplaceAll(string(data), "\r\n", "\n")
+	}
+	required := regexp.MustCompile(`(?m)^\s*(\S+/dtctl) v\S+`).FindStringSubmatch(read("go.mod"))
+	if required == nil {
+		t.Fatal("go.mod requires no dtctl module")
+	}
+	if required[1] != dtctlModulePath {
+		t.Errorf("go.mod requires %s, dtctlModulePath is %s", required[1], dtctlModulePath)
+	}
+	versionPkg := required[1] + "/pkg/version"
+
+	makeVar := regexp.MustCompile(`(?m)^DTCTL_VERSION_PKG\s*=\s*(\S+)`).FindStringSubmatch(read("makefile"))
+	switch {
+	case makeVar == nil:
+		t.Error("makefile: DTCTL_VERSION_PKG not found")
+	case makeVar[1] != versionPkg:
+		t.Errorf("makefile stamps %s, go.mod builds %s", makeVar[1], versionPkg)
+	}
+
+	stamped := map[string]bool{}
+	for _, m := range regexp.MustCompile(`-X (\S+)\.(\w+)=`).FindAllStringSubmatch(read(".goreleaser.yaml"), -1) {
+		if m[1] == "main" {
+			continue
+		}
+		if m[1] != versionPkg {
+			t.Errorf(".goreleaser.yaml stamps %s.%s, go.mod builds %s", m[1], m[2], versionPkg)
+		}
+		stamped[m[2]] = true
+	}
+	for _, name := range []string{"Version", "Commit", "Date"} {
+		if !stamped[name] {
+			t.Errorf(".goreleaser.yaml does not stamp %s.%s", versionPkg, name)
+		}
 	}
 }

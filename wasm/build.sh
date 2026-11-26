@@ -5,11 +5,11 @@
 # `GOOS=js GOARCH=wasm go build ./cmd/web` fails to compile:
 #   - charmbracelet/bubbletea : no TTY init/resize/suspend for js
 #   - atotto/clipboard        : no readAll/writeAll for js
-#   - dynatrace-oss/dtctl      : sdk/session/refresh_lock_unix.go (`!windows`)
-#                                wrongly compiles on js and needs x/sys/unix;
-#                                pkg/output/live_{unix,windows}.go define no
-#                                resize hooks for js; pkg/usage/lock_unix.go
-#                                has the same `!windows` flaw.
+#   - Dynatrace/dtctl         : sdk/session/refresh_lock_unix.go (`!windows`)
+#                              wrongly compiles on js and needs x/sys/unix;
+#                              pkg/output/live_{unix,windows}.go define no
+#                              resize hooks for js; pkg/usage/lock_unix.go
+#                              has the same `!windows` flaw.
 #
 # We can't patch these in the module cache (`go build -overlay` forbids GOMODCACHE
 # replacements, and the cache is read-only). So we copy just these four modules
@@ -45,8 +45,8 @@ copy_mod() {
 echo "==> copying patched module sources into $deps"
 copy_mod github.com/charmbracelet/bubbletea bubbletea
 copy_mod github.com/atotto/clipboard clipboard
-copy_mod github.com/dynatrace-oss/dtctl dtctl
-copy_mod github.com/dynatrace-oss/dtctl/sdk dtctl-sdk
+copy_mod github.com/Dynatrace/dtctl dtctl
+copy_mod github.com/Dynatrace/dtctl/sdk dtctl-sdk
 
 echo "==> applying js/wasm patches"
 cp "$patches/bubbletea_tty_wasm.go.txt" "$deps/bubbletea/tty_wasm.go"
@@ -71,8 +71,8 @@ use ..
 
 replace github.com/charmbracelet/bubbletea => ./.deps/bubbletea
 replace github.com/atotto/clipboard => ./.deps/clipboard
-replace github.com/dynatrace-oss/dtctl => ./.deps/dtctl
-replace github.com/dynatrace-oss/dtctl/sdk => ./.deps/dtctl-sdk
+replace github.com/Dynatrace/dtctl => ./.deps/dtctl
+replace github.com/Dynatrace/dtctl/sdk => ./.deps/dtctl-sdk
 WORK
 
 echo "==> building dtui.wasm (GOOS=js GOARCH=wasm)"

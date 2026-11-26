@@ -86,7 +86,7 @@ awk '{print $1" "$2}' "$work/rows" | sort -u | while read -r module version; do
     [ -f "$f" ] || continue
     # dtctl's NOTICE lists dtctl's own (mostly unrelated) dependencies; only its
     # leading attribution applies to dtui and is reproduced in the root NOTICE.
-    [ "$module/$name" = "github.com/dynatrace-oss/dtctl/NOTICE" ] && continue
+    [ "$module/$name" = "github.com/Dynatrace/dtctl/NOTICE" ] && continue
     files+=("$f")
     ids="$ids $(classify "$f")"
   done
