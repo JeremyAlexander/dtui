@@ -6,10 +6,10 @@
 #   - charmbracelet/bubbletea : no TTY init/resize/suspend for js
 #   - atotto/clipboard        : no readAll/writeAll for js
 #   - Dynatrace/dtctl         : sdk/session/refresh_lock_unix.go (`!windows`)
-#                              wrongly compiles on js and needs x/sys/unix;
-#                              pkg/output/live_{unix,windows}.go define no
-#                              resize hooks for js; pkg/usage/lock_unix.go
-#                              has the same `!windows` flaw.
+#                               wrongly compiles on js and needs x/sys/unix;
+#                               pkg/output/live_{unix,windows}.go define no
+#                               resize hooks for js; pkg/usage/lock_unix.go
+#                               has the same `!windows` flaw.
 #
 # We can't patch these in the module cache (`go build -overlay` forbids GOMODCACHE
 # replacements, and the cache is read-only). So we copy just these four modules
@@ -19,7 +19,7 @@
 # `go build ./...`, `make test`, and CI are unaffected because they never set
 # GOWORK and never see wasm/.deps.
 #
-# The real fix for the two dtctl gaps is to upstream `//go:build js` variants
+# The real fix for the three dtctl gaps is to upstream `//go:build js` variants
 # into dtctl (Dynatrace-owned). See docs/design/WASM_CHROME_EXTENSION.md.
 set -euo pipefail
 
