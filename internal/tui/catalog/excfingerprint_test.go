@@ -90,7 +90,7 @@ func TestFingerprintExceptionsLadder(t *testing.T) {
 
 func TestFingerprintKeyShape(t *testing.T) {
 	fp := mustFingerprint(t, SpanException{Type: "java.lang.IllegalStateException", StackTrace: cartStack})
-	if !regexp.MustCompile(`^e1:[0-9a-f]{12}$`).MatchString(fp.Key) {
+	if !exceptionKeyRe.MatchString(fp.Key) {
 		t.Errorf("key = %q, want e1: and 12 hex characters", fp.Key)
 	}
 	// The hash input: rung number, classifier (none for the built-in one),
@@ -770,4 +770,45 @@ func TestExceptionKeysAreStable(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+}
+
+var exceptionKeyRe = regexp.MustCompile(`^e1:[0-9a-f]{12}$`)
+
+// FuzzFingerprintExceptions checks what must hold for any event: no panic,
+// a key of the pinned shape, the same key on every run, a rung that matches
+// what the key was built from, and no more frames than a key may hold.
+func FuzzFingerprintExceptions(f *testing.F) {
+	f.Add("java.lang.IllegalStateException", "Cart 7 is locked", "\tat com.example.shop.CartService.addItem(CartService.java:42)", "1", "", false)
+	f.Add("T", "", "main.cleanup()\npanic({0x1, 0x2})\nruntime.sigpanic()", "1", "1", true)
+	f.Add("", "", "", "", "", false)
+	f.Add("T", "x", "Caused by: a.B\n... 9 more\nat a.b(C.java:1)\nSuppressed: x", "2", "1", false)
+	f.Add("E", "m", "Traceback (most recent call last):\n  File \"/app/a.py\", line 1, in __call__", "", "2", true)
+	f.Fuzz(func(t *testing.T, typ, msg, stack, id, causedBy string, root bool) {
+		excs := []SpanException{
+			{Type: "Wrapper", Message: msg, ID: causedBy, CausedByID: id},
+			{Type: typ, Message: msg, StackTrace: stack, ID: id, CausedByID: causedBy, CauseRoot: root},
+			{Type: typ, StackTrace: stack, ID: id},
+		}
+		fp, ok := FingerprintExceptions(excs, nil)
+		if !ok {
+			t.Fatal("no fingerprint for three events")
+		}
+		if again, _ := FingerprintExceptions(excs, nil); !reflect.DeepEqual(fp, again) {
+			t.Fatalf("not deterministic: %+v then %+v", fp, again)
+		}
+		if !exceptionKeyRe.MatchString(fp.Key) {
+			t.Fatalf("key %q", fp.Key)
+		}
+		switch {
+		case fp.Rung >= RungMessage && fp.Frames != nil, fp.Rung < RungMessage && len(fp.Frames) == 0,
+			fp.Rung == RungMessage && fp.Message == "", fp.Rung < RungAppFrames, fp.Rung > RungType:
+			t.Fatalf("rung %v with frames %+v and message %q", fp.Rung, fp.Frames, fp.Message)
+		}
+		if len(fp.Frames) > FingerprintFrames+1 {
+			t.Fatalf("%d frames in a key", len(fp.Frames))
+		}
+		if custom, _ := FingerprintExceptions(excs, onlyModule("")); custom.Key == fp.Key {
+			t.Fatalf("a custom classifier shares key %s with the built-in rules", fp.Key)
+		}
+	})
 }
