@@ -456,15 +456,22 @@ func ldflagProblems(file, text string) []string {
 // wasm/build.sh that are missing or name another dtctl.
 func wasmScriptProblems(text string) []string {
 	text = withoutCommentLines(text)
+	// Each wanted line must be a whole line of the script: inside another
+	// one it may be an echo, or a replace the workspace file comments out
+	// with //.
+	var lines []string
+	for _, line := range strings.Split(text, "\n") {
+		lines = append(lines, strings.TrimRight(line, " \t"))
+	}
 	var problems []string
 	for _, want := range []string{
-		"copy_mod " + dtctlModulePath + " dtctl\n",
-		"copy_mod " + dtctlModulePath + "/sdk dtctl-sdk\n",
-		"replace " + dtctlModulePath + " => ./.deps/dtctl\n",
-		"replace " + dtctlModulePath + "/sdk => ./.deps/dtctl-sdk\n",
+		"copy_mod " + dtctlModulePath + " dtctl",
+		"copy_mod " + dtctlModulePath + "/sdk dtctl-sdk",
+		"replace " + dtctlModulePath + " => ./.deps/dtctl",
+		"replace " + dtctlModulePath + "/sdk => ./.deps/dtctl-sdk",
 	} {
-		if !strings.Contains(text, want) {
-			problems = append(problems, fmt.Sprintf("wasm/build.sh lacks %q", strings.TrimSpace(want)))
+		if !slices.Contains(lines, want) {
+			problems = append(problems, fmt.Sprintf("wasm/build.sh lacks %q", want))
 		}
 	}
 	for _, m := range wasmDtctlLine.FindAllStringSubmatch(text, -1) {
@@ -551,6 +558,9 @@ func TestDtctlPathChecksReadOnlyLiveLines(t *testing.T) {
 		{"wasm", wasmScriptProblems(wasm), ""},
 		{"wasm commented-out copy", wasmScriptProblems(strings.Replace(wasm, "copy_mod", "# copy_mod", 1)), `lacks "copy_mod ` + dtctlModulePath + ` dtctl"`},
 		{"wasm stale replace", wasmScriptProblems(wasm + "replace " + old + " => ./.deps/old\n"), "names " + old},
+		{"wasm replace commented out in the workspace", wasmScriptProblems(strings.Replace(wasm, "replace", "// replace", 1)), `lacks "replace ` + dtctlModulePath + ` => ./.deps/dtctl"`},
+		{"wasm copy that is only echoed", wasmScriptProblems(strings.Replace(wasm, "copy_mod", "echo copy_mod", 1)), `lacks "copy_mod ` + dtctlModulePath + ` dtctl"`},
+		{"wasm without a final newline", wasmScriptProblems(strings.TrimSuffix(wasm, "\n")), ""},
 
 		{"dependabot", dependabotProblems(group), ""},
 		{"dependabot stale group", dependabotProblems(strings.Replace(group, dtctlModulePath, old, 1)), "groups " + old},
