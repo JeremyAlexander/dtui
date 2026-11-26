@@ -558,6 +558,12 @@ func (a *app) dispatch(msg tea.Msg) tea.Cmd {
 		if msg.gen != a.refreshGen || refreshIntervals[a.refreshIdx] == 0 {
 			return nil
 		}
+		// A view still waiting keeps its request: a refresh would supersede
+		// it, and with a query slower than the interval every answer would
+		// be dropped for the next one and none ever painted.
+		if a.busy() {
+			return a.scheduleRefresh()
+		}
 		return tea.Batch(a.top().Refresh(), a.scheduleRefresh())
 
 	case spinnerTickMsg:

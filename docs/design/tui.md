@@ -969,8 +969,10 @@ are dropped by `(owner, seq)` rather than by cancellation (see
 ### Refresh & data handling
 
 - Views own their data + `lastFetched`; auto-refresh is a per-view `tea.Tick`
-  honoring the global interval. The breadcrumb stack keeps popped views alive
-  for instant `esc`.
+  honoring the global interval. A tick that finds the view still waiting
+  refreshes nothing and arms the next one, so a query slower than the
+  interval paints its answer instead of being superseded on every tick. The
+  breadcrumb stack keeps popped views alive for instant `esc`.
 - `/` filtering and sorting are client-side over the fetched page; entity
   lists are paged (DQL limit + "load more" on scroll-past-end). Server-side
   narrowing is what scope pinning is for — consistent with the "no custom
