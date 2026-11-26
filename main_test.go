@@ -361,6 +361,12 @@ func TestSourceSettings(t *testing.T) {
 	if gotRoot != root || gotEditor != "cursor" {
 		t.Errorf("from %s: root %q, editor %q", deep, gotRoot, gotEditor)
 	}
+	// Outside a repository there is no directory to look in, whatever the
+	// editor. (A temporary directory is under no repository.)
+	outside := t.TempDir()
+	if gotRoot, _ := sourceSettings(func() (string, error) { return outside, nil }, func(k string) string { return env[k] }); gotRoot == outside || (gotRoot != "" && !strings.HasPrefix(outside, gotRoot)) {
+		t.Errorf("outside a repository: root %q, want none", gotRoot)
+	}
 	gotRoot, gotEditor = sourceSettings(func() (string, error) { return "", os.ErrNotExist }, func(string) string { return "" })
 	if gotRoot != "" || gotEditor != "" {
 		t.Errorf("without a working directory: root %q, editor %q", gotRoot, gotEditor)

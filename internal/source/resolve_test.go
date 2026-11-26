@@ -354,9 +354,10 @@ func TestRoot(t *testing.T) {
 			t.Errorf("Root(%s) = %s, want %s", dir, got, want)
 		}
 	}
-	// Without a repository above it, the directory itself: unless a parent
-	// of the test's directory happens to be one.
-	if got := Root(filepath.Join(plain, "a")); got != filepath.Join(plain, "a") && !strings.HasPrefix(plain, got) {
-		t.Errorf("Root outside a repository = %s", got)
+	// Without a repository at or above it there is no directory to look
+	// in: a home directory is not walked for being where dtui was started.
+	// (Unless a parent of the test's directory happens to be a repository.)
+	if got := Root(filepath.Join(plain, "a")); got != "" && !strings.HasPrefix(plain, got) {
+		t.Errorf("Root outside a repository = %q, want none", got)
 	}
 }

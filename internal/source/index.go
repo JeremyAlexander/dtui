@@ -53,15 +53,18 @@ type Index struct {
 	Partial string
 }
 
-// Root is the directory frames are looked up in: the nearest directory at or
-// above dir that holds a .git entry, or dir itself.
+// Root is the directory frames are looked up in: the repository dir is in,
+// which is the nearest directory at or above it that holds a .git entry.
+// Outside a repository it is "": there is nothing to say where an
+// application's source ends, and a home directory is not walked for being
+// where dtui was started.
 func Root(dir string) string {
 	for at := dir; ; at = filepath.Dir(at) {
 		if _, err := os.Lstat(filepath.Join(at, ".git")); err == nil {
 			return at
 		}
 		if filepath.Dir(at) == at {
-			return dir
+			return ""
 		}
 	}
 }

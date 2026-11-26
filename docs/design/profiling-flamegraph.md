@@ -117,9 +117,10 @@ it must never do, is in ADR-0023; this is how it behaves.
 
 1. **The directory.** Files are looked up under the repository dtui was
    started in: the nearest directory at or above the working directory with a
-   `.git` entry, or the working directory. Nothing outside it is ever read or
-   opened. The browser build has no directory: there the key says so and the
-   footer does not offer it.
+   `.git` entry. Nothing outside it is ever read or opened. Started anywhere
+   else (a home directory), dtui has no directory to look in and walks none:
+   the key says so and the footer does not offer it. The same holds for the
+   browser build.
 2. **The index.** The directory is walked once per session, off the update
    loop, when the graph first opens. The walk skips symbolic links, hidden
    directories and `node_modules`, `vendor`, `target`, `build`, `dist`,

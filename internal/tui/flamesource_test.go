@@ -236,7 +236,7 @@ func TestOpenSourceWithoutAnEditorOrADirectory(t *testing.T) {
 		t.Errorf("the footer offers O with no directory to look in:\n%s", out)
 	}
 	press(a, key("O"))
-	if len(*opened) != 0 || !a.statusErr || !strings.Contains(a.status, "needs dtui run in a terminal") {
+	if len(*opened) != 0 || !a.statusErr || a.status != "O looks for a frame's file in the repository dtui was started in: start it inside the application's checkout" {
 		t.Errorf("without a directory: opened %v, status %q", *opened, a.status)
 	}
 

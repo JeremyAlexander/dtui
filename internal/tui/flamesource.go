@@ -140,7 +140,7 @@ func (a *app) findSource(view viewModel, label string) tea.Cmd {
 	f := source.Parse(label)
 	switch {
 	case s == nil:
-		return statusErr("opening a frame's source needs dtui run in a terminal, from inside the source tree")
+		return statusErr("O looks for a frame's file in the repository dtui was started in: start it inside the application's checkout")
 	case label == "":
 		return status("the root is every stack: move to a frame, then O opens its source")
 	case f.Runtime != "":
