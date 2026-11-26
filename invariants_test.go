@@ -169,6 +169,27 @@ func TestFlameIsFrameworkFree(t *testing.T) {
 	}
 }
 
+// TestSourceLookupRunsNothing pins what opening a frame's source may do
+// (ADR-0023): internal/source reads files and words a link. It starts no
+// program, speaks to no network and knows neither Dynatrace nor a terminal
+// framework, so a frame's name, which is text from the environment, has
+// nothing to reach.
+func TestSourceLookupRunsNothing(t *testing.T) {
+	seen := 0
+	for file, imports := range importsByFile(t, "internal/source") {
+		seen++
+		for _, imp := range imports {
+			if imp == "os/exec" || imp == "syscall" || imp == "plugin" || imp == "net" || strings.HasPrefix(imp, "net/http") ||
+				isDtctlImport(imp) || strings.HasPrefix(imp, "github.com/charmbracelet/") || strings.HasPrefix(imp, modulePath+"/") {
+				t.Errorf("%s imports %s: internal/source only reads files under one directory and words a link", file, imp)
+			}
+		}
+	}
+	if seen == 0 {
+		t.Error("no file under internal/source: the guard checks nothing")
+	}
+}
+
 // TestWorkspaceHasNoTenantAccess pins the workspace file as display defaults
 // only (ADR-0005): it cannot reach a tenant, so it cannot carry credentials or
 // actions.

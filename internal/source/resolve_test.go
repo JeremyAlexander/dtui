@@ -68,6 +68,7 @@ public class CartService {
         long total() { return 0; }
     }
 }
+// The class CartService is the first of its name here.
 `,
 	"backend/src/test/java/com/example/shop/CartServiceTest.java": "package com.example.shop;\nclass CartServiceTest {}\n",
 	"backend/src/main/java/com/example/other/CartService.java":    "package com.example.other;\nclass CartService {\n  void addItem() {}\n}\n",
@@ -99,6 +100,8 @@ func Map[K comparable](k K) {}
 	".idea/workspace/Hidden.java":                 "class Hidden {}\n",
 	"vendor/github.com/lib/pq/conn.go":            "package pq\n\nfunc Open() {}\n",
 	"README.md":                                   "# shop\n",
+	// A copy of a runtime's source is still not the application's.
+	"third/java/lang/Thread.java": "package java.lang;\n\nclass Thread {\n  void run() {}\n}\n",
 }
 
 func TestResolve(t *testing.T) {
@@ -154,6 +157,9 @@ func TestResolve(t *testing.T) {
 		{"src/server/handler.ts:other", []Match{{"web/src/server/handler.ts", 5, Declaration}}},
 		{"src/server/handler.ts:Handler.handle", []Match{{"web/src/server/handler.ts", 8, Declaration}}},
 		{"src/server/handler.ts:(anonymous)", []Match{{"web/src/server/handler.ts", 0, FileOnly}}},
+		{`C:\app\src\server\handler.ts:resolve`, []Match{{"web/src/server/handler.ts", 1, Declaration}}},
+		// The file that declares the function before the one that only has the name.
+		{"handler.ts:other", []Match{{"web/src/server/handler.ts", 5, Declaration}, {"web/src/client/handler.ts", 0, FileOnly}}},
 		{"handler.ts:resolve", []Match{{"web/src/client/handler.ts", 1, Declaration}, {"web/src/server/handler.ts", 1, Declaration}}},
 		{"graphql/type/definition.js:resolve", nil},
 		{"node:internal/timers:processTimers", nil},
@@ -256,7 +262,7 @@ func TestScanSkipsWhatIsNotSource(t *testing.T) {
 			t.Errorf("%s in the index: %v, want %v", rel, err == nil, want)
 		}
 	}
-	if ix.Partial != "" || ix.Len() != 15 {
+	if ix.Partial != "" || ix.Len() != 16 {
 		t.Errorf("%d files, partial %q", ix.Len(), ix.Partial)
 	}
 }
