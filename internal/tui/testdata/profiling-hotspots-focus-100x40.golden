@@ -1,0 +1,40 @@
+ ▛▞▟ dtui  ·  context:test  ·  ● readonly                                                   last 2h
+ hotspots (shop-backend) › hotspots (UTF8JsonGenerator.writeString) (shop-backend) ────────────────
+ 28 rows · 38s
+  running    lock    net_io    disk_io    wait    allocations
+ last 2h (10:00–12:00 UTC) · 19,223 running samples with the function on the stack
+ top 25 of 85 callers · all threads, leaf: total
+ RELATION  SHARE%  SHARE ▇    SAMPLES  FUNCTION
+▌total      100.0  ████████    19,223  com.fasterxml.jackson.core.json.UTF8JsonGenerator.writeString
+ self        69.3  █████▌      13,321  com.fasterxml.jackson.core.json.UTF8JsonGenerator.writeString
+ caller      15.9  █▎           3,049  com.example.shop.catalog.dto.ProductDto.getAttributes
+ caller      12.6  █            2,421  com.example.shop.catalog.dto.ProductDto.getDescription
+ caller       5.6  ▌            1,076  com.example.shop.catalog.dto.ProductDto.getName
+ caller       5.1  ▍              986  com.example.shop.catalog.dto.ProductDto.getImages
+ caller       4.3  ▍              819  com.example.shop.cart.dto.CartDto.getItems
+ caller       3.7  ▎              716  com.example.shop.catalog.dto.ProductDto.getPrice
+ caller       2.9  ▎              552  com.example.shop.search.dto.SearchHitDto.getHighlights
+ caller       2.3  ▏              448  com.example.shop.catalog.dto.ProductDto.getTags
+ caller       1.8  ▏              341  com.example.shop.cart.dto.CartDto.getTotals
+ caller       1.7  ▏              331  com.example.shop.search.dto.SearchHitDto.getTitle
+ caller       1.4  ▏              268  com.example.shop.catalog.dto.ProductDto.getSku
+ caller       1.1  ▏              221  com.example.shop.search.dto.SearchHitDto.getScore
+ caller       1.1  ▏              204  com.example.shop.cart.dto.CartDto.getCoupons
+ caller       0.9  ▏              179  com.example.shop.category.dto.CategoryDto.getDetails
+ caller       0.9  ▏              179  com.example.shop.category.dto.CategoryDto.getId
+ caller       0.9  ▏              179  com.example.shop.category.dto.CategoryDto.getLabel
+ caller       0.9  ▏              179  com.example.shop.report.dto.ReportDto.getDetails
+ caller       0.9  ▏              179  com.example.shop.report.dto.ReportDto.getId
+ caller       0.9  ▏              179  com.example.shop.report.dto.ReportDto.getLabel
+ caller       0.9  ▏              169  com.example.shop.profile.dto.ProfileDto.getDetails
+ caller       0.9  ▏              169  com.example.shop.profile.dto.ProfileDto.getId
+ caller       0.9  ▏              169  com.example.shop.profile.dto.ProfileDto.getLabel
+ caller       0.9  ▏              167  com.example.shop.invoice.dto.InvoiceDto.getDetails
+ caller       0.9  ▏              167  com.example.shop.invoice.dto.InvoiceDto.getId
+ caller       0.9  ▏              167  com.example.shop.invoice.dto.InvoiceDto.getLabel
+ callee      30.7  ██▌          5,902  c.f.j.core.json.UTF8JsonGenerator._outputEscapedMultiByteChar
+
+
+ ▸ com.fasterxml.jackson.core.json.UTF8JsonGenerator.writeString
+ tab lens  enter callers/callees  / filter  J/K sort  : views  t timeframe  S segments  r refresh  …
+ ≡ dtctl exec profiling hotspots PROCESS-000000000000A001 --focus 'com.fasterxml.jackson.core.json.…

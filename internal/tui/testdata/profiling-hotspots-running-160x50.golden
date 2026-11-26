@@ -1,0 +1,50 @@
+ ▛▞▟ dtui  ·  context:test  ·  ● readonly                                                                                                               last 2h
+ hotspots (shop-backend) ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ 300 rows · 38s
+  running    lock    net_io    disk_io    wait    allocations
+ last 2h (10:00–12:00 UTC) · 77,631 running samples (stacks seen, not time) · top 300 of 309 functions by self samples · all threads, leaf: total
+ SELF%     SELF  SELF ▇    TOTAL%    TOTAL  TOTAL ▇   PATHS  FUNCTION
+▌ 17.2   13,321  █▍          24.8   19,223  ██           85  com.fasterxml.jackson.core.json.UTF8JsonGenerator.writeString
+   7.6    5,902  ▋            7.6    5,902  ▋            85  com.fasterxml.jackson.core.json.UTF8JsonGenerator._outputEscapedMultiByteChar
+   4.5    3,460  ▍            9.0    6,960  ▊             1  com.example.shop.search.Ranker.score
+   4.1    3,174  ▍            4.1    3,174  ▍            25  org.hibernate.sql.results.internal.RowProcessingStateStandardImpl.next
+   3.8    2,950  ▎            3.8    2,950  ▎             1  org.springframework.security.crypto.bcrypt.BCrypt.hashpw
+   3.8    2,929  ▎            3.8    2,929  ▎            85  com.fasterxml.jackson.core.io.NumberOutput.outputLong
+   2.9    2,240  ▎            8.2    6,390  ▋             1  com.example.shop.cart.PricingEngine.priceCart
+   2.8    2,210  ▎            2.8    2,210  ▎             1  com.example.shop.search.Ranker.termFrequency
+   2.6    1,980  ▎            2.6    1,980  ▎             1  com.example.shop.catalog.ProductMapper.mapAttributes
+   2.4    1,840  ▎            3.6    2,760  ▎             1  com.example.shop.catalog.ProductCache.rebuild
+   2.3    1,769  ▏           40.3   31,314  ███▎          1  com.fasterxml.jackson.databind.ser.BeanPropertyWriter.serializeAsField
+   2.2    1,730  ▏            3.4    2,670  ▎             1  com.example.shop.cart.DiscountRules.apply
+   2.0    1,543  ▏            2.0    1,543  ▏            30  sun.nio.ch.NioSocketImpl.read
+   1.8    1,410  ▏            6.8    5,280  ▌             1  com.example.shop.catalog.ProductMapper.toDto
+   1.7    1,290  ▏            1.7    1,290  ▏             1  java.util.HashMap.getNode
+   1.5    1,173  ▏            6.0    4,691  ▌             1  com.example.shop.catalog.dto.ProductDto.getAttributes
+   1.5    1,130  ▏            1.5    1,130  ▏             1  java.text.DecimalFormat.format
+   1.4    1,120  ▏            2.4    1,900  ▎             1  com.example.shop.search.QueryParser.parse
+   1.3    1,030  ▏            1.3    1,030  ▏             1  com.fasterxml.jackson.databind.ser.impl.PropertySerializerMap.serializerFor
+   1.2      940  ▏            1.2      940  ▏             1  java.util.regex.Pattern$GroupCurly.match
+   1.2      931  ▏            4.8    3,724  ▍             1  com.example.shop.catalog.dto.ProductDto.getDescription
+   1.2      920  ▏            1.2      920  ▏             1  java.util.concurrent.ConcurrentHashMap.putVal
+   1.1      877  ▏           42.8   33,221  ███▍          1  com.fasterxml.jackson.databind.ser.BeanSerializer.serialize
+   1.1      870  ▏            1.1      870  ▏             1  java.math.BigDecimal.divide
+   1.1      830  ▏           93.4   72,546  ███████▌      1  org.springframework.security.web.FilterChainProxy.doFilter
+   1.0      780  ▏            1.0      780  ▏             1  java.util.regex.Pattern$Slice.match
+   1.0      760  ▏            2.4    1,890  ▎             1  com.example.shop.catalog.PriceFormatter.format
+   0.9      720  ▏            0.9      720  ▏             1  com.example.shop.checkout.OrderValidator.validate
+   0.9      690  ▏            0.9      690  ▏             1  org.springframework.web.servlet.handler.AbstractHandlerMethodMapping.lookupHandlerMethod
+   0.8      640  ▏            0.8      640  ▏             1  org.apache.coyote.http11.Http11InputBuffer.parseHeaders
+   0.8      610  ▏            0.8      610  ▏             1  com.example.shop.cart.TaxCalculator.taxFor
+   0.7      540  ▏            1.2      930  ▏             1  com.example.shop.catalog.ProductCache.get
+   0.7      520  ▏           88.6   68,766  ███████▏      1  org.springframework.web.servlet.DispatcherServlet.doDispatch
+   0.6      470  ▏            0.6      470  ▏             1  com.example.shop.catalog.ProductCache.put
+   0.6      440  ▏            0.6      440  ▏             3  java.io.FileOutputStream.writeBytes
+   0.6      430  ▏            0.6      430  ▏             1  org.apache.kafka.clients.producer.KafkaProducer.doSend
+   0.5      414  ▏            2.1    1,655  ▏             1  com.example.shop.catalog.dto.ProductDto.getName
+   0.5      390  ▏            0.5      390  ▏             1  java.util.concurrent.ConcurrentHashMap.get
+   0.5      379  ▏            2.0    1,516  ▏             1  com.example.shop.catalog.dto.ProductDto.getImages
+   0.5      350  ▏            0.5      350  ▏             1  com.example.shop.session.SessionStore.evictExpired
+   0.4      315  ▏            1.6    1,260  ▏             1  com.example.shop.cart.dto.CartDto.getItems
+ ▸ com.fasterxml.jackson.core.json.UTF8JsonGenerator.writeString
+ tab lens  enter callers/callees  / filter  J/K sort  : views  t timeframe  S segments  r refresh  ? help  q quit
+ ≡ dtctl exec profiling hotspots PROCESS-000000000000A001 --view functions --state running --show-waiting --limit 300 --default-timeframe-start 'now()-2h'

@@ -110,41 +110,125 @@ func renderProfiling(t *testing.T, name string) *app {
 	return a
 }
 
-// profilingSizes are the two widths every profiling state is pinned at: the
-// 80-column minimum and the default desktop size, both from snapshotSizes.
-var profilingSizes = []struct{ w, h int }{{80, 24}, {120, 40}}
-
-func assertProfilingSnapshots(t *testing.T, prefix string, a *app) {
-	t.Helper()
-	for _, s := range profilingSizes {
-		a.Update(tea.WindowSizeMsg{Width: s.w, Height: s.h})
-		assertSnapshot(t, fmt.Sprintf("%s-%dx%d", prefix, s.w, s.h), screen(a))
-	}
-}
-
+// The populated screens of the view, one per shape of table it draws, at the
+// canonical sizes. Every other state is asserted by what it says (below).
 func TestSnapshotProfiling(t *testing.T) {
 	pinSnapshotClock(t)
-	for _, name := range []string{
-		"hotspots-running", "hotspots-lock", "hotspots-focus", "allocations",
-		"no-data", "no-lock-samples", "forbidden", "not-found", "throttled", "service-refused", "no-process",
-	} {
+	for _, name := range []string{"hotspots-running", "hotspots-focus", "allocations"} {
 		t.Run(name, func(t *testing.T) {
-			assertProfilingSnapshots(t, "profiling-"+name, renderProfiling(t, name))
+			assertSnapshots(t, "profiling-"+name, renderProfiling(t, name))
 		})
 	}
 }
 
-// An analysis takes up to a minute: the view says what it waits for, for how
-// long, and what the source reported last.
-func TestSnapshotProfilingLoading(t *testing.T) {
+// Each state without rows says what happened and what to do, at the 80
+// column minimum and at the desktop size, and never a line of table chrome
+// that claims rows.
+func TestProfilingStatesSayWhatHappened(t *testing.T) {
 	pinSnapshotClock(t)
-	a, tv := openProfiling(t, loadProfilingScenario(t, "hotspots-running"))
+	for name, want := range map[string][]string{
+		"hotspots-lock":   {"hotspots·lock (shop-backend)", "last 2h of the selected 24h (10:00–12:00 UTC)", "11,353 lock samples", "LockSupport.parkNanos"},
+		"no-data":         {"0 rows", "∅ no samples in this window — the process may have been idle or restarted"},
+		"no-lock-samples": {"0 rows", "0 lock samples", "∅ no lock samples in this window — [ and ] switch the thread state"},
+		"forbidden":       {"✗ the environment refused the analysis (403)", "storage:profiles:read", "IAM policy"},
+		"not-found":       {"✗ the environment knows no process PROCESS-000000000000A001 (404)", "pick a current one from :processes"},
+		"throttled":       {"✗ the environment is throttling profiling requests (429)", "then press r"},
+		"service-refused": {"✗ SERVICE-000000000000B001 cannot be profiled", "press h on a row of"},
+		"no-process":      {"✗ profiling analyses one process", ":hotspots PROCESS-…"},
+	} {
+		a := renderProfiling(t, name)
+		for _, size := range []struct{ w, h int }{{80, 24}, {120, 40}} {
+			a.Update(tea.WindowSizeMsg{Width: size.w, Height: size.h})
+			out := screen(a)
+			// A message may wrap: compare with the line breaks folded.
+			folded := strings.Join(strings.Fields(out), " ")
+			for _, text := range want {
+				if !strings.Contains(folded, text) {
+					t.Errorf("%s at %dx%d does not say %q:\n%s", name, size.w, size.h, text, out)
+				}
+			}
+			if lines := strings.Count(out, "\n") + 1; lines != size.h {
+				t.Errorf("%s at %dx%d is %d lines tall", name, size.w, size.h, lines)
+			}
+		}
+	}
+}
+
+// An analysis takes minutes: the view says what it waits for and for how
+// long, and repeats what the source reported last. The report travels on the
+// call's own context, so it is the view that issued the call that shows it.
+func TestProfilingShowsWhatTheSourceReports(t *testing.T) {
+	pinSnapshotClock(t)
+	const report = "the environment answered 429: it is throttling profiling requests and asks to wait 10s"
+	a := testApp(t, "home")
+	a.ds.sources = map[string]Source{
+		"hotspots": func(ctx context.Context, _ catalog.Scope, _ string) ([]map[string]any, error) {
+			ReportProgress(ctx, report)
+			return nil, nil
+		},
+	}
+	// deliver runs the call and drops its result, so the view keeps waiting.
+	_, cmd := a.Update(NavigateMsg{Target: "hotspots", Filter: "PROCESS-000000000000A001"})
+	deliver(a, cmd)
+	tv := a.top().(*tableView)
 	if !tv.loading {
 		t.Fatal("an opened view must be loading")
 	}
+	tv.scope.Entity.Name = "shop-backend"
 	tv.started = catalog.Now().Add(-41 * time.Second)
-	tv.progress.set("the environment answered 429: it is throttling profiling requests and asks to wait 10s")
-	assertProfilingSnapshots(t, "profiling-loading", a)
+	for _, size := range []struct{ w, h int }{{80, 24}, {120, 40}} {
+		a.Update(tea.WindowSizeMsg{Width: size.w, Height: size.h})
+		out := screen(a)
+		folded := strings.Join(strings.Fields(out), " ")
+		for _, want := range []string{"analysing the hotspots of shop-backend, which can take minutes — 41s", report} {
+			if !strings.Contains(folded, want) {
+				t.Errorf("at %dx%d the loading view does not say %q:\n%s", size.w, size.h, want, out)
+			}
+		}
+	}
+	// A report on a context of no call is dropped, not shown by some view.
+	ReportProgress(context.Background(), "stray")
+	if strings.Contains(screen(a), "stray") {
+		t.Error("a report without a call reached the view")
+	}
+}
+
+// The profiling view has no preview pane at any size: its rows have nothing
+// more to show than the table does. A view that has one shows it at the same
+// sizes.
+func TestProfilingHasNoPreviewPane(t *testing.T) {
+	pinSnapshotClock(t)
+	sc := loadProfilingScenario(t, "hotspots-running")
+	a, tv := openProfiling(t, sc)
+	sc.answer(tv)
+	hosts := testApp(t, "hosts")
+	seedRows(t, hosts, []map[string]any{{"id": "HOST-000000000000C001", "entity.name": "web-1"}})
+	hv := hosts.top().(*tableView)
+	for _, tc := range []struct {
+		w, h         int
+		side, bottom bool // what a view with a pane shows
+	}{
+		{80, 24, false, false},
+		{100, 40, false, true},
+		{120, 40, true, false},
+		{160, 50, true, false},
+	} {
+		size := tea.WindowSizeMsg{Width: tc.w, Height: tc.h}
+		a.Update(size)
+		hosts.Update(size)
+		if hv.previewSide() != tc.side || hv.previewBottom() != tc.bottom {
+			t.Fatalf("hosts at %dx%d: side=%v bottom=%v, want %v and %v", tc.w, tc.h, hv.previewSide(), hv.previewBottom(), tc.side, tc.bottom)
+		}
+		if tv.previewSide() || tv.previewBottom() {
+			t.Errorf("hotspots at %dx%d: side=%v bottom=%v, want neither", tc.w, tc.h, tv.previewSide(), tv.previewBottom())
+		}
+		// Without a pane the table has the whole body: every line down to
+		// the footnote is a row.
+		lines := strings.Split(screen(a), "\n")
+		if got := strings.TrimSpace(lines[tc.h-4]); !strings.Contains(got, ".") || strings.HasPrefix(got, "▸") {
+			t.Errorf("hotspots at %dx%d: the last body line is %q, want a row", tc.w, tc.h, got)
+		}
+	}
 }
 
 // The window the caption states is the one analysed: a selection longer than
@@ -325,21 +409,28 @@ func TestProfilingCancelsItsCallWhenLeft(t *testing.T) {
 		t.Fatalf("lens switch: %d calls, old cancelled=%v", len(calls), calls[1].Err() != nil)
 	}
 
-	// A drill covers the view without leaving it: the analysis goes on. esc
-	// from the drilled view is not a leave either.
+	// A drill covers the view without leaving it: an analysis it waits for
+	// goes on. esc from the drilled view is not a leave either.
 	tv.Update(dataMsg{owner: tv, seq: tv.seq, records: loadProfilingScenario(t, "hotspots-lock").Records})
+	deliver(a, tv.Refresh()) // r: the view waits again, its rows still there
+	if len(calls) != 4 || !tv.loading || len(tv.rows) == 0 {
+		t.Fatalf("refresh: %d calls, loading=%v, %d rows", len(calls), tv.loading, len(tv.rows))
+	}
 	_, cmd = a.Update(key("enter"))
 	deliver(a, cmd)
 	focus := a.top().(*tableView)
-	if focus == tv || len(calls) != 4 {
+	if focus == tv || len(calls) != 5 {
 		t.Fatalf("enter did not open the focus: %d calls", len(calls))
 	}
+	if calls[3].Err() != nil {
+		t.Fatal("covering the view with a drill cancelled the analysis it waits for")
+	}
 	press(a, key("esc"))
-	if calls[3].Err() == nil {
+	if calls[4].Err() == nil {
 		t.Fatal("esc must cancel the popped view's analysis")
 	}
-	if a.top() != tv {
-		t.Fatal("esc must return to the functions table")
+	if a.top() != tv || calls[3].Err() != nil {
+		t.Fatalf("esc must return to the functions table with its analysis running (cancelled=%v)", calls[3].Err() != nil)
 	}
 }
 
