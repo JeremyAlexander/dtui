@@ -131,6 +131,17 @@ package clause, not by the module: `go.mod` is not read, so a library's
 that declares a `Total` too. Fix: read the module path of each `go.mod` in
 the index and require the import path to start with one.
 
+## Flame graph: a read that does not answer is not interrupted
+
+`internal/source` opens only a regular file and looks at the time between
+the reads of one (`internal/source/regular.go`), so a named pipe or a large
+file cannot hold `O`. One read of a regular file is still waited for: on a
+file system that stops answering (a network mount whose server is gone) the
+lookup waits as long as the system does, off the update loop, and the next
+`O` starts another. Fix: none without a second thread that could not be
+stopped either; if it is seen in use, allow one lookup at a time and say
+that one is still under way.
+
 ## Flame graph: the editor is named by the environment only
 
 `O` picks the editor from `DTUI_EDITOR`, the terminal or `VISUAL`/`EDITOR`;
