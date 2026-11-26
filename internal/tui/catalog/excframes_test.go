@@ -938,6 +938,67 @@ func TestFramesWithoutASyntaxFollowNoNotation(t *testing.T) {
 	}
 }
 
+// A database driver, a cloud SDK and the platform of a phone are on the
+// stack of unrelated bugs like a framework is. Counted as the
+// application's they would fill the frames of a key.
+func TestDriversAndSDKsAreNotTheApplication(t *testing.T) {
+	vendor := map[StackSyntax][]string{
+		StackJava: {
+			"org.postgresql.jdbc.PgStatement", "com.mysql.cj.jdbc.ClientPreparedStatement", "org.mariadb.jdbc.Statement",
+			"oracle.jdbc.driver.OraclePreparedStatement", "com.microsoft.sqlserver.jdbc.SQLServerStatement", "org.h2.jdbc.JdbcStatement",
+			"com.mongodb.client.internal.MongoCollectionImpl", "org.bson.BsonDocument", "redis.clients.jedis.Jedis",
+			"io.lettuce.core.RedisClient", "com.datastax.oss.driver.api.core.CqlSession", "org.neo4j.driver.internal.InternalSession",
+			"software.amazon.awssdk.services.s3.DefaultS3Client", "com.amazonaws.services.s3.AmazonS3Client",
+			"com.azure.storage.blob.BlobClient", "com.microsoft.azure.servicebus.QueueClient",
+			"com.google.cloud.storage.StorageImpl", "com.google.api.client.http.HttpRequest", "com.google.protobuf.GeneratedMessageV3",
+			"android.os.Handler", "androidx.fragment.app.Fragment", "dalvik.system.VMStack", "com.android.internal.os.ZygoteInit",
+			"com.google.android.gms.tasks.Task", "com.google.firebase.firestore.FirebaseFirestore", "libcore.io.Linux",
+		},
+		StackDotNet: {
+			"Npgsql.NpgsqlCommand", "MySql.Data.MySqlClient.MySqlCommand", "MySqlConnector.MySqlCommand",
+			"Oracle.ManagedDataAccess.Client.OracleCommand", "MongoDB.Driver.MongoCollectionImpl", "StackExchange.Redis.ConnectionMultiplexer",
+			"Dapper.SqlMapper", "Amazon.S3.AmazonS3Client", "Azure.Storage.Blobs.BlobClient", "Google.Cloud.Storage.V1.StorageClientImpl",
+			"Android.App.Activity", "AndroidX.Fragment.App.Fragment", "Java.Lang.Thread", "Xamarin.Forms.Application",
+		},
+		StackGo: {
+			"github.com/lib/pq", "github.com/jackc/pgx/v5", "github.com/go-sql-driver/mysql", "github.com/mattn/go-sqlite3",
+			"go.mongodb.org/mongo-driver/mongo", "github.com/redis/go-redis/v9", "github.com/go-redis/redis/v8",
+			"github.com/aws/aws-sdk-go-v2/service/s3", "github.com/Azure/azure-sdk-for-go/sdk/storage/azblob",
+			"cloud.google.com/go/storage", "github.com/googleapis/gax-go/v2",
+		},
+	}
+	for syntax, modules := range vendor {
+		for _, module := range modules {
+			if f := (StackFrame{Module: module, Function: "f", Syntax: syntax}); frameInApp(f) {
+				t.Errorf("%s counts as application code", module)
+			}
+		}
+	}
+	// A name that only starts like one of them is the application's.
+	for syntax, modules := range map[StackSyntax][]string{
+		StackJava:   {"com.mysqlshop.Cart", "androids.shop.Cart", "oracle.shop.Cart", "com.google.shop.Cart", "com.microsoft.shop.Cart"},
+		StackDotNet: {"Amazonia.Shop.Cart", "Googleplex.Cart", "Javascript.Shop.Cart", "Oracle.Shop.Cart"},
+		StackGo:     {"github.com/library/shop", "github.com/awsome/shop/cart", "cloud.google.company.example/shop"},
+	} {
+		for _, module := range modules {
+			if f := (StackFrame{Module: module, Function: "f", Syntax: syntax}); !frameInApp(f) {
+				t.Errorf("%s does not count as application code", module)
+			}
+		}
+	}
+	// The driver's frames do not push the application's out of the key.
+	fp := mustFingerprint(t, SpanException{Type: "org.postgresql.util.PSQLException", StackTrace: javaStack(
+		"org.postgresql.core.v3.QueryExecutorImpl.receiveErrorResponse", "org.postgresql.core.v3.QueryExecutorImpl.processResults",
+		"org.postgresql.core.v3.QueryExecutorImpl.execute", "org.postgresql.jdbc.PgStatement.executeInternal",
+		"org.postgresql.jdbc.PgStatement.execute", "org.postgresql.jdbc.PgPreparedStatement.executeWithFlags",
+		"com.example.shop.CartRepo.save", "com.example.shop.CartService.addItem")})
+	want := frames(StackJava, "org.postgresql.core.v3.QueryExecutorImpl", "receiveErrorResponse",
+		"com.example.shop.CartRepo", "save", "com.example.shop.CartService", "addItem")
+	if fp.Rung != RungAppFrames || !reflect.DeepEqual(fp.Frames, want) {
+		t.Errorf("rung %v frames %+v", fp.Rung, fp.Frames)
+	}
+}
+
 // Every entry of a vendor table takes its frames out of the application's,
 // the last as much as the first, and a library frame between two of the
 // application's does not count toward a key.

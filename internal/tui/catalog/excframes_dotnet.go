@@ -42,10 +42,22 @@ var (
 	dotnetDelegateRe = regexp.MustCompile(`^lambda_method\d+$`)
 )
 
-// dotnetVendorPrefixes are the runtime and framework namespaces. Matching is
-// case-sensitive: "System." is .NET, "system." is somebody's namespace.
+// dotnetVendorPrefixes are the namespaces that are never the application's:
+// the runtime and the frameworks, database drivers, the cloud SDKs, and the
+// platform bindings of Android. Matching is case-sensitive: "System." is
+// .NET, "system." is somebody's namespace.
+//
+// The table is part of the key algorithm: once a release has shipped keys
+// it only changes together with ExceptionKeyVersion (see
+// javaVendorPrefixes).
 var dotnetVendorPrefixes = []string{
 	"System.", "Microsoft.", "Newtonsoft.", "Grpc.", "OpenTelemetry.", "Dynatrace.",
+	// Database drivers.
+	"Npgsql.", "MySql.", "MySqlConnector.", "Oracle.ManagedDataAccess.", "MongoDB.", "StackExchange.Redis.", "Dapper.",
+	// Cloud SDKs.
+	"Amazon.", "Azure.", "Google.",
+	// Android, and what binds it.
+	"Android.", "AndroidX.", "Java.", "Xamarin.", "Mono.",
 }
 
 // dotnetPassThrough: middleware, by the name ASP.NET finds it by. A plain

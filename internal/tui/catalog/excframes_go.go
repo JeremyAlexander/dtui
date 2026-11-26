@@ -58,10 +58,20 @@ var goStdlib = []string{
 	"vendor", "weak",
 }
 
-// goVendorPrefixes are widely used module hosts that are never the
-// application itself.
+// goVendorPrefixes are widely used modules and module hosts that are never
+// the application itself: the Go project's own, database drivers and the
+// cloud SDKs. A trace with file lines shows a dependency without them.
+//
+// The table is part of the key algorithm: once a release has shipped keys
+// it only changes together with ExceptionKeyVersion (see
+// javaVendorPrefixes).
 var goVendorPrefixes = []string{
 	"golang.org/", "google.golang.org/", "go.opentelemetry.io/", "go.uber.org/", "gopkg.in/",
+	// Database drivers.
+	"github.com/lib/pq", "github.com/jackc/", "github.com/go-sql-driver/", "github.com/mattn/go-sqlite3",
+	"go.mongodb.org/", "github.com/redis/", "github.com/go-redis/",
+	// Cloud SDKs.
+	"github.com/aws/", "github.com/Azure/", "cloud.google.com/", "github.com/googleapis/",
 }
 
 // goPassThrough: a handler that wraps the next handler.

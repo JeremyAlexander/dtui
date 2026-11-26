@@ -34,14 +34,27 @@ var (
 	javaScalaMethodRe = regexp.MustCompile(`^\$anonfun\$(\w+)\$\d+(?:\$adapted)?$`)
 )
 
-// javaVendorPrefixes are the runtime and framework packages that are never
-// the application's.
+// javaVendorPrefixes are the packages that are never the application's:
+// the runtime and the frameworks, database drivers, the cloud SDKs, and the
+// platform and vendor libraries of Android.
+//
+// The table is part of the key algorithm. A prefix added to it moves every
+// trace with such a frame to another key, so once a release has shipped
+// keys the table only changes together with ExceptionKeyVersion.
 var javaVendorPrefixes = []string{
 	"java.", "javax.", "jakarta.", "jdk.", "sun.", "com.sun.", "kotlin.", "kotlinx.", "scala.", "groovy.",
 	"org.springframework.", "org.apache.", "org.hibernate.", "org.jboss.", "org.eclipse.jetty.", "org.slf4j.",
 	"io.netty.", "io.grpc.", "io.undertow.", "io.vertx.", "io.quarkus.", "io.micrometer.", "io.opentelemetry.",
 	"reactor.", "akka.", "okhttp3.", "ch.qos.logback.", "com.fasterxml.", "com.google.common.", "com.zaxxer.",
 	"com.dynatrace.",
+	// Database drivers.
+	"org.postgresql.", "com.mysql.", "org.mariadb.", "oracle.jdbc.", "com.microsoft.sqlserver.", "org.h2.",
+	"com.mongodb.", "org.bson.", "redis.clients.", "io.lettuce.", "com.datastax.", "org.neo4j.driver.",
+	// Cloud SDKs.
+	"software.amazon.", "com.amazonaws.", "com.azure.", "com.microsoft.azure.", "com.google.cloud.",
+	"com.google.api.", "com.google.protobuf.",
+	// Android.
+	"android.", "androidx.", "dalvik.", "libcore.", "com.android.", "com.google.android.", "com.google.firebase.",
 }
 
 // javaPassThrough: servlet filters, interceptors and the aspects around a
