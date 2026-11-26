@@ -48,3 +48,18 @@ func BenchmarkFingerprintExceptions(b *testing.B) {
 		}
 	}
 }
+
+// A chain of 8,900 causes in which each shares one frame more with the
+// exception around it: a megabyte of text, the most a trace is read of.
+func BenchmarkParseStackFramesJavaChain(b *testing.B) {
+	stack := javaChain(8900)
+	if len(stack) < stackTextMax*9/10 || len(stack) > stackTextMax {
+		b.Fatalf("the chain is %d bytes, want just under %d", len(stack), stackTextMax)
+	}
+	b.ReportAllocs()
+	for b.Loop() {
+		if len(ParseStackFrames(stack)) != 2 {
+			b.Fatal("want the root cause's frame and the one all share")
+		}
+	}
+}

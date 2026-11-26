@@ -13,8 +13,9 @@ import (
 
 var (
 	javaMoreRe = regexp.MustCompile(`^\.\.\. (\d+) (?:more|common frames omitted)`)
-	// The type a "Caused by:" line names, before its message.
-	javaCauseRe = regexp.MustCompile(`^Caused by: ([\w.$]+)`)
+	// The type a "Caused by:" line names, before its message. Words that no
+	// colon follows are prose ("Caused by: connection reset by peer").
+	javaCauseRe = regexp.MustCompile(`^Caused by: ([\p{L}\p{N}_.$]+)(?::|$)`)
 
 	// Classes generated at run time are named after the class they stand in
 	// for plus a suffix that differs in every process: CGLIB subclasses
@@ -180,19 +181,38 @@ func javaFrame(line string) (StackFrame, bool) {
 }
 
 // javaSection is one exception of a trace: its type where a "Caused by:"
-// line names it, its frames, and how many frames of the enclosing exception
-// a "... N more" line stands for.
+// line names it, the frames printed under it, and how its whole trace is
+// put together from those and the frames it shares with the exception
+// around it.
 type javaSection struct {
-	typ    string
-	frames []StackFrame
-	more   int
+	typ string
+	// The section's own frame lines are frames[start:end] of the trace, a
+	// lambda's synthetic frame included: the JVM counts those too.
+	start, end int
+	// more is the N of a "... N more" line, -1 without one.
+	more int
+	// enclosing is the section the shared frames are taken from, shared how
+	// many of its last frames those are, and total the length of this
+	// section's whole trace: its own frames and the shared ones.
+	enclosing, shared, total int
+	// realFromEnd is how far the last frame that is not synthetic lies from
+	// the end of the whole trace (1 for the last frame), 0 where there is
+	// none.
+	realFromEnd int
 }
 
 // javaRootCause returns the type and the frames of the last "Caused by:"
 // section that has any, completed from the enclosing one where it ends in
-// "... N more"; a
-// last cause printed without frames (cut off, or thrown without a stack)
-// leaves the one before it as the root.
+// "... N more"; a last cause printed without frames (cut off, or thrown
+// without a stack) leaves the one before it as the root, and a cause
+// without frames between two others is not what the next one shares its
+// frames with.
+//
+// "... N more" stands for the last N frames of the enclosing exception as
+// the JVM printed them, so the frames of a lambda's synthetic class count
+// there and are dropped only from the result. The scan keeps lengths, and
+// the frames of the one section that is the root are put together at the
+// end: a chain is read in time and space proportional to its length.
 //
 // A "Suppressed:" block is left out with everything in it, including its own
 // "Caused by:" sections. The block reaches as far as the lines are indented
@@ -200,8 +220,35 @@ type javaSection struct {
 // causes one step further than the exception they belong to. A trace whose
 // indentation was stripped therefore ends at its first suppressed block.
 func javaRootCause(lines []string) (root []StackFrame, typ string) {
-	sections := make([]javaSection, 1)
+	var frames []StackFrame
+	sections := []javaSection{{more: -1, enclosing: -1}}
+	enclosing := -1  // the last section with frames or a "more" line
 	suppressed := -1 // indentation of the suppressed block being skipped
+	// closeSection settles the lengths of the last section once its lines
+	// are read.
+	closeSection := func() {
+		at := len(sections) - 1
+		sec := &sections[at]
+		sec.end = len(frames)
+		sec.enclosing = enclosing
+		if sec.more > 0 && enclosing >= 0 {
+			sec.shared = min(sec.more, sections[enclosing].total)
+		}
+		sec.total = sec.end - sec.start + sec.shared
+		if sec.shared > 0 && sections[enclosing].realFromEnd > 0 && sections[enclosing].realFromEnd <= sec.shared {
+			sec.realFromEnd = sections[enclosing].realFromEnd
+		} else {
+			for i := sec.end - 1; i >= sec.start; i-- {
+				if frames[i].Module != javaSyntheticClass {
+					sec.realFromEnd = sec.end - i + sec.shared
+					break
+				}
+			}
+		}
+		if sec.end > sec.start || sec.more >= 0 {
+			enclosing = at
+		}
+	}
 	for _, raw := range lines {
 		line := strings.TrimSpace(raw)
 		indent := len(raw) - len(strings.TrimLeft(raw, " \t"))
@@ -211,12 +258,12 @@ func javaRootCause(lines []string) (root []StackFrame, typ string) {
 			}
 			suppressed = -1
 		}
-		cur := &sections[len(sections)-1]
 		switch {
 		case strings.HasPrefix(line, "Suppressed:"):
 			suppressed = indent
 		case strings.HasPrefix(line, "Caused by:"):
-			cause := javaSection{}
+			closeSection()
+			cause := javaSection{more: -1, start: len(frames)}
 			if m := javaCauseRe.FindStringSubmatch(line); m != nil {
 				cause.typ = m[1]
 			}
@@ -224,20 +271,36 @@ func javaRootCause(lines []string) (root []StackFrame, typ string) {
 		default:
 			if strings.HasPrefix(line, "...") {
 				if m := javaMoreRe.FindStringSubmatch(line); m != nil {
-					cur.more, _ = strconv.Atoi(m[1])
+					sections[len(sections)-1].more, _ = strconv.Atoi(m[1])
 				}
-			} else if f, ok := javaFrame(line); ok && f.Module != javaSyntheticClass {
-				cur.frames = append(cur.frames, f)
+			} else if f, ok := javaFrame(line); ok {
+				frames = append(frames, f)
 			}
 		}
 	}
-	var full []StackFrame
-	for _, sec := range sections {
-		// "... N more": the last N frames of the enclosing exception.
-		shared := min(sec.more, len(full))
-		full = append(sec.frames[:len(sec.frames):len(sec.frames)], full[len(full)-shared:]...)
-		if len(full) > 0 {
-			root, typ = full, sec.typ
+	closeSection()
+
+	at := len(sections) - 1
+	for at >= 0 && sections[at].realFromEnd == 0 {
+		at--
+	}
+	if at < 0 {
+		return nil, ""
+	}
+	typ = sections[at].typ
+	root = make([]StackFrame, 0, sections[at].total)
+	// The whole trace of a section is its own frames and then the last
+	// "shared" frames of the enclosing one, which are put together the same
+	// way: take what is needed of each section's own frames, outwards.
+	for need := sections[at].total; need > 0; at = sections[at].enclosing {
+		sec := &sections[at]
+		if own := need - sec.shared; own > 0 {
+			for _, f := range frames[sec.end-own : sec.end] {
+				if f.Module != javaSyntheticClass {
+					root = append(root, f)
+				}
+			}
+			need = sec.shared
 		}
 	}
 	return root, typ

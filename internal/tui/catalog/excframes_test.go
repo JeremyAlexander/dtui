@@ -1,7 +1,9 @@
 package catalog
 
 import (
+	"fmt"
 	"reflect"
+	"runtime"
 	"sort"
 	"strings"
 	"testing"
@@ -1069,6 +1071,131 @@ func TestJavaFrameName(t *testing.T) {
 		if name, ok := javaFrameName(tc.line); name != tc.name || ok != tc.ok {
 			t.Errorf("javaFrameName(%q) = %q, %v, want %q, %v", tc.line, name, ok, tc.name, tc.ok)
 		}
+	}
+}
+
+// "... N more" counts the frames a cause shares with the exception around
+// it as the JVM printed them, a lambda's synthetic frame included. A trace
+// must read the same compressed and written out.
+func TestJavaMoreCountsEveryPrintedFrame(t *testing.T) {
+	const head = `com.example.shop.CheckoutException: checkout failed
+	at com.example.shop.Checkout.wrap(Checkout.java:30)
+	at com.example.shop.Checkout$$Lambda$14/0x0000000800c03000.run(Unknown Source)
+	at com.example.shop.Main.run(Main.java:5)
+Caused by: java.lang.IllegalStateException: Cart 7 is locked
+	at com.example.shop.Cart.fail(Cart.java:12)
+`
+	want := frames(StackJava, "com.example.shop.Cart", "fail", "com.example.shop.Main", "run")
+	for name, tail := range map[string]string{
+		"compressed":  "\t... 2 more\n",
+		"written out": "\tat com.example.shop.Checkout$$Lambda$14/0x0000000800c03000.run(Unknown Source)\n\tat com.example.shop.Main.run(Main.java:5)\n",
+	} {
+		got, typ := parseStack(head + tail)
+		if !reflect.DeepEqual(got, want) || typ != "java.lang.IllegalStateException" {
+			t.Errorf("%s: frames %+v type %q, want %+v", name, got, typ, want)
+		}
+	}
+	a := mustFingerprint(t, SpanException{Type: "T", StackTrace: head + "\t... 2 more\n"})
+	b := mustFingerprint(t, SpanException{Type: "T", StackTrace: head + "\t... 3 more\n"})
+	if a.Key == b.Key {
+		t.Error("the number of shared frames must matter")
+	}
+}
+
+func TestJavaChainBoundaries(t *testing.T) {
+	cases := []struct {
+		name, stack string
+		want        []StackFrame
+		typ         string
+	}{
+		// A cause printed without its frames stands between two that have
+		// them: what the last one shares, it shares with the first.
+		{"a cause without frames in the middle", `shop.A: outer
+	at shop.A.a(A.java:1)
+	at shop.B.b(B.java:2)
+Caused by: shop.Mid: middle
+Caused by: shop.Root: root
+	at shop.C.c(C.java:3)
+	... 1 more`, frames(StackJava, "shop.C", "c", "shop.B", "b"), "shop.Root"},
+		{"shared frames through two causes", `shop.A: outer
+	at shop.A.a(A.java:1)
+	at shop.B.b(B.java:2)
+	at shop.Main.main(Main.java:9)
+Caused by: shop.Mid: middle
+	at shop.M.m(M.java:4)
+	... 2 more
+Caused by: shop.Root: root
+	at shop.C.c(C.java:3)
+	... 2 more`, frames(StackJava, "shop.C", "c", "shop.B", "b", "shop.Main", "main"), "shop.Root"},
+		{"more shared frames than the cause around it has", `shop.A: outer
+	at shop.A.a(A.java:1)
+Caused by: shop.Root: root
+	at shop.C.c(C.java:3)
+	... 7 more`, frames(StackJava, "shop.C", "c", "shop.A", "a"), "shop.Root"},
+		{"a cause of shared frames only", `shop.A: outer
+	at shop.A.a(A.java:1)
+	at shop.B.b(B.java:2)
+Caused by: shop.Root: root
+	... 1 more`, frames(StackJava, "shop.B", "b"), "shop.Root"},
+		{"a last cause of synthetic frames only is not the root", `shop.A: outer
+	at shop.A.a(A.java:1)
+Caused by: shop.Root: root
+	at shop.A$$Lambda$3/0x0000000800c03000.run(Unknown Source)`, frames(StackJava, "shop.A", "a"), ""},
+		{"synthetic frames between real ones go last", `shop.A: outer
+	at shop.A.a(A.java:1)
+	at shop.A$$Lambda$3/0x0000000800c03000.run(Unknown Source)
+	at shop.B.b(B.java:2)
+Caused by: shop.Root: root
+	at shop.C.c(C.java:3)
+	at shop.C$$Lambda$5/0x0000000800c04000.call(Unknown Source)
+	... 3 more`, frames(StackJava, "shop.C", "c", "shop.A", "a", "shop.B", "b"), "shop.Root"},
+		// The words after "Caused by:" are a type only where a colon or the
+		// line's end follows them.
+		{"prose after Caused by is no type", `shop.A: outer
+	at shop.A.a(A.java:1)
+Caused by: connection reset by peer
+	at shop.C.c(C.java:3)`, frames(StackJava, "shop.C", "c"), ""},
+		{"a type beyond ASCII", `shop.A: outer
+	at shop.A.a(A.java:1)
+Caused by: shop.Größenfehler: zu groß
+	at shop.C.c(C.java:3)`, frames(StackJava, "shop.C", "c"), "shop.Größenfehler"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, typ := parseStack(tc.stack)
+			if !reflect.DeepEqual(got, tc.want) || typ != tc.typ {
+				t.Errorf("frames %+v type %q\nwant %+v %q", got, typ, tc.want, tc.typ)
+			}
+		})
+	}
+}
+
+// javaChain is a trace of n causes, each sharing one frame more with the
+// exception around it than the one before.
+func javaChain(n int) string {
+	var b strings.Builder
+	b.WriteString("com.example.shop.CheckoutException: checkout failed\n\tat com.example.shop.Main.main(Main.java:5)\n")
+	for i := range n {
+		fmt.Fprintf(&b, "Caused by: com.example.shop.StepException: step failed\n\tat com.example.shop.Step.run(Step.java:%d)\n\t... %d more\n", i, i+1)
+	}
+	return b.String()
+}
+
+// Reading a chain costs in proportion to its length: twice the causes must
+// not take four times the memory.
+func TestJavaChainIsReadInLinearSpace(t *testing.T) {
+	allocated := func(stack string) uint64 {
+		var before, after runtime.MemStats
+		runtime.ReadMemStats(&before)
+		if got := ParseStackFrames(stack); len(got) != 2 {
+			t.Fatalf("%d frames, want the root cause's and the one all share", len(got))
+		}
+		runtime.ReadMemStats(&after)
+		return after.TotalAlloc - before.TotalAlloc
+	}
+	short, long := javaChain(2000), javaChain(4000)
+	if a, b := allocated(short), allocated(long); b > 3*a {
+		t.Errorf("%d bytes for 2000 causes, %d for 4000: more than three times as much", a, b)
 	}
 }
 

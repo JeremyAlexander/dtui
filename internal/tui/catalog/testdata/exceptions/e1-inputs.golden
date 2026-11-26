@@ -45,7 +45,7 @@ aa2cb485bca0e74c	var goPassThrough
 5774bb3ab9f57b0b	var goStdlib
 8120a9c837a40cbd	var goTypeArgsRe
 dcd6ba1d98a9ed59	var goVendorPrefixes
-e847fa75868f49c1	var javaCauseRe
+fa9f8e94319c2c59	var javaCauseRe
 3f6b4fda29d96b97	var javaGeneratedRe
 d818a662e2123c43	var javaLambdaRe
 467967a606d47822	var javaLogArchives
