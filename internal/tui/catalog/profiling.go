@@ -414,7 +414,8 @@ func FocusTarget(s Scope, rec map[string]any) (fn, why string) {
 
 // survivedCaveat says what the survived figures of an allocations analysis
 // are, where a reader would otherwise take them for retained memory.
-const survivedCaveat = "* SURVIVED adds an object's bytes once per GC it lived through: not a size, can exceed ALLOC, not live heap"
+// It fits the 80 column minimum: a footnote is one line and is cut beyond.
+const survivedCaveat = "* SURVIVED counts bytes once per GC outlived: can exceed ALLOC, not live heap"
 
 var allocationColumns = []Column{
 	// "1023.9 MiB" is the widest a byte count gets.

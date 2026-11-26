@@ -45,6 +45,6 @@
   721.0 MiB  ▏          749.8 MiB       1.04×    7,875,242  com.example.shop.report.ReportMapper.toDto ← ReportService.load ← ReportController.get
   709.0 MiB  ▏          723.2 MiB       1.02×    7,744,170  com.fasterxml.jackson.core.util.TextBuffer.contentsAsString ← UTF8JsonGenerator.writeString ← BeanS…
   706.0 MiB  ▏          755.4 MiB       1.07×    7,711,402  com.example.shop.coupon.CouponMapper.toDto ← CouponService.load ← CouponController.get
- * SURVIVED adds an object's bytes once per GC it lived through: not a size, can exceed ALLOC, not live heap
+ * SURVIVED counts bytes once per GC outlived: can exceed ALLOC, not live heap
  tab lens  enter inspect  / filter  J/K sort  : views  t timeframe  S segments  r refresh  ? help  q quit
  ✓ lens: allocations — allocated bytes per allocation site and call path

@@ -873,3 +873,37 @@ func TestHostileFunctionNameStaysInItsCell(t *testing.T) {
 		t.Errorf("the copied command lost the name as it is: %q", echo)
 	}
 }
+
+// At the 80 column minimum the lines under and over the rows still say all
+// of what they say at a wider size.
+func TestProfilingChromeFitsEightyColumns(t *testing.T) {
+	pinSnapshotClock(t)
+	a := renderProfiling(t, "allocations")
+	a.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	if out := screen(a); !strings.Contains(out, "can exceed ALLOC, not live heap") {
+		t.Errorf("the SURVIVED footnote is cut:\n%s", out)
+	}
+
+	// A focused function with more callers and callees than are shown, in
+	// a window cut to its last 2h: the longest caption there is.
+	a = renderProfiling(t, "hotspots-focus")
+	focus := a.top().(*tableView)
+	focus.scope.Timeframe = catalog.Timeframe{Label: "24h", Dur: 24 * time.Hour}
+	focus.summary[catalog.ProfSumClamped] = true
+	focus.summary[catalog.ProfSumSamples] = 1234567.0
+	focus.summary[catalog.ProfSumCallers] = 10085.0
+	focus.summary[catalog.ProfSumCallees] = 20040.0
+	a.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	out := screen(a)
+	for _, want := range []string{
+		"last 2h of the selected 24h (10:00–12:00 UTC)",
+		"1,234,567 running samples with the function on the stack",
+		"top 25 of 10,085 callers",
+		"top 25 of 20,040 callees",
+		"all threads, leaf: total",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the focus caption lost %q:\n%s", want, out)
+		}
+	}
+}
