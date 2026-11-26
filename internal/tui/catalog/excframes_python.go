@@ -12,18 +12,19 @@ import (
 
 var (
 	pythonFrameRe = regexp.MustCompile(`^File "([^"]+)", line \d+(?:, in (.+))?$`)
-	pythonVerRe   = regexp.MustCompile(`python\d+(?:\.\d+)*`)
+	// The standard library's directory, as Unix and Windows installs name it.
+	pythonStdlibRe = regexp.MustCompile(`^.*?(?:^|/)(?:lib(?:64)?/python\d+(?:\.\d+)*|[Pp]ython\d+/[Ll]ib)/`)
 	// The rule above a sub-exception of a group, numbered, and the
 	// unnumbered one that closes the group.
 	pythonGroupRuleRe = regexp.MustCompile(`^\+[-+]{3,}(?: (\d+) -+)?$`)
 )
 
-// pythonPackageDirs are where installed packages live; pythonRuntimeDirs
-// hold the standard library once the interpreter version is dropped.
-var (
-	pythonPackageDirs = []string{"site-packages/", "dist-packages/"}
-	pythonRuntimeDirs = []string{"lib/python/", "lib64/python/"}
-)
+// pythonPackageDirs are where installed packages live, and what their
+// modules start with; pythonStdlibDir is what the standard library's start
+// with.
+var pythonPackageDirs = []string{"site-packages/", "dist-packages/"}
+
+const pythonStdlibDir = "lib/python/"
 
 const (
 	pythonTraceback = "Traceback (most recent call last)"
@@ -39,15 +40,25 @@ func pythonFrame(line string) (StackFrame, bool) {
 	return StackFrame{Module: pythonModule(m[1]), Function: firstNonEmpty(m[2], "<module>"), Syntax: StackPython}, true
 }
 
-// pythonModule addresses an installed package from its site-packages
-// directory and drops the interpreter version from a standard-library path.
+// pythonModule reduces a file to the module it names: an installed package
+// is addressed from its site-packages directory, the standard library from
+// "lib/python/" whatever the interpreter's version and prefix, a name that
+// is no file ("<frozen importlib._bootstrap>") is kept, and anything else is
+// the application's and goes through sourceModule.
 func pythonModule(path string) string {
+	path = strings.ReplaceAll(path, `\`, "/")
 	for _, dir := range pythonPackageDirs {
 		if i := strings.LastIndex(path, dir); i >= 0 {
 			return path[i:]
 		}
 	}
-	return pythonVerRe.ReplaceAllString(path, "python")
+	if loc := pythonStdlibRe.FindStringIndex(path); loc != nil {
+		return pythonStdlibDir + path[loc[1]:]
+	}
+	if strings.HasPrefix(path, "<") {
+		return path
+	}
+	return sourceModule(path)
 }
 
 // pythonRootCause returns the frames of the first traceback, which is the
@@ -78,14 +89,6 @@ func pythonRootCause(lines []string) []StackFrame {
 }
 
 func pythonInApp(f StackFrame) bool {
-	m := f.Module
-	if strings.HasPrefix(m, "<") || hasAnyPrefix(m, pythonPackageDirs) {
-		return false
-	}
-	for _, dir := range pythonRuntimeDirs {
-		if strings.Contains(m, dir) {
-			return false
-		}
-	}
-	return true
+	return !strings.HasPrefix(f.Module, "<") && !strings.HasPrefix(f.Module, pythonStdlibDir) &&
+		!hasAnyPrefix(f.Module, pythonPackageDirs)
 }

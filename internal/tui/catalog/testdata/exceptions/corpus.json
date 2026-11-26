@@ -156,6 +156,18 @@
     ]
   },
   {
+    "name": "node: deployed under another root",
+    "group": "node-cart-add",
+    "rung": "app frames",
+    "events": [
+      {
+        "type": "TypeError",
+        "message": "Cannot read properties of undefined (reading 'sku')",
+        "stack": "node-sku-lambda.txt"
+      }
+    ]
+  },
+  {
     "name": "dotnet: baseline",
     "group": "dotnet-cart-add",
     "rung": "app frames",
@@ -200,6 +212,30 @@
         "type": "ValueError",
         "message": "cart 1190 is locked",
         "stack": "python-locked-b.txt"
+      }
+    ]
+  },
+  {
+    "name": "python: deployed into a release directory",
+    "group": "python-cart-add",
+    "rung": "app frames",
+    "events": [
+      {
+        "type": "ValueError",
+        "message": "cart 7 is locked",
+        "stack": "python-locked-release.txt"
+      }
+    ]
+  },
+  {
+    "name": "python: same function name in another file",
+    "group": "python-checkout-add",
+    "rung": "app frames",
+    "events": [
+      {
+        "type": "ValueError",
+        "message": "cart 7 is locked",
+        "stack": "python-locked-checkout.txt"
       }
     ]
   },

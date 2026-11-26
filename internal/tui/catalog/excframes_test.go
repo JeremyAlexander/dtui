@@ -369,13 +369,13 @@ func TestParseStackFramesNode(t *testing.T) {
     at Array.map (<anonymous>)
     at <anonymous>`,
 			frames(StackJS,
-				"/app/src/cart/service.js", "CartService.addItem",
-				"/app/src/cart/controller.js", "CartController.post",
-				"/app/src/cart/cart.mjs", "new Cart",
-				"/app/src/index.js", "<anonymous>",
-				"/app/src/cart/service.js", "CartService.add",
+				"src/cart/service.js", "CartService.addItem",
+				"src/cart/controller.js", "CartController.post",
+				"src/cart/cart.mjs", "new Cart",
+				"src/index.js", "<anonymous>",
+				"src/cart/service.js", "CartService.add",
 				"node_modules/express/lib/router/layer.js", "Layer.handle",
-				"/app/src/cart/routes.js", "<anonymous>",
+				"src/cart/routes.js", "<anonymous>",
 				"index", "Promise.all",
 				"node:internal/process/task_queues", "process.processTicksAndRejections",
 				"<anonymous>", "Array.map",
@@ -383,7 +383,14 @@ func TestParseStackFramesNode(t *testing.T) {
 		{"nested dependencies address the innermost", "    at parse (/app/node_modules/a/node_modules/b/index.js:1:2)",
 			frames(StackJS, "node_modules/b/index.js", "parse")},
 		{"an unclosed location is kept", "    at parse (/app/src/parse.js:1:2",
-			frames(StackJS, "/app/src/parse.js", "parse")},
+			frames(StackJS, "src/parse.js", "parse")},
+		{"node's own code before the node: scheme", `    at emitOne (events.js:116:13)
+    at process._tickCallback (internal/process/next_tick.js:68:7)
+    at Socket.emit (node:events:517:28)`,
+			frames(StackJS,
+				"node:events", "emitOne",
+				"node:internal/process/next_tick", "process._tickCallback",
+				"node:events", "Socket.emit")},
 		{"prose after at is not a frame", "at least 3 items (max 5)\nat startup\nat parse ()\nat sign (@) expected\n" +
 			"at checkout (final step)\nat Checkout (see above)\nat 10:11:12 the cart (id 7) was locked\nat 10:11:12", nil},
 		{"function@location, as Firefox and Safari write it", `addItem@https://shop.example.invalid/static/js/cart.js:42:17
@@ -391,10 +398,10 @@ async*post@https://shop.example.invalid/static/js/api.js:17:5
 @https://shop.example.invalid/static/js/main.js:5:1
 CartService.prototype.total@https://shop.example.invalid/static/js/cart.js:60:9`,
 			frames(StackJS,
-				"https://shop.example.invalid/static/js/cart.js", "addItem",
-				"https://shop.example.invalid/static/js/api.js", "post",
-				"https://shop.example.invalid/static/js/main.js", "<anonymous>",
-				"https://shop.example.invalid/static/js/cart.js", "CartService.prototype.total")},
+				"/static/js/cart.js", "addItem",
+				"/static/js/api.js", "post",
+				"/static/js/main.js", "<anonymous>",
+				"/static/js/cart.js", "CartService.prototype.total")},
 		{"a mail address is not a frame", "bob@shop.example.invalid\nask bob@shop.example.invalid:25:1", nil},
 		{"at without a frame", "    at \n    at async \n    at some words here", nil},
 	}
@@ -420,10 +427,10 @@ func TestParseStackFramesPython(t *testing.T) {
     raise JSONDecodeError("Expecting value", s, err.value) from None
 ValueError: cart 7 is locked`,
 			frames(StackPython,
-				"/usr/lib/python/json/decoder.py", "raw_decode",
+				"lib/python/json/decoder.py", "raw_decode",
 				"site-packages/sqlalchemy/orm/session.py", "commit",
-				"/app/shop/cart.py", "add_item",
-				"/app/shop/api.py", "post")},
+				"shop/cart.py", "add_item",
+				"shop/api.py", "post")},
 		{"module-level code and a frame without source", `Traceback (most recent call last):
   File "/app/shop/main.py", line 3
   File "<frozen importlib._bootstrap>", line 241, in _call_with_frames_removed
@@ -431,7 +438,7 @@ ValueError: cart 7 is locked`,
 			frames(StackPython,
 				"dist-packages/yaml/loader.py", "load",
 				"<frozen importlib._bootstrap>", "_call_with_frames_removed",
-				"/app/shop/main.py", "<module>")},
+				"shop/main.py", "<module>")},
 		{"a relative package directory keeps its path", `  File "site-packages/python3/yaml/loader.py", line 9, in load`,
 			frames(StackPython, "site-packages/python3/yaml/loader.py", "load")},
 		{"the first traceback is the root", `Traceback (most recent call last):
@@ -445,7 +452,7 @@ Traceback (most recent call last):
   File "/app/shop/api.py", line 17, in post
     cart.add_item(sku)
 RuntimeError: failed`,
-			frames(StackPython, "/app/shop/cart.py", "add_item")},
+			frames(StackPython, "shop/cart.py", "add_item")},
 		{"an exception group yields its first sub-exception", `  + Exception Group Traceback (most recent call last):
   |   File "/app/shop/api.py", line 17, in post
   |     async with asyncio.TaskGroup() as tg:
@@ -465,17 +472,17 @@ RuntimeError: failed`,
     |     raise KeyError(sku)
     | KeyError: 'kettle'
     +------------------------------------`,
-			frames(StackPython, "/app/shop/cart.py", "add_item", "/app/shop/tasks.py", "run")},
+			frames(StackPython, "shop/cart.py", "add_item", "shop/tasks.py", "run")},
 		{"a group without sub-exceptions keeps its own frames", `  + Exception Group Traceback (most recent call last):
   |   File "/app/shop/api.py", line 17, in post
   |     raise ExceptionGroup("none", [])
   +------------------------------------`,
-			frames(StackPython, "/app/shop/api.py", "post")},
+			frames(StackPython, "shop/api.py", "post")},
 		{"a line in another notation is not a frame", `  File "/app/shop/cart.py", line 42, in add_item
     session.commit()
 main.run()
     at com.acme.shop.CartService.addItem(CartService.java:42)`,
-			frames(StackPython, "/app/shop/cart.py", "add_item")},
+			frames(StackPython, "shop/cart.py", "add_item")},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) { assertFrames(t, tc.stack, tc.want) })
@@ -511,6 +518,78 @@ func TestStackNotationsMatchTheirSyntax(t *testing.T) {
 	}
 }
 
+// A frame's module is the same wherever the code is deployed: each group
+// lists one file as different hosts, releases and operating systems name it.
+func TestSourceModulesAreDeployIndependent(t *testing.T) {
+	py := func(path string) string { return `File "` + path + `", line 42, in add_item` }
+	js := func(loc string) string { return "at addItem (" + loc + ":42:17)" }
+	merge := map[string][]string{
+		"shop/cart.py": {
+			py("/app/shop/cart.py"), py("/srv/releases/20261126101112/shop/cart.py"), py("/var/task/shop/cart.py"),
+			py("/home/deploy/shop/cart.py"), py(`C:\app\shop\cart.py`), py("/usr/src/app/shop/cart.py"),
+			py("/srv/www/checkout/current/shop/cart.py"), py("/opt/shop/cart.py"), py("./shop/cart.py"),
+			py("/data/builds/3f2b8c1e9d/shop/cart.py"), py("/opt/apps/v2.14.0-rc.1/shop/cart.py"),
+		},
+		"lib/python/json/decoder.py": {
+			py("/usr/lib/python3.11/json/decoder.py"), py("/usr/local/lib/python3.12/json/decoder.py"),
+			py("/opt/conda/lib64/python3.9/json/decoder.py"), py(`C:\Python311\Lib\json\decoder.py`),
+		},
+		"site-packages/sqlalchemy/orm/session.py": {
+			py("/usr/lib/python3.11/site-packages/sqlalchemy/orm/session.py"),
+			py("/app/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py"),
+			py(`C:\app\venv\Lib\site-packages\sqlalchemy\orm\session.py`),
+		},
+		"src/cart/service.js": {
+			js("/app/src/cart/service.js"), js("/var/task/src/cart/service.js"), js("file:///usr/src/app/src/cart/service.js"),
+			js("/srv/www/shop/releases/a1b2c3d4e5/src/cart/service.js"), js(`C:\app\src\cart\service.js`),
+			js("/workspace/src/cart/service.js"), js("/home/site/wwwroot/src/cart/service.js"),
+		},
+		"node_modules/express/lib/router/layer.js": {
+			js("/app/node_modules/express/lib/router/layer.js"), js("/var/task/node_modules/express/lib/router/layer.js"),
+			js(`C:\app\node_modules\express\lib\router\layer.js`),
+			js("/app/node_modules/.pnpm/express@4.19.2/node_modules/express/lib/router/layer.js"),
+		},
+		"/static/js/main.js": {
+			js("https://shop.example.invalid/static/js/main.8f3a2b1c.js"),
+			js("https://staging.shop.example.invalid:8443/static/js/main-0a1b2c3d4e5f.js?v=7"),
+			js("http://localhost:3000/static/js/main.js"),
+		},
+		"/data/apps/shop/cart.py": {py("/data/apps/shop/cart.py")}, // an unknown root stays
+		"index.js":                {js("/app/index.js"), js("/var/task/index.js")},
+	}
+	for want, lines := range merge {
+		for _, line := range lines {
+			got := ParseStackFrames(line)
+			if len(got) != 1 || got[0].Module != want {
+				t.Errorf("%s: module %+v, want %q", line, got, want)
+			}
+		}
+	}
+	split := [][2]string{
+		{py("/app/shop/cart.py"), py("/app/shop/checkout.py")},
+		{py("/app/shop/cart.py"), py("/app/billing/cart.py")},
+		{py("/app/shop/json/decoder.py"), py("/usr/lib/python3.11/json/decoder.py")},
+		{py("/app/shop/session.py"), py("/app/.venv/lib/python3.12/site-packages/shop/session.py")},
+		{js("/app/src/cart/service.js"), js("/app/src/order/service.js")},
+		{js("/app/src/cart/service.js"), js("/app/node_modules/cart/service.js")},
+		{js("/app/events.js"), js("events.js")},
+		{js("https://shop.example.invalid/static/js/main.8f3a2b1c.js"), js("https://shop.example.invalid/static/js/vendor.8f3a2b1c.js")},
+	}
+	for _, pair := range split {
+		a, b := ParseStackFrames(pair[0]), ParseStackFrames(pair[1])
+		if len(a) != 1 || len(b) != 1 || a[0].Module == b[0].Module {
+			t.Errorf("%s and %s must differ: %+v, %+v", pair[0], pair[1], a, b)
+		}
+	}
+	for i, root := range deployRoots {
+		for _, earlier := range deployRoots[:i] {
+			if strings.HasPrefix(root, earlier) {
+				t.Errorf("deploy root %s is never reached: %s before it matches first", root, earlier)
+			}
+		}
+	}
+}
+
 func TestParseStackFramesLineBreaks(t *testing.T) {
 	want := frames(StackJava, "com.example.shop.Api", "post", "com.example.shop.Server", "handle")
 	for name, stack := range map[string]string{
@@ -518,12 +597,17 @@ func TestParseStackFramesLineBreaks(t *testing.T) {
 		"carriage returns": "\tat com.example.shop.Api.post(Api.java:12)\r\tat com.example.shop.Server.handle(Server.java:80)\r",
 		"both":             "\tat com.example.shop.Api.post(Api.java:12)\r\n\tat com.example.shop.Server.handle(Server.java:80)\r\n",
 		"escaped":          `java.lang.IllegalStateException: locked\n\tat com.example.shop.Api.post(Api.java:12)\n\tat com.example.shop.Server.handle(Server.java:80)`,
+		"escaped, spaces":  `java.lang.IllegalStateException: locked\n    at com.example.shop.Api.post(Api.java:12)\n    at com.example.shop.Server.handle(Server.java:80)`,
 		"escaped pair":     `java.lang.IllegalStateException: locked\r\n\tat com.example.shop.Api.post(Api.java:12)\r\n\tat com.example.shop.Server.handle(Server.java:80)`,
 	} {
 		t.Run(name, func(t *testing.T) { assertFrames(t, stack, want) })
 	}
-	// Where the text has real line breaks, a backslash and an n are text:
-	// here part of a Windows path.
+	assertFrames(t, `goroutine 1 [running]:\nmain.run(0x1)\n\t/src/shop/main.go:12 +0x25\nmain.main()\n\t/src/shop/main.go:5 +0x1d`,
+		frames(StackGo, "main", "run", "main", "main"))
+	// A backslash and an n are text where nothing shows they are a break,
+	// and wherever the text has real line breaks: here part of a path.
+	assertFrames(t, `at addItem (C:\app\node_modules\cart\index.js:42:17)`,
+		frames(StackJS, "node_modules/cart/index.js", "addItem"))
 	assertFrames(t, "   at Example.Shop.Cart.Add(String sku) in C:\\src\\new\\Cart.cs:line 4\n   at Example.Shop.Api.Post()",
 		frames(StackDotNet, "Example.Shop.Cart", "Add", "Example.Shop.Api", "Post"))
 }
@@ -569,21 +653,23 @@ func TestDefaultFrameClassifier(t *testing.T) {
 		{StackFrame{Module: "google.golang.org/grpc", Syntax: StackGo}, false},
 		{StackFrame{Module: "", Function: "panic", Syntax: StackGo}, false},
 
-		{StackFrame{Module: "/app/src/cart/service.js", Syntax: StackJS}, true},
-		{StackFrame{Module: `C:\app\src\cart.js`, Syntax: StackJS}, true},
+		{StackFrame{Module: "src/cart/service.js", Syntax: StackJS}, true},
+		{StackFrame{Module: "index.js", Syntax: StackJS}, true},
+		{StackFrame{Module: "/static/js/cart.js", Syntax: StackJS}, true},
+		{StackFrame{Module: "lib/node_modules.js", Syntax: StackJS}, true},
 		{StackFrame{Module: "node_modules/express/lib/router/layer.js", Syntax: StackJS}, false},
 		{StackFrame{Module: "node:internal/process/task_queues", Syntax: StackJS}, false},
-		{StackFrame{Module: "internal/process/next_tick.js", Syntax: StackJS}, false},
-		{StackFrame{Module: "events.js", Syntax: StackJS}, false},
+		{StackFrame{Module: "node:events", Syntax: StackJS}, false},
 		{StackFrame{Module: "<anonymous>", Syntax: StackJS}, false},
+		{StackFrame{Module: "native", Syntax: StackJS}, false},
+		{StackFrame{Module: "index", Syntax: StackJS}, false},
 
-		{StackFrame{Module: "/app/shop/cart.py", Syntax: StackPython}, true},
+		{StackFrame{Module: "shop/cart.py", Syntax: StackPython}, true},
 		{StackFrame{Module: "cart.py", Syntax: StackPython}, true},
-		{StackFrame{Module: "/app/lib/python_tools/cart.py", Syntax: StackPython}, true},
+		{StackFrame{Module: "shop/lib/python/cart.py", Syntax: StackPython}, true},
 		{StackFrame{Module: "site-packages/sqlalchemy/orm/session.py", Syntax: StackPython}, false},
 		{StackFrame{Module: "dist-packages/yaml/loader.py", Syntax: StackPython}, false},
-		{StackFrame{Module: "/usr/lib/python/json/decoder.py", Syntax: StackPython}, false},
-		{StackFrame{Module: "/usr/lib64/python/json/decoder.py", Syntax: StackPython}, false},
+		{StackFrame{Module: "lib/python/json/decoder.py", Syntax: StackPython}, false},
 		{StackFrame{Module: "<frozen importlib._bootstrap>", Syntax: StackPython}, false},
 	}
 	for _, tc := range cases {

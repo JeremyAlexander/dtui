@@ -26,12 +26,21 @@ var (
 	jsAliasRe = regexp.MustCompile(` \[as [^\]]*\]$`)
 	jsIndexRe = regexp.MustCompile(`^index \d+$`)
 	jsLinesRe = regexp.MustCompile(`(?::\d+)+`)
+	// The application's files are named by an absolute path or a URL.
+	jsAbsoluteRe = regexp.MustCompile(`^(?:/|[A-Za-z]:/|[A-Za-z][A-Za-z0-9+.-]+://)`)
+	// The content hash a bundler puts into a file name ("main.8f3a2b1c.js").
+	jsContentHashRe = regexp.MustCompile(`^(.*[^/.-])[.-][0-9a-f]{8,}((?:\.\w+)+)$`)
 )
 
-// jsRuntimePrefixes are the module prefixes of Node's own code.
-var jsRuntimePrefixes = []string{"node:", "internal/"}
+const (
+	// jsRuntimeScheme names Node's own modules ("node:events").
+	jsRuntimeScheme = "node:"
+	// jsDependencyDir is where installed packages live.
+	jsDependencyDir = "node_modules/"
+)
 
-const jsDependencyDir = "node_modules/"
+// jsNoFile are the locations of code that has no file.
+var jsNoFile = []string{FrameAnonymous, "native", "index"}
 
 func jsFrame(line string) (StackFrame, bool) {
 	function, loc := "", ""
@@ -58,15 +67,33 @@ func jsFunction(name string) string {
 	return name
 }
 
-// jsModule reduces a location to its file: no line or column, no file://
-// scheme, and a dependency addressed from its node_modules directory
-// wherever that is installed.
+// jsModule reduces a location to the module it names, without line or
+// column:
+//
+//   - Code without a file keeps V8's word for it, and "index N" (an element
+//     of Promise.all) loses its number.
+//   - A dependency is addressed from its innermost node_modules directory,
+//     wherever that is installed.
+//   - Node's own code is "node:<name>"; before Node had that scheme it
+//     printed a bare or relative file ("events.js"), which the application's
+//     files, always absolute, never are.
+//   - Anything else is the application's and goes through sourceModule,
+//     then loses the content hash of a bundle's file name.
 func jsModule(loc string) string {
-	loc = strings.TrimPrefix(jsLinesRe.ReplaceAllString(loc, ""), "file://")
-	if jsIndexRe.MatchString(loc) { // "Promise.all (index 3)"
+	loc = strings.ReplaceAll(jsLinesRe.ReplaceAllString(loc, ""), `\`, "/")
+	switch {
+	case jsIndexRe.MatchString(loc):
 		return "index"
+	case loc == FrameAnonymous, loc == "native", strings.HasPrefix(loc, jsRuntimeScheme):
+		return loc
 	}
-	return loc[max(strings.LastIndex(loc, jsDependencyDir), 0):]
+	if i := strings.LastIndex(loc, jsDependencyDir); i >= 0 {
+		return loc[i:]
+	}
+	if !jsAbsoluteRe.MatchString(loc) {
+		return jsRuntimeScheme + strings.TrimSuffix(loc, ".js")
+	}
+	return jsContentHashRe.ReplaceAllString(sourceModule(loc), "$1$2")
 }
 
 func jsRootCause(lines []string) []StackFrame {
@@ -74,6 +101,10 @@ func jsRootCause(lines []string) []StackFrame {
 }
 
 func jsInApp(f StackFrame) bool {
-	return strings.ContainsAny(f.Module, `/\`) && !strings.Contains(f.Module, jsDependencyDir) &&
-		!hasAnyPrefix(f.Module, jsRuntimePrefixes)
+	for _, word := range jsNoFile {
+		if f.Module == word {
+			return false
+		}
+	}
+	return !strings.HasPrefix(f.Module, jsRuntimeScheme) && !strings.HasPrefix(f.Module, jsDependencyDir)
 }

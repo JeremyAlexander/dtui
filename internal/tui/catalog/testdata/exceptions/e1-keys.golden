@@ -14,9 +14,12 @@ e1:f9cfdf9ba6aa	message: an unknown stack notation
 e1:fed56b8915f0	message: another type, same message
 e1:fa2d77026dcd	message: baseline
 e1:fa2d77026dcd	message: other ids
-e1:e13ed72b95ee	node: async frames
-e1:e13ed72b95ee	node: baseline
-e1:51aeb4148eea	python: baseline
-e1:51aeb4148eea	python: other line numbers and interpreter
+e1:abda7f3d2429	node: async frames
+e1:abda7f3d2429	node: baseline
+e1:abda7f3d2429	node: deployed under another root
+e1:297ba59ed4f3	python: baseline
+e1:297ba59ed4f3	python: deployed into a release directory
+e1:297ba59ed4f3	python: other line numbers and interpreter
+e1:3ba71b6a92c3	python: same function name in another file
 e1:62aca02becf2	type: no message, no stack
 e1:62aca02becf2	type: without a chain the last event counts
