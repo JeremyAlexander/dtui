@@ -138,12 +138,33 @@ func (l *Layout) Find(t *Tree, n NodeID) (Cell, bool) {
 
 // Label fits a frame's label into exactly width cells: made safe to print
 // and one line (catalog.OneLine), shortened the way the functions table
-// shortens a frame (catalog.ShortFrame), then padded with spaces. Cells are
-// counted as the catalog counts them, with go-runewidth.
+// shortens a frame (catalog.ShortFrame), then padded with spaces. Where the
+// table would cut the label from the left, a cell shows the function alone,
+// and no more of it than its start when even that is too long: a reader
+// tells two narrow frames apart by how their functions begin, not by the
+// tail of a type. Cells are counted as the catalog counts them, with
+// go-runewidth.
 func Label(label string, width int) string {
 	if width < 1 {
 		return ""
 	}
-	label = catalog.ShortFrame(catalog.OneLine(label), width)
-	return label + strings.Repeat(" ", max(width-runewidth.StringWidth(label), 0))
+	label = catalog.OneLine(label)
+	short := catalog.ShortFrame(label, width)
+	if strings.HasPrefix(short, "…") && !strings.HasPrefix(label, "…") {
+		short = runewidth.Truncate(functionOf(label), width, "…")
+	}
+	return short + strings.Repeat(" ", max(width-runewidth.StringWidth(short), 0))
+}
+
+// functionOf is the function at the end of a label: what follows the last
+// dot of a package.Type.function, or the colon of a path/file.js:function,
+// without a parameter list.
+func functionOf(label string) string {
+	if i := strings.IndexByte(label, '('); i > 0 {
+		label = label[:i]
+	}
+	if i := strings.LastIndexAny(label, ".:"); i >= 0 && i < len(label)-1 {
+		return label[i+1:]
+	}
+	return label
 }
