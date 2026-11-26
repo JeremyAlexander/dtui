@@ -303,6 +303,13 @@ func TestParameterizeMessageIsBounded(t *testing.T) {
 	if want := head + msgUUID; got != want {
 		t.Errorf("a whole placeholder at the bound was cut: %q", got[len(got)-12:])
 	}
+	// Only the placeholder the cut went through goes: a whole one before it
+	// in the tail stays.
+	head = strings.Repeat("a", ExceptionMessageMax-5)
+	got = ParameterizeMessage(head + `"kettle"http://shop.example.invalid/cart`)
+	if want := head + msgQuoted; got != want {
+		t.Errorf("the cut behind a whole placeholder left %q", got[len(got)-12:])
+	}
 	// A literal "<" far from the end is not mistaken for one.
 	head = "a < b " + strings.Repeat("a", ExceptionMessageMax)
 	if got := ParameterizeMessage(head); got != head[:ExceptionMessageMax] {
@@ -338,6 +345,10 @@ func TestParameterizeMessageIsBounded(t *testing.T) {
 
 func TestParameterizeMessageDropsInvalidUTF8(t *testing.T) {
 	if got := ParameterizeMessage("cart \xff\xfe locked"); got != "cart locked" {
+		t.Errorf("got %q", got)
+	}
+	// An invalid byte is dropped, not turned into a break between words.
+	if got := ParameterizeMessage("ca\xffrt lo\xc3cked"); got != "cart locked" {
 		t.Errorf("got %q", got)
 	}
 }

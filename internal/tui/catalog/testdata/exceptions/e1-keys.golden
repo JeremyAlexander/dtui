@@ -3,11 +3,17 @@ e1:2e4a458c71da	dotnet: as Mono prints it
 e1:1db4a2a583dd	dotnet: baseline
 e1:2e4a458c71da	dotnet: one event whose stack text holds the inner exception
 e1:1db4a2a583dd	dotnet: other state machine numbers
+e1:add95b51344b	dotnet: runtime frames only
+e1:add95b51344b	dotnet: runtime frames only, with file lines and other callers
 e1:60fce246ec5d	go: a module path without a host, under a router from the module cache
 e1:aa0a6599e206	go: another goroutine, arguments and offsets
 e1:38bf58cd20f1	go: another panic under the same router
 e1:60fce246ec5d	go: another router version, goroutine and offsets
 e1:aa0a6599e206	go: baseline
+e1:1aea54babdae	go: standard library frames only
+e1:1aea54babdae	go: standard library frames only, another toolchain and caller
+e1:29eac2cb7dfa	java: a runtime throw site over six application frames
+e1:b31f70b683a9	java: another fifth application frame
 e1:333a05087d31	java: baseline
 e1:333a05087d31	java: one event whose stack text holds the chain
 e1:333a05087d31	java: other ids, line numbers and proxy suffixes
@@ -19,6 +25,7 @@ e1:778303eeb2ce	java: same type, another top in-app frame
 e1:ced629c4ecc1	java: sendError from a controller, under the same filters
 e1:659adbb1b972	java: sendError from a resource handler, under the same filters
 e1:9b9e9062b219	java: sendError from the default servlet, under two filters
+e1:29eac2cb7dfa	java: the same reached from another caller, beyond the frames a key holds
 e1:9b9e9062b219	java: the same under another container build
 e1:fbfc39713625	java: the wrapper alone
 e1:731c50d6f8fb	message: a URL
@@ -62,5 +69,7 @@ e1:012201a68864	python: deployed into a release directory
 e1:012201a68864	python: other line numbers and interpreter
 e1:2f4d1b752254	python: raised in a task group
 e1:ab20807b6ead	python: same function name in another file
+e1:85f4a4141b6b	python: standard library frames only
+e1:85f4a4141b6b	python: standard library frames only, another interpreter and caller
 e1:ce7e09661781	type: no message, no stack
 e1:ce7e09661781	type: without a chain the last event counts

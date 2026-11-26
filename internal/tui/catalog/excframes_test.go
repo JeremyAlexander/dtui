@@ -2,7 +2,6 @@ package catalog
 
 import (
 	"reflect"
-	"regexp"
 	"sort"
 	"strings"
 	"testing"
@@ -603,7 +602,9 @@ func TestSourceModulesAreDeployIndependent(t *testing.T) {
 			js("http://localhost:3000/static/js/main.js"),
 		},
 		"/data/apps/shop/cart.py": {py("/data/apps/shop/cart.py")}, // an unknown root stays
-		"index.js":                {js("/app/index.js"), js("/var/task/index.js")},
+		// A directory of hex letters without a digit is a word, not a hash.
+		"defaced/shop/cart.py": {py("/srv/defaced/shop/cart.py")},
+		"index.js":             {js("/app/index.js"), js("/var/task/index.js")},
 	}
 	for want, lines := range merge {
 		for _, line := range lines {
@@ -752,6 +753,52 @@ func TestBuiltinInApp(t *testing.T) {
 	}
 }
 
+// Every entry of a vendor table takes its frames out of the application's,
+// the last as much as the first, and a library frame between two of the
+// application's does not count toward a key.
+func TestVendorTablesApplyWhole(t *testing.T) {
+	tables := []struct {
+		syntax   StackSyntax
+		prefixes []string
+	}{
+		{StackJava, javaVendorPrefixes}, {StackDotNet, dotnetVendorPrefixes}, {StackGo, goVendorPrefixes},
+		{StackPython, pythonPackageDirs},
+	}
+	for _, table := range tables {
+		for _, prefix := range table.prefixes {
+			if f := (StackFrame{Module: prefix + "x", Function: "f", Syntax: table.syntax}); builtinInApp(f) {
+				t.Errorf("%+v counts as application code", f)
+			}
+		}
+	}
+	for _, name := range goStdlib {
+		if f := (StackFrame{Module: name + "/x", Function: "f", Syntax: StackGo}); builtinInApp(f) {
+			t.Errorf("%+v counts as application code", f)
+		}
+	}
+	fp := mustFingerprint(t, SpanException{Type: "T", StackTrace: `   at Newtonsoft.Json.JsonConvert.DeserializeObject(String value)
+   at Example.Shop.Cart.Load(String id)
+   at Newtonsoft.Json.Linq.JToken.ToObject(Type objectType)
+   at Example.Shop.Api.Get(String id)`})
+	want := frames(StackDotNet, "Newtonsoft.Json.JsonConvert", "DeserializeObject", "Example.Shop.Cart", "Load", "Example.Shop.Api", "Get")
+	if fp.Rung != RungAppFrames || !reflect.DeepEqual(fp.Frames, want) {
+		t.Errorf("rung %v frames %+v", fp.Rung, fp.Frames)
+	}
+}
+
+// Every listed pass-through function is one, bare and as a method.
+func TestPassThroughListsApplyWhole(t *testing.T) {
+	for syntax, notation := range stackNotations {
+		for _, name := range notation.passThrough {
+			for _, function := range []string{name, "Type." + name} {
+				if f := (StackFrame{Module: "m", Function: function, Syntax: StackSyntax(syntax)}); !isPassThrough(f) {
+					t.Errorf("%+v is not pass-through", f)
+				}
+			}
+		}
+	}
+}
+
 // FuzzParseStackFrames checks what must hold for any input: no panic, the
 // same frames on every parse, no empty function, and no adjacent repeats.
 func FuzzParseStackFrames(f *testing.F) {
@@ -786,37 +833,52 @@ func FuzzParseStackFrames(f *testing.F) {
 			}
 			builtinInApp(fr)
 		}
-		for _, line := range stackLines(in) {
-			checkJavaFrameName(t, strings.TrimSpace(line))
-		}
 	})
 }
 
-// javaFrameNameRe is what javaFrameName reads by hand.
-var javaFrameNameRe = regexp.MustCompile(
-	`^(?:at )?([\w$.<>/@-]+\.[\w$<>]+) ?\((?:[\w$-]+\.\w+(?::\d+)?|Native Method|Unknown Source|<generated>)\)`)
-
-func checkJavaFrameName(t *testing.T, line string) {
-	t.Helper()
-	want := ""
-	if m := javaFrameNameRe.FindStringSubmatch(line); m != nil {
-		want = m[1]
+func TestJavaFrameName(t *testing.T) {
+	cases := []struct {
+		line, name string
+		ok         bool
+	}{
+		{"at a.b(C.java:1)", "a.b", true},
+		{"a.b(C.java:1)", "a.b", true},
+		{"a.b (C.java)", "a.b", true},
+		{"at a.b(Native Method)", "a.b", true},
+		{"at a.b(Unknown Source) ~[x.jar:1]", "a.b", true},
+		{"at a.b(<generated>)x", "a.b", true},
+		{"at a..b(C.java:1)", "a..b", true},
+		{"at java.base/a.B.<init>(B.java:1)", "java.base/a.B.<init>", true},
+		{"at a@1.b(B.java:1)", "a@1.b", true},
+		{"ata.b(C.java:1)", "ata.b", true},
+		{"at a.b(C.kt:12)(D.java:1)", "a.b", true},
+		{"at a.b(C-1.java:1)", "a.b", true},
+		// No frame: nothing in the parentheses, no class, no method, more
+		// than one space before the location, a second "at".
+		{"", "", false},
+		{"(", "", false},
+		{"a.b(", "", false},
+		{"a.b  (C.java:1)", "", false},
+		{"at at a.b(C.java:1)", "", false},
+		{"at  a.b(C.java:1)", "", false},
+		{"at .b(C.java:1)", "", false},
+		{"at a.(C.java:1)", "", false},
+		{"at b(C.java:1)", "", false},
+		// A method name holds no separator of the class path.
+		{"at app//a.B$1.c-d(B.java:1)", "", false},
+		{"at a.b/c(B.java:1)", "", false},
+		{"at a.b@1(B.java:1)", "", false},
+		{"at a.é(B.java:1)", "", false},
+		// The parentheses hold a source location, not parameters.
+		{"at a.b(String s)", "", false},
+		{"at a.b(B.java:x)", "", false},
+		{"at a.b((B.java:1)", "", false},
+		{"at a.b(B.java:1", "", false},
 	}
-	if got, ok := javaFrameName(line); got != want || ok != (want != "") {
-		t.Fatalf("javaFrameName(%q) = %q, %v; the expression reads %q", line, got, ok, want)
-	}
-}
-
-func TestJavaFrameNameReadsWhatItsExpressionDoes(t *testing.T) {
-	for _, line := range []string{
-		"", "(", "a.b(", "at a.b(C.java:1)", "a.b(C.java:1)", "a.b (C.java)", "a.b  (C.java:1)", "at at a.b(C.java:1)",
-		"at a.b(Native Method)", "at a.b(Unknown Source) ~[x.jar:1]", "at a.b(<generated>)x", "at .b(C.java:1)",
-		"at a.(C.java:1)", "at b(C.java:1)", "at a..b(C.java:1)", "at java.base/a.B.<init>(B.java:1)",
-		"at app//a.B$1.c-d(B.java:1)", "at a.b/c(B.java:1)", "at a@1.b(B.java:1)", "at a.b@1(B.java:1)",
-		"at a.é(B.java:1)", "at a.b(String s)", "at a.b(B.java:x)", "at a.b((B.java:1)", "at a.b(B.java:1", "ata.b(C.java:1)",
-		"at a.b(C.kt:12)(D.java:1)", "at  a.b(C.java:1)", "at a.b(C-1.java:1)",
-	} {
-		checkJavaFrameName(t, line)
+	for _, tc := range cases {
+		if name, ok := javaFrameName(tc.line); name != tc.name || ok != tc.ok {
+			t.Errorf("javaFrameName(%q) = %q, %v, want %q, %v", tc.line, name, ok, tc.name, tc.ok)
+		}
 	}
 }
 
@@ -830,6 +892,12 @@ func TestRootCauseBoundaries(t *testing.T) {
 		// suppressed block: nothing shows where the block does.
 		{"java: a suppressed block without indentation",
 			"a.B: x\nat a.B.b(B.java:1)\nSuppressed: c.D: y\nat c.D.d(D.java:2)\nCaused by: e.F: z\nat e.F.f(F.java:3)",
+			frames(StackJava, "a.B", "b"), ""},
+		// A blank line does not end a suppressed block: what follows it at
+		// the block's depth is still the suppressed exception's.
+		{"java: a blank line inside a suppressed block",
+			"a.B: x\n\tat a.B.b(B.java:1)\n\tSuppressed: c.D: y\n\t\tat c.D.d(D.java:2)\n\n\t\tat c.D.e(D.java:3)\n" +
+				"\tCaused by: e.F: z\n\t\tat e.F.f(F.java:4)",
 			frames(StackJava, "a.B", "b"), ""},
 		{"dotnet: two inner exceptions introduced on one line",
 			"A.Outer: x ---> B.Middle: y ---> C.Inner: z\n   at N.S.Type.Method(String s)",

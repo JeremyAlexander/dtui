@@ -408,6 +408,114 @@
     ]
   },
   {
+    "name": "java: a runtime throw site over six application frames",
+    "group": "java-cart-update",
+    "rung": "app frames",
+    "events": [
+      {
+        "type": "java.lang.IndexOutOfBoundsException",
+        "message": "Index 7 out of bounds for length 3",
+        "stack": "java-deep-a.txt"
+      }
+    ]
+  },
+  {
+    "name": "java: the same reached from another caller, beyond the frames a key holds",
+    "group": "java-cart-update",
+    "rung": "app frames",
+    "events": [
+      {
+        "type": "java.lang.IndexOutOfBoundsException",
+        "message": "Index 12 out of bounds for length 4",
+        "stack": "java-deep-b.txt"
+      }
+    ]
+  },
+  {
+    "name": "java: another fifth application frame",
+    "group": "java-cart-patch",
+    "rung": "app frames",
+    "events": [
+      {
+        "type": "java.lang.IndexOutOfBoundsException",
+        "message": "Index 7 out of bounds for length 3",
+        "stack": "java-deep-patch.txt"
+      }
+    ]
+  },
+  {
+    "name": "dotnet: runtime frames only",
+    "group": "dotnet-format",
+    "rung": "frames",
+    "events": [
+      {
+        "type": "System.FormatException",
+        "message": "The input string '12x' was not in a correct format.",
+        "stack": "dotnet-runtime-only-a.txt"
+      }
+    ]
+  },
+  {
+    "name": "dotnet: runtime frames only, with file lines and other callers",
+    "group": "dotnet-format",
+    "rung": "frames",
+    "events": [
+      {
+        "type": "System.FormatException",
+        "message": "The input string '7,5' was not in a correct format.",
+        "stack": "dotnet-runtime-only-b.txt"
+      }
+    ]
+  },
+  {
+    "name": "python: standard library frames only",
+    "group": "python-json-decode",
+    "rung": "frames",
+    "events": [
+      {
+        "type": "json.decoder.JSONDecodeError",
+        "message": "Expecting value: line 1 column 1 (char 0)",
+        "stack": "python-stdlib-only-a.txt"
+      }
+    ]
+  },
+  {
+    "name": "python: standard library frames only, another interpreter and caller",
+    "group": "python-json-decode",
+    "rung": "frames",
+    "events": [
+      {
+        "type": "json.decoder.JSONDecodeError",
+        "message": "Expecting value: line 3 column 9 (char 41)",
+        "stack": "python-stdlib-only-b.txt"
+      }
+    ]
+  },
+  {
+    "name": "go: standard library frames only",
+    "group": "go-waitgroup",
+    "rung": "frames",
+    "events": [
+      {
+        "type": "runtime.Error",
+        "message": "sync: negative WaitGroup counter",
+        "stack": "go-runtime-only-a.txt"
+      }
+    ]
+  },
+  {
+    "name": "go: standard library frames only, another toolchain and caller",
+    "group": "go-waitgroup",
+    "rung": "frames",
+    "events": [
+      {
+        "type": "runtime.Error",
+        "message": "sync: negative WaitGroup counter",
+        "stack": "go-runtime-only-b.txt"
+      }
+    ]
+  },
+  {
     "name": "message: baseline",
     "group": "message-timeout",
     "rung": "message",

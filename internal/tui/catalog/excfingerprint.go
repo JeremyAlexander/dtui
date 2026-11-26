@@ -13,10 +13,15 @@ import (
 // ladder from in-app stack frames down to the type alone. Same input, same
 // key — on every machine, in every locale.
 
-// ExceptionKeyVersion prefixes every key. A change to the fingerprint, the
-// frame parser or the message parameteriser that moves an existing
-// exception to another key must raise it; the golden keys under
-// testdata/exceptions fail until it does.
+// ExceptionKeyVersion prefixes every key. Once a release has shipped keys of
+// a version, a change to the fingerprint, the frame parser or the message
+// parameteriser that moves an exception to another key must raise it. Two
+// golden files under testdata/exceptions stand in the way of doing that
+// unnoticed: a digest of every table, expression and limit of these files
+// (TestExceptionKeyInputsArePinned), and the keys of a corpus
+// (TestExceptionKeysAreStable). The code of a function is covered by cases
+// alone: a change to it shows only where the corpus or a test has an input
+// it moves.
 const ExceptionKeyVersion = "e1"
 
 // FingerprintFrames is how many frames, counted from the throw site, go

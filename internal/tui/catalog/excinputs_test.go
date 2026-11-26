@@ -3,19 +3,76 @@ package catalog
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/scanner"
 	"go/token"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"testing"
 )
 
-// exceptionKeySources are the files the key algorithm lives in.
-const exceptionKeySources = "exc*.go"
+// exceptionKeySources are the files the key algorithm lives in, by name: a
+// pattern would take in any other file of the package that happens to match.
+var exceptionKeySources = []string{
+	"excfingerprint.go", "excframes.go", "excframes_dotnet.go", "excframes_go.go", "excframes_java.go",
+	"excframes_javascript.go", "excframes_python.go", "excmessage.go",
+}
+
+// exceptionKeyRepin is what to do about a pinned value that changed.
+const exceptionKeyRepin = "raise ExceptionKeyVersion, which starts a new golden file. " +
+	"Only while no release has shipped %[1]s keys: delete the line from testdata/exceptions/%[1]s-%[2]s.golden " +
+	"and run go test -run TestExceptionKey -update"
+
+// readExceptionGolden reads a golden file of "value<TAB>name" lines into a
+// map by name. A missing file is an error unless -update is creating it.
+func readExceptionGolden(t *testing.T, path string) map[string]string {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		if *updateExceptionKeys {
+			return map[string]string{}
+		}
+		t.Fatalf("%v (new key version? run with -update to create it)", err)
+	}
+	pinned, err := parseExceptionGolden(string(raw))
+	if err != nil {
+		t.Fatalf("%s: %v", path, err)
+	}
+	return pinned
+}
+
+func parseExceptionGolden(raw string) (map[string]string, error) {
+	pinned := map[string]string{}
+	for i, line := range strings.Split(strings.TrimRight(raw, "\n"), "\n") {
+		value, name, ok := strings.Cut(line, "\t")
+		if !ok || value == "" || name == "" {
+			return nil, fmt.Errorf("line %d is not a value, a tab and a name: %q", i+1, line)
+		}
+		if _, dup := pinned[name]; dup {
+			return nil, fmt.Errorf("line %d pins %q a second time", i+1, name)
+		}
+		pinned[name] = value
+	}
+	return pinned, nil
+}
+
+// A golden line that cannot be read must fail, not drop out of the pin.
+func TestExceptionGoldenLinesMustParse(t *testing.T) {
+	got, err := parseExceptionGolden("k1\tfirst case\nk2\tsecond\tcase\n")
+	if want := map[string]string{"first case": "k1", "second\tcase": "k2"}; err != nil || !reflect.DeepEqual(got, want) {
+		t.Errorf("got %q, %v", got, err)
+	}
+	for _, raw := range []string{"k1 first case\n", "k1\tfirst\n\nk2\tsecond\n", "\tfirst\n", "k1\t\n", "k1\ta\nk2\ta\n", ""} {
+		if got, err := parseExceptionGolden(raw); err == nil {
+			t.Errorf("%q was read as %q", raw, got)
+		}
+	}
+}
 
 // keyInput is one package-level var or const declaration of the key
 // algorithm: a table, an expression, a limit.
@@ -32,29 +89,23 @@ type keyInput struct {
 // change fails here, whatever the corpus says. Comments and layout are not
 // part of a digest.
 //
-// The fix is the one TestExceptionKeysAreStable asks for: raise
-// ExceptionKeyVersion, which starts a new golden file. -update only adds
-// declarations that are new.
+// What this does not see is the code of the functions: a condition dropped
+// from a function body changes keys without changing a declaration. Only a
+// case catches that, in the corpus or in a test of the function.
+//
+// The fix is the one TestExceptionKeysAreStable asks for (exceptionKeyRepin).
+// -update only adds declarations that are new.
 func TestExceptionKeyInputsArePinned(t *testing.T) {
 	golden := filepath.Join(exceptionCorpusDir, ExceptionKeyVersion+"-inputs.golden")
-	pinned := map[string]string{}
-	raw, err := os.ReadFile(golden)
-	if err != nil && !*updateExceptionKeys {
-		t.Fatalf("%v (new key version? run with -update to create it)", err)
-	}
-	for _, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
-		if digest, name, ok := strings.Cut(line, "\t"); ok {
-			pinned[name] = digest
-		}
-	}
+	pinned := readExceptionGolden(t, golden)
 
 	var lines []string
 	for _, in := range exceptionKeyInputs(t) {
 		want, ok := pinned[in.name]
 		switch {
 		case ok && want != in.digest:
-			t.Errorf("%s changed — it is part of the %s key algorithm; raise ExceptionKeyVersion instead of repinning",
-				in.name, ExceptionKeyVersion)
+			t.Errorf("%s changed — it is part of the %s key algorithm; "+exceptionKeyRepin,
+				in.name, ExceptionKeyVersion, "inputs")
 		case !ok && !*updateExceptionKeys:
 			t.Errorf("%s is not pinned; if no %s key depends on it yet, run with -update to add it", in.name, ExceptionKeyVersion)
 		}
@@ -62,8 +113,8 @@ func TestExceptionKeyInputsArePinned(t *testing.T) {
 		lines = append(lines, in.digest+"\t"+in.name)
 	}
 	for name := range pinned {
-		t.Errorf("%s is pinned but no longer declared — it was part of the %s key algorithm; raise ExceptionKeyVersion",
-			name, ExceptionKeyVersion)
+		t.Errorf("%s is pinned but no longer declared — it was part of the %s key algorithm; "+exceptionKeyRepin,
+			name, ExceptionKeyVersion, "inputs")
 	}
 	if *updateExceptionKeys && !t.Failed() {
 		if err := os.WriteFile(golden, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
@@ -75,7 +126,8 @@ func TestExceptionKeyInputsArePinned(t *testing.T) {
 // The pin above covers package-level declarations only, so nothing the
 // algorithm is configured by may be built where it cannot see: no expression
 // compiled, no replacer built and no table of literals written inside a
-// function. A table is a slice, array or map literal that holds a literal.
+// function. A table is a slice, array or map literal that holds a literal,
+// as an element or as a key.
 func TestExceptionKeyInputsArePackageLevel(t *testing.T) {
 	eachExceptionKeySource(t, func(fset *token.FileSet, file *ast.File, _ []byte) {
 		for _, decl := range file.Decls {
@@ -93,20 +145,56 @@ func TestExceptionKeyInputsArePackageLevel(t *testing.T) {
 					if !isTableType(n.Type) {
 						break
 					}
-					for _, elt := range n.Elts {
-						if kv, ok := elt.(*ast.KeyValueExpr); ok {
-							elt = kv.Value
-						}
-						if _, ok := elt.(*ast.BasicLit); ok {
-							t.Errorf("%s: a table of literals in %s; declare it at package level", fset.Position(n.Pos()), fn.Name.Name)
-							break
-						}
+					if holdsLiteral(n) {
+						t.Errorf("%s: a table of literals in %s; declare it at package level", fset.Position(n.Pos()), fn.Name.Name)
 					}
 				}
 				return true
 			})
 		}
 	})
+}
+
+// holdsLiteral reports whether a composite literal has a basic literal among
+// its elements or their keys: map[string]bool{"x": true} is a table of names.
+func holdsLiteral(lit *ast.CompositeLit) bool {
+	for _, elt := range lit.Elts {
+		parts := []ast.Expr{elt}
+		if kv, ok := elt.(*ast.KeyValueExpr); ok {
+			parts = []ast.Expr{kv.Key, kv.Value}
+		}
+		for _, part := range parts {
+			if _, ok := part.(*ast.BasicLit); ok {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func TestHoldsLiteral(t *testing.T) {
+	cases := map[string]bool{
+		`[]string{"a"}`:                 true,
+		`map[string]bool{"a": true}`:    true,
+		`map[string]string{k: "a"}`:     true,
+		`[...]int{1}`:                   true,
+		`[]string{a, b}`:                false,
+		`map[string]bool{a: true}`:      false,
+		`[]StackFrame{all[0]}`:          false,
+		`[]string{}`:                    false,
+		`[]javaSection{{typ: "a"}}`:     false,
+		`[]func() string{f, g}`:         false,
+		`map[string][]string{"a": nil}`: true,
+	}
+	for src, want := range cases {
+		expr, err := parser.ParseExpr(src)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := holdsLiteral(expr.(*ast.CompositeLit)); got != want {
+			t.Errorf("holdsLiteral(%s) = %v, want %v", src, got, want)
+		}
+	}
 }
 
 func isTableType(e ast.Expr) bool {
@@ -177,14 +265,7 @@ func exceptionKeyInputs(t *testing.T) []keyInput {
 
 func eachExceptionKeySource(t *testing.T, visit func(*token.FileSet, *ast.File, []byte)) {
 	t.Helper()
-	paths, err := filepath.Glob(exceptionKeySources)
-	if err != nil || len(paths) == 0 {
-		t.Fatalf("no source matches %s: %v", exceptionKeySources, err)
-	}
-	for _, path := range paths {
-		if strings.HasSuffix(path, "_test.go") {
-			continue
-		}
+	for _, path := range exceptionKeySources {
 		src, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatal(err)

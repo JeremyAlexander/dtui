@@ -91,13 +91,13 @@ func TestFingerprintExceptionsLadder(t *testing.T) {
 func TestFingerprintKeyShape(t *testing.T) {
 	fp := mustFingerprint(t, SpanException{Type: "java.lang.IllegalStateException", StackTrace: cartStack})
 	if !exceptionKeyRe.MatchString(fp.Key) {
-		t.Errorf("key = %q, want e1: and 12 hex characters", fp.Key)
+		t.Errorf("key = %q, want %s: and 12 hex characters", fp.Key, ExceptionKeyVersion)
 	}
 	// The hash input: rung number, classifier (none for the built-in one),
 	// type, then module and function per frame, each field behind its length.
 	sum := sha256.Sum256([]byte("1:1" + "0:" + "31:java.lang.IllegalStateException" +
 		"25:com.acme.shop.CartService" + "7:addItem" + "28:com.acme.shop.CartController" + "4:post"))
-	if want := "e1:" + hex.EncodeToString(sum[:])[:12]; fp.Key != want {
+	if want := ExceptionKeyVersion + ":" + hex.EncodeToString(sum[:])[:12]; fp.Key != want {
 		t.Errorf("key = %s, want %s", fp.Key, want)
 	}
 	// Evidence is positional and ordered.
@@ -418,6 +418,14 @@ func TestFingerprintIncludesTheThrowSite(t *testing.T) {
 	if filter.Rung != RungAppFrames || !reflect.DeepEqual(filter.Frames, want) {
 		t.Errorf("rung %v frames %+v", filter.Rung, filter.Frames)
 	}
+	// It does not count toward the top frames, though: five more follow it.
+	filter = mustFingerprint(t, SpanException{Type: "T", StackTrace: javaStack("com.example.shop.web.AuthFilter.doFilter",
+		"com.example.A.a", "com.example.B.b", "com.example.C.c", "com.example.D.d", "com.example.E.e", "com.example.F.f")})
+	want = frames(StackJava, "com.example.shop.web.AuthFilter", "doFilter",
+		"com.example.A", "a", "com.example.B", "b", "com.example.C", "c", "com.example.D", "d", "com.example.E", "e")
+	if filter.Rung != RungAppFrames || !reflect.DeepEqual(filter.Frames, want) {
+		t.Errorf("rung %v frames %+v", filter.Rung, filter.Frames)
+	}
 }
 
 // Frames that only hand a call on (a filter or middleware chain, reflection,
@@ -728,22 +736,14 @@ func TestExceptionCorpusGroups(t *testing.T) {
 }
 
 // TestExceptionKeysAreStable pins the key of every corpus case. A key that
-// moves means exceptions already grouped under it would regroup, so the
-// fix is never to rewrite the golden line: raise ExceptionKeyVersion, which
-// starts a new golden file, and say so in the change. -update only adds
-// lines for new cases.
+// moves means exceptions already grouped under it would regroup, so once a
+// release has shipped keys of this version the fix is never to rewrite the
+// golden line: raise ExceptionKeyVersion, which starts a new golden file,
+// and say so in the change (exceptionKeyRepin). -update only adds lines for
+// new cases.
 func TestExceptionKeysAreStable(t *testing.T) {
 	golden := filepath.Join(exceptionCorpusDir, ExceptionKeyVersion+"-keys.golden")
-	pinned := map[string]string{}
-	raw, err := os.ReadFile(golden)
-	if err != nil && !*updateExceptionKeys {
-		t.Fatalf("%v (new key version? run with -update to create it)", err)
-	}
-	for _, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
-		if key, name, ok := strings.Cut(line, "\t"); ok {
-			pinned[name] = key
-		}
-	}
+	pinned := readExceptionGolden(t, golden)
 
 	var lines []string
 	for _, c := range loadExceptionCorpus(t) {
@@ -751,8 +751,8 @@ func TestExceptionKeysAreStable(t *testing.T) {
 		want, ok := pinned[c.Name]
 		switch {
 		case ok && want != key:
-			t.Errorf("%s: key %s, pinned %s — the %s algorithm changed; raise ExceptionKeyVersion instead of repinning",
-				c.Name, key, want, ExceptionKeyVersion)
+			t.Errorf("%s: key %s, pinned %s — the %s algorithm changed; "+exceptionKeyRepin,
+				c.Name, key, want, ExceptionKeyVersion, "keys")
 		case !ok && !*updateExceptionKeys:
 			t.Errorf("%s: no pinned key; run with -update to add %s", c.Name, key)
 		}
@@ -772,7 +772,7 @@ func TestExceptionKeysAreStable(t *testing.T) {
 	}
 }
 
-var exceptionKeyRe = regexp.MustCompile(`^e1:[0-9a-f]{12}$`)
+var exceptionKeyRe = regexp.MustCompile(`^` + regexp.QuoteMeta(ExceptionKeyVersion) + `:[0-9a-f]{12}$`)
 
 // FuzzFingerprintExceptions checks what must hold for any event: no panic,
 // a key of the pinned shape, the same key on every run, a rung that matches
