@@ -82,7 +82,11 @@ nothing about the format.
   text; dtui showing other rows for it would break the handoff of
   [ADR-0018](0018-launch-flags-are-a-handoff-contract.md). Text revealed with
   `ctrl+q` is not rewritten: it is the page's own query made visible, it
-  already holds the filter where one was inserted, and it runs as shown.
+  already holds the filter where one was inserted, and it runs as shown. From
+  there on it is text. The page history and the query history store it with
+  the inserted filter in it, and a text restored or recalled from either goes
+  through the same rule as typed DQL, in whatever checkout it is opened, with
+  the reason in the header when the entry's filter is not inserted.
 - **A page the user scoped is not narrowed again.** A `:logs` or `:traces`
   page that carries an entity (a pin, a drill from a row, a tab of an entity
   or problem page) or a trace id runs without the entry's filter, and its
@@ -249,7 +253,11 @@ header. A view that carries neither shows no scope.
 - Presets (`W`, `send --save`), the last filter and history record facets and
   searches, as they do today with segments active. They do not record the repo
   scope: a preset saved in one checkout opens under whatever scope the session
-  that opens it has.
+  that opens it has. The one exception is query text: a revealed query holds
+  the inserted filter as text, and the two histories keep it that way. Today
+  the page history also stores a draft that was never submitted and runs it
+  when the page is restored, which the implementing pull request has to take
+  into account.
 - `ctrl+q` puts the rewritten query into an editor that holds 4096 characters,
   and an entry with many ids renders a longer filter. The reveal must report a
   query it cannot hold instead of cutting it.
