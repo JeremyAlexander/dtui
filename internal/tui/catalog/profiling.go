@@ -68,6 +68,7 @@ const (
 const (
 	ProfSumFrom     = "from"    // RFC3339: start of the window analysed
 	ProfSumTo       = "to"      // RFC3339: its end
+	ProfSumClamped  = "clamped" // true when that is only the end of the selection
 	ProfSumSamples  = "samples" // hotspots: samples counted (the base of the percentages)
 	ProfSumRows     = "rows"    // rows before ProfileRowCap
 	ProfSumCallers  = "callers" // focus: callers before ProfileFocusCap
@@ -145,52 +146,82 @@ func ProfileWindowOf(tf Timeframe, now time.Time) ProfileWindow {
 	return w
 }
 
-// profileWindowLabel words the window for the caption. It never shows the
-// selected timeframe alone when less than it was analysed.
+// profileWindowLabel words the window for the caption, from what the source
+// says it analysed: never the selected timeframe alone when less than it was
+// analysed, and not by the clock, which has moved on since.
 func profileWindowLabel(s Scope, summary map[string]any) string {
-	w := ProfileWindowOf(s.Timeframe, Now())
+	clamped := summary[ProfSumClamped] == true
 	var label string
 	switch {
-	case s.Timeframe.Absolute() && w.Clamped:
+	case s.Timeframe.Absolute() && clamped:
 		label = "last 2h of the selected window"
 	case s.Timeframe.Absolute():
 		label = "selected window"
-	case w.Clamped:
+	case clamped:
 		label = "last 2h of the selected " + s.Timeframe.Label
 	default:
 		label = "last " + s.Timeframe.Label
 	}
-	// The instants the source reports are what was analysed; the scope only
-	// says what would be asked for now.
 	from, errFrom := time.Parse(time.RFC3339, Str(summary, ProfSumFrom))
 	to, errTo := time.Parse(time.RFC3339, Str(summary, ProfSumTo))
-	if errFrom == nil && errTo == nil {
-		label += fmt.Sprintf(" (%s–%s UTC)", from.UTC().Format("15:04"), to.UTC().Format("15:04"))
+	if errFrom != nil || errTo != nil {
+		return label
 	}
-	return label
+	// A clock time alone means today.
+	from, to = from.UTC(), to.UTC()
+	const day = "2006-01-02"
+	fromFmt, toFmt := "15:04", "15:04"
+	if from.Format(day) != Now().UTC().Format(day) {
+		fromFmt = "Jan 2 15:04"
+	}
+	if to.Format(day) != from.Format(day) {
+		toFmt = "Jan 2 15:04"
+	}
+	return label + fmt.Sprintf(" (%s–%s UTC)", from.Format(fromFmt), to.Format(toFmt))
 }
 
-// profileEchoWindow renders the window as dtctl's explicit window flags.
+// profileEchoWindow renders the window as dtctl's window flags, so that the
+// pasted command asks for what the view asks for. dtctl reads a start alone
+// as the two hours after it, at most until now.
 func profileEchoWindow(tf Timeframe) string {
-	if !tf.Absolute() {
-		label := tf.Label
-		if tf.Dur > ProfileMaxWindow {
-			label = "2h"
-		}
-		return fmt.Sprintf("--default-timeframe-start 'now()-%s'", label)
+	const lastTwoHours = "--default-timeframe-start 'now()-2h'"
+	switch {
+	case !tf.Absolute() && tf.Dur > ProfileMaxWindow:
+		return lastTwoHours
+	case !tf.Absolute():
+		return fmt.Sprintf("--default-timeframe-start 'now()-%s'", tf.Label)
+	case tf.To.IsZero() && ProfileWindowOf(tf, Now()).Clamped:
+		// An open window that began more than two hours ago: its end is
+		// now, whenever the command runs, and so is the cut.
+		return lastTwoHours
+	case tf.To.IsZero():
+		return "--default-timeframe-start " + echoInstant(tf.From)
 	}
-	w := ProfileWindowOf(tf, Now())
-	out := "--default-timeframe-start " + w.From.UTC().Format(time.RFC3339)
-	if !tf.To.IsZero() {
-		out += " --default-timeframe-end " + w.To.UTC().Format(time.RFC3339)
+	w := ProfileWindowOf(tf, tf.To)
+	return "--default-timeframe-start " + echoInstant(w.From) + " --default-timeframe-end " + echoInstant(w.To)
+}
+
+// echoInstant is an instant as the analysis is asked for it: to the
+// millisecond, which is written only when it is not zero.
+func echoInstant(t time.Time) string {
+	t = t.UTC().Truncate(time.Millisecond)
+	if t.Nanosecond() == 0 {
+		return t.Format(time.RFC3339)
 	}
-	return out
+	return t.Format("2006-01-02T15:04:05.000Z07:00")
+}
+
+// profilable reports whether an analysis can run on the entity, by its type.
+// The source has the last word; this decides what is offered and echoed.
+func profilable(e Entity) bool {
+	return e.Type == "PROCESS" || e.Type == "PROCESS_GROUP_INSTANCE" || e.Type == "PROCESS_GROUP"
 }
 
 // profileEntityArg is the entity argument of the echoed command: the scoped
-// process, or a placeholder that says what is missing.
+// process, or a placeholder where there is none an analysis runs on, so that
+// what is copied cannot be mistaken for a command that works.
 func profileEntityArg(s Scope) string {
-	if s.Entity == nil || s.Entity.ID == "" {
+	if s.Entity == nil || s.Entity.ID == "" || !profilable(*s.Entity) {
 		return "<PROCESS-id>"
 	}
 	return s.Entity.ID
@@ -290,24 +321,25 @@ var hotspotsSpec = &Spec{
 		}
 		return records
 	},
+	// The command that prints what the view holds: the analysis is asked
+	// for the waiting threads whatever the lens, and dtctl prints fewer
+	// rows than the view unless told.
 	Echo: func(s Scope, _ string) string {
+		window := profileEchoWindow(s.Timeframe)
 		if ProfileAllocations(s) {
-			return fmt.Sprintf("dtctl exec profiling allocations %s %s", profileEntityArg(s), profileEchoWindow(s.Timeframe))
+			return fmt.Sprintf("dtctl exec profiling allocations %s --limit %d %s", profileEntityArg(s), ProfileRowCap, window)
 		}
 		var b strings.Builder
 		fmt.Fprintf(&b, "dtctl exec profiling hotspots %s", profileEntityArg(s))
+		limit := ProfileRowCap
 		if s.Arg != "" {
 			fmt.Fprintf(&b, " --focus %s", shellSingleQuote(s.Arg))
+			limit = ProfileFocusCap
 		} else {
 			b.WriteString(" --view functions")
 		}
-		state := HotspotState(s)
-		fmt.Fprintf(&b, " --state %s", state)
-		if state != "running" {
-			// Threads that are not running are only sampled when asked for.
-			b.WriteString(" --show-waiting")
-		}
-		return b.String() + " " + profileEchoWindow(s.Timeframe)
+		fmt.Fprintf(&b, " --state %s --show-waiting --limit %d %s", HotspotState(s), limit, window)
+		return b.String()
 	},
 	Caption: func(s Scope, summary map[string]any) []string {
 		if summary == nil || Str(summary, ProfSumEmpty) == ProfEmptyFocus {
@@ -363,9 +395,7 @@ var hotspotsSpec = &Spec{
 	},
 	// A pinned process is analysed like one named in the command bar. The
 	// source has the last word on what an analysis runs on.
-	Scopable: func(e Entity) bool {
-		return e.Type == "PROCESS" || e.Type == "PROCESS_GROUP_INSTANCE" || e.Type == "PROCESS_GROUP"
-	},
+	Scopable:      profilable,
 	ArgLabel:      func(arg string) string { return shortFrame(arg, 32) },
 	Entity:        profileEntity,
 	EntityArg:     true,

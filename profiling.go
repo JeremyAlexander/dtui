@@ -427,6 +427,9 @@ func profileSummary(w catalog.ProfileWindow, fixture string) map[string]any {
 		catalog.ProfSumFrom: w.From.UTC().Format(time.RFC3339),
 		catalog.ProfSumTo:   w.To.UTC().Format(time.RFC3339),
 	}
+	if w.Clamped {
+		summary[catalog.ProfSumClamped] = true
+	}
 	if fixture != "" {
 		summary[catalog.ProfSumFixture] = fixture
 	}

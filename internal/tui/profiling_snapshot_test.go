@@ -346,11 +346,12 @@ func TestProfilingCancelsItsCallWhenLeft(t *testing.T) {
 func TestProfilingEcho(t *testing.T) {
 	pinSnapshotClock(t)
 	for name, want := range map[string]string{
-		"hotspots-running": "dtctl exec profiling hotspots PROCESS-000000000000A001 --view functions --state running --default-timeframe-start 'now()-2h'",
-		"hotspots-lock":    "dtctl exec profiling hotspots PROCESS-000000000000A001 --view functions --state lock --show-waiting --default-timeframe-start 'now()-2h'",
-		"hotspots-focus":   "dtctl exec profiling hotspots PROCESS-000000000000A001 --focus 'com.fasterxml.jackson.core.json.UTF8JsonGenerator.writeString' --state running --default-timeframe-start 'now()-2h'",
-		"allocations":      "dtctl exec profiling allocations PROCESS-000000000000A001 --default-timeframe-start 'now()-2h'",
-		"no-process":       "dtctl exec profiling hotspots <PROCESS-id> --view functions --state running --default-timeframe-start 'now()-2h'",
+		"hotspots-running": "dtctl exec profiling hotspots PROCESS-000000000000A001 --view functions --state running --show-waiting --limit 300 --default-timeframe-start 'now()-2h'",
+		"hotspots-lock":    "dtctl exec profiling hotspots PROCESS-000000000000A001 --view functions --state lock --show-waiting --limit 300 --default-timeframe-start 'now()-2h'",
+		"hotspots-focus":   "dtctl exec profiling hotspots PROCESS-000000000000A001 --focus 'com.fasterxml.jackson.core.json.UTF8JsonGenerator.writeString' --state running --show-waiting --limit 25 --default-timeframe-start 'now()-2h'",
+		"allocations":      "dtctl exec profiling allocations PROCESS-000000000000A001 --limit 300 --default-timeframe-start 'now()-2h'",
+		"no-process":       "dtctl exec profiling hotspots <PROCESS-id> --view functions --state running --show-waiting --limit 300 --default-timeframe-start 'now()-2h'",
+		"service-refused":  "dtctl exec profiling hotspots <PROCESS-id> --view functions --state running --show-waiting --limit 300 --default-timeframe-start 'now()-2h'",
 	} {
 		if got := renderProfiling(t, name).top().(*tableView).Echo(); got != want {
 			t.Errorf("%s echo:\n got %s\nwant %s", name, got, want)

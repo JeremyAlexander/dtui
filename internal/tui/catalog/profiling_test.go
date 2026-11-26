@@ -318,7 +318,7 @@ func TestAllocationsAreALensOfHotspots(t *testing.T) {
 	if _, ok := spec.Drills["h"]; ok {
 		t.Error("h still drills from the profiling view")
 	}
-	alloc := Scope{Lens: 5, Entity: &Entity{ID: "PROCESS-000000000000A001", Name: "shop-backend"}}
+	alloc := Scope{Lens: 5, Entity: &Entity{ID: "PROCESS-000000000000A001", Name: "shop-backend", Type: "PROCESS"}}
 	alloc.Timeframe, _ = ParseTimeframe("2h")
 	if !ProfileAllocations(alloc) || ProfileAllocations(Scope{Lens: 1}) {
 		t.Error("ProfileAllocations must be true on the allocations lens only")
@@ -395,5 +395,36 @@ func TestCanScopeWithoutAQuery(t *testing.T) {
 		if got := Lookup(tc.view).CanScope(tf, tc.pin); got != tc.want {
 			t.Errorf("%s.CanScope(%s) = %v, want %v", tc.view, tc.pin.Type, got, tc.want)
 		}
+	}
+}
+
+// The caption words the window that was analysed, from what the source
+// reports: whether the selection was cut to its last two hours is decided
+// when the analysis runs, not by the clock when the caption is drawn, and a
+// window of another day carries its date.
+func TestProfileWindowLabelReadsTheAnalysis(t *testing.T) {
+	prev := Now
+	t.Cleanup(func() { Now = prev })
+	open := Timeframe{From: time.Date(2026, 7, 15, 10, 1, 0, 0, time.UTC), Dur: 119 * time.Minute}
+	summary := map[string]any{ProfSumFrom: "2026-07-15T10:01:00Z", ProfSumTo: "2026-07-15T12:00:00Z"}
+	for _, minute := range []int{0, 2} { // 1h59m after the start, then 2h01m
+		Now = func() time.Time { return time.Date(2026, 7, 15, 12, minute, 0, 0, time.UTC) }
+		if got, want := profileWindowLabel(Scope{Timeframe: open}, summary), "selected window (10:01–12:00 UTC)"; got != want {
+			t.Errorf("at 12:%02d the cached analysis reads %q, want %q", minute, got, want)
+		}
+	}
+	day, _ := ParseTimeframe("24h")
+	clamped := map[string]any{ProfSumFrom: "2026-07-15T10:00:00Z", ProfSumTo: "2026-07-15T12:00:00Z", ProfSumClamped: true}
+	if got, want := profileWindowLabel(Scope{Timeframe: day}, clamped), "last 2h of the selected 24h (10:00–12:00 UTC)"; got != want {
+		t.Errorf("clamped: %q, want %q", got, want)
+	}
+	yesterday := map[string]any{ProfSumFrom: "2026-07-14T22:30:00Z", ProfSumTo: "2026-07-14T23:30:00Z"}
+	closed := Timeframe{From: time.Date(2026, 7, 14, 22, 30, 0, 0, time.UTC), To: time.Date(2026, 7, 14, 23, 30, 0, 0, time.UTC), Dur: time.Hour}
+	if got, want := profileWindowLabel(Scope{Timeframe: closed}, yesterday), "selected window (Jul 14 22:30–23:30 UTC)"; got != want {
+		t.Errorf("yesterday: %q, want %q", got, want)
+	}
+	midnight := map[string]any{ProfSumFrom: "2026-07-14T23:30:00Z", ProfSumTo: "2026-07-15T00:30:00Z"}
+	if got, want := profileWindowLabel(Scope{Timeframe: closed}, midnight), "selected window (Jul 14 23:30–Jul 15 00:30 UTC)"; got != want {
+		t.Errorf("across midnight: %q, want %q", got, want)
 	}
 }

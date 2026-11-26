@@ -22,6 +22,7 @@ import (
 	"github.com/Dynatrace/dtctl/sdk/session"
 	"github.com/dynatrace-oss/dtui/internal/tui"
 	"github.com/dynatrace-oss/dtui/internal/tui/catalog"
+	"github.com/spf13/pflag"
 )
 
 var updateScenarios = flag.Bool("update", false, "rewrite internal/tui/testdata/profiling/*.json with the sources' current output")
@@ -606,9 +607,16 @@ func (p *recordingProfiler) Hotspots(_ context.Context, q profileQuery) (hotspot
 	return emptyHotspots{}, nil
 }
 
-func (p *recordingProfiler) Allocations(context.Context, profileQuery) (allocationReading, error) {
-	return nil, errors.New("unused")
+func (p *recordingProfiler) Allocations(_ context.Context, q profileQuery) (allocationReading, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.queries = append(p.queries, q)
+	return emptyAllocations{}, nil
 }
+
+type emptyAllocations struct{}
+
+func (emptyAllocations) Paths() ([]allocationRow, int64, int64, string) { return nil, 0, 0, "" }
 
 func (p *recordingProfiler) asked() int {
 	p.mu.Lock()
@@ -1229,5 +1237,135 @@ func TestLaunchingProfilingNeedsAProcessID(t *testing.T) {
 	msg := tui.NavigateMsg{Target: "logs"}
 	if err := resolveLaunchArg(&msg, "checkout"); err != nil || msg.Filter != "checkout" {
 		t.Errorf("logs checkout: %v, filter %q", err, msg.Filter)
+	}
+}
+
+// echoArgs splits an echoed command line into arguments, the way a shell
+// reads the single-quoted ones.
+func echoArgs(t *testing.T, line string) []string {
+	t.Helper()
+	var args []string
+	var cur strings.Builder
+	quoted, open := false, false
+	for _, r := range line {
+		switch {
+		case r == '\'':
+			quoted, open = !quoted, true
+		case r == ' ' && !quoted:
+			if cur.Len() > 0 || open {
+				args = append(args, cur.String())
+			}
+			cur.Reset()
+			open = false
+		default:
+			cur.WriteRune(r)
+		}
+	}
+	if quoted {
+		t.Fatalf("unbalanced quote in %s", line)
+	}
+	if cur.Len() > 0 || open {
+		args = append(args, cur.String())
+	}
+	return args
+}
+
+// The echoed command, pasted into a shell, asks for what the view asked for:
+// the same process, the same window to the millisecond, the waiting threads,
+// the thread state and as many rows as the view holds. The flags are read
+// with a flag set that mirrors `dtctl exec profiling` (its own is not
+// exported), with dtctl's defaults, and the window with dtctl's own rule.
+func TestProfilingEchoReproducesTheRequest(t *testing.T) {
+	prev := catalog.Now
+	catalog.Now = func() time.Time { return scenarioNow }
+	t.Cleanup(func() { catalog.Now = prev })
+	spec := catalog.Lookup("hotspots")
+	at := func(d time.Duration) time.Time { return scenarioNow.Add(d) }
+
+	for _, tc := range []struct {
+		name string
+		tf   catalog.Timeframe
+	}{
+		{"last 30m", timeframe(t, "30m")},
+		{"last 2h", timeframe(t, "2h")},
+		{"last 24h", timeframe(t, "24h")},
+		{"a closed hour", catalog.Timeframe{From: at(-3 * time.Hour), To: at(-2 * time.Hour), Dur: time.Hour}},
+		{"under a second", catalog.Timeframe{From: at(-time.Hour), To: at(-time.Hour + 250*time.Millisecond), Dur: 250 * time.Millisecond}},
+		{"a closed day", catalog.Timeframe{From: at(-30 * time.Hour), To: at(-6 * time.Hour), Dur: 24 * time.Hour}},
+		{"open, within two hours", catalog.Timeframe{From: at(-90*time.Minute + 123*time.Millisecond), Dur: 90 * time.Minute}},
+		{"open, longer", catalog.Timeframe{From: at(-5 * time.Hour), Dur: 5 * time.Hour}},
+	} {
+		for _, view := range []struct {
+			lens, arg string
+			limit     int
+		}{
+			{"running", "", 300},
+			{"lock", "", 300},
+			{"wait", "com.example.shop.CartService.total", 25},
+			{"allocations", "", 300},
+		} {
+			p := &recordingProfiler{}
+			src, _ := sourcesAt(p, "")
+			scope := catalog.Scope{Entity: shopProcess, Timeframe: tc.tf, Lens: lensIndex(t, view.lens), Arg: view.arg}
+			if _, err := src(context.Background(), scope, ""); err != nil {
+				t.Fatalf("%s %s: %v", tc.name, view.lens, err)
+			}
+			sent := p.queries[0]
+
+			echo := spec.Echo(scope, "")
+			args := echoArgs(t, echo)
+			kind := "hotspots"
+			if view.lens == "allocations" {
+				kind = "allocations"
+			}
+			if len(args) < 6 || strings.Join(args[:4], " ") != "dtctl exec profiling "+kind {
+				t.Fatalf("%s %s echoes %s", tc.name, view.lens, echo)
+			}
+			fs := pflag.NewFlagSet(kind, pflag.ContinueOnError)
+			start := fs.String("default-timeframe-start", "", "")
+			end := fs.String("default-timeframe-end", "", "")
+			limit := fs.Int("limit", 100, "")
+			showWaiting, state, focus, viewFlag := new(bool), new(string), new(string), new(string)
+			if kind == "hotspots" {
+				showWaiting = fs.Bool("show-waiting", false, "")
+				state = fs.String("state", "running", "")
+				focus = fs.String("focus", "", "")
+				viewFlag = fs.String("view", "stacks", "")
+			}
+			if err := fs.Parse(args[4:]); err != nil {
+				t.Fatalf("%s %s: %v in %s", tc.name, view.lens, err, echo)
+			}
+			if fs.NArg() != 1 || fs.Arg(0) != sent.Entity {
+				t.Errorf("%s %s: the echo names %v, the request %s", tc.name, view.lens, fs.Args(), sent.Entity)
+			}
+			w, err := profiling.ResolveWindow(*start, *end, scenarioNow)
+			if err != nil {
+				t.Fatalf("%s %s: dtctl refuses the echoed window: %v (%s)", tc.name, view.lens, err, echo)
+			}
+			if w.From != sent.From.UnixMilli() || w.To != sent.To.UnixMilli() {
+				t.Errorf("%s %s: the echo resolves to %d–%d, the request was %d–%d\n%s",
+					tc.name, view.lens, w.From, w.To, sent.From.UnixMilli(), sent.To.UnixMilli(), echo)
+			}
+			if *limit != view.limit {
+				t.Errorf("%s %s: --limit %d, the view holds up to %d", tc.name, view.lens, *limit, view.limit)
+			}
+			if kind == "allocations" {
+				continue
+			}
+			wantView := "functions"
+			if view.arg != "" {
+				wantView = "stacks" // dtctl's default: --focus takes no --view
+			}
+			if !*showWaiting || *state != view.lens || *focus != view.arg || *viewFlag != wantView {
+				t.Errorf("%s %s: show-waiting=%v state=%s focus=%q view=%s\n%s",
+					tc.name, view.lens, *showWaiting, *state, *focus, *viewFlag, echo)
+			}
+		}
+	}
+
+	// An entity no analysis runs on is not echoed as if it could be pasted.
+	service := catalog.Scope{Timeframe: timeframe(t, "2h"), Entity: &catalog.Entity{ID: "SERVICE-000000000000B001", Type: "SERVICE"}}
+	if got := echoArgs(t, spec.Echo(service, ""))[4]; got != "<PROCESS-id>" {
+		t.Errorf("a service scope echoes %s, want the placeholder", got)
 	}
 }

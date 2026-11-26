@@ -1,6 +1,6 @@
 {"view":"hotspots","entity":{"id":"PROCESS-000000000000A001","name":"shop-backend","type":"PROCESS"},"timeframe":"24h","lens":"lock",
 "records":[
-{"__summary":true,"fixture":"java-webapp","from":"2026-07-15T10:00:00Z","rows":46,"samples":11353,"to":"2026-07-15T12:00:00Z"},
+{"__summary":true,"clamped":true,"fixture":"java-webapp","from":"2026-07-15T10:00:00Z","rows":46,"samples":11353,"to":"2026-07-15T12:00:00Z"},
 {"__process.id":"PROCESS-000000000000A001","__process.name":"shop-backend","function":"java.util.concurrent.locks.LockSupport.parkNanos","paths":8,"self":8818,"selfPct":77.7,"total":8818,"totalPct":77.7},
 {"__process.id":"PROCESS-000000000000A001","__process.name":"shop-backend","function":"com.example.shop.checkout.OrderNumberGenerator.next","paths":1,"self":2260,"selfPct":19.9,"total":2260,"totalPct":19.9},
 {"__process.id":"PROCESS-000000000000A001","__process.name":"shop-backend","function":"com.example.shop.session.SessionStore.evictExpired","paths":1,"self":180,"selfPct":1.6,"total":180,"totalPct":1.6},
