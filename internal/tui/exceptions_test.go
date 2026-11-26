@@ -477,3 +477,20 @@ func TestExceptionsEmptyCutSampleClaimsNoEmptyTimeframe(t *testing.T) {
 		}
 	}
 }
+
+// An issue last seen on another day shows its date and its time. Beside the
+// preview pane the fixed columns are squeezed, and LAST must not give up the
+// minute for it.
+func TestExceptionsLastSeenKeepsItsTimeWhenSqueezed(t *testing.T) {
+	pinSnapshotClock(t)
+	a := testApp(t, "exceptions")
+	seedSample(t, a, []map[string]any{
+		issueSpanRecord(1, "2026-07-14T23:58:07.000000000Z", "cart", "java.lang.IllegalStateException", "cart 1 is locked", issueCartStack),
+	}, nil)
+	for _, size := range snapshotSizes {
+		a.Update(tea.WindowSizeMsg{Width: size.w, Height: size.h})
+		if out := screen(a); !strings.Contains(out, "  Jul 14 23:58  ") {
+			t.Errorf("%dx%d: LAST lost part of the time:\n%s", size.w, size.h, out)
+		}
+	}
+}

@@ -2,13 +2,13 @@
  exceptions ───────────────────────────────────────────────────────────────────────────────────────────────────────────
  6 rows · 1s                                                          │ java.lang.IllegalStateException
  last 2h · limit hit: newest 1000 exception spans, back to 11:48:19;… │
- COUNT  LAST        EXCEPTION           MESSAGE    SERVICE     BY     │  issue: e1:8d92c7fb9207
-▌  650  11:59:59    lang.IllegalState…  cart <n>…  cart +1     app    │  in sample: 650 spans
-   100  11:59:56    sql.SQLException    connecti…  orders      app    │  grouped by: app frames
-   100  11:59:53    TimeoutError        upstream…  payments    app    │  message
-    50  11:59:49    TypeError           Cannot r…  frontend    app    │   cart <n> is locked
-    50  11:59:47    HttpError           HTTP 503…  inventory   messa… │  thrown at: com.example.shop.cart.CartService.…
-    50  11:59:45    (nothing recorded)             legacy-ba…         │  then: com.example.shop.web.CartController.post
+ COUNT  LAST          EXCEPTION          MESSAGE   SERVICE     BY     │  issue: e1:8d92c7fb9207
+▌  650  11:59:59      lang.IllegalStat…  cart <n…  cart +1     app    │  in sample: 650 spans
+   100  11:59:56      sql.SQLException   connect…  orders      app    │  grouped by: app frames
+   100  11:59:53      TimeoutError       upstrea…  payments    app    │  message
+    50  11:59:49      TypeError          Cannot …  frontend    app    │   cart <n> is locked
+    50  11:59:47      HttpError          HTTP 50…  inventory   messa… │  thrown at: com.example.shop.cart.CartService.…
+    50  11:59:45      (nothing recorde…            legacy-ba…         │  then: com.example.shop.web.CartController.post
                                                                       │  services: cart, checkout
                                                                       │  last seen: 11:59:59
                                                                       │  first seen: 11:48:21

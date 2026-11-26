@@ -73,7 +73,8 @@ var exceptionsSpec = &Spec{
 		{Title: "COUNT", Width: 5, Right: true,
 			Value: func(rec map[string]any) string { return strconv.Itoa(issueOf(rec).Count) },
 			Sort:  func(rec map[string]any) any { return issueOf(rec).Count }},
-		{Title: "LAST", Width: 12,
+		// Min keeps "Jan 02 15:04" whole when the fixed columns are squeezed.
+		{Title: "LAST", Width: 12, Min: 12,
 			Value: func(rec map[string]any) string { return FormatTime(issueOf(rec).Newest) },
 			Sort:  func(rec map[string]any) any { return issueOf(rec).Newest }},
 		{Title: "EXCEPTION", Width: 22, Min: 12, Class: func(string) string { return "error" },
