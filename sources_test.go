@@ -427,8 +427,10 @@ func TestWebHostWiresEveryAPIView(t *testing.T) {
 	if start < 0 {
 		t.Fatal("cmd/web/sources.go has no tuiSources")
 	}
-	wiring = wiring[start:]
-	wiring = wiring[:strings.Index(wiring, "\n}\n")]
+	wiring, _, closed := strings.Cut(wiring[start:], "\n}\n")
+	if !closed {
+		t.Fatal("cmd/web/sources.go: tuiSources has no end")
+	}
 	c, err := session.NewClient("https://env.example.invalid", "token")
 	if err != nil {
 		t.Fatal(err)

@@ -1247,7 +1247,7 @@ func TestProfilingEchoReproducesTheRequest(t *testing.T) {
 	catalog.Now = func() time.Time { return scenarioNow }
 	t.Cleanup(func() { catalog.Now = prev })
 	spec := catalog.Lookup("hotspots")
-	at := func(d time.Duration) time.Time { return scenarioNow.Add(d) }
+	at := scenarioNow.Add
 
 	for _, tc := range []struct {
 		name string
