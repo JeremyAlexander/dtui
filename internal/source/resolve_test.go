@@ -216,6 +216,10 @@ func TestResolveIsConfinedToTheRoot(t *testing.T) {
 		"com.example.shop.CartService.add\x1b[31mItem",
 		"com.example.shop.CartService.(?s).*",
 		"com.example.shop.CartService.[",
+		"com.example.shop.CartService.add\xffItem",
+		"github.com/acme/shop/api/internal/cart.(*Ser\xffvice).AddItem",
+		"Legacy.Cart\xffService.Missing",
+		"Legacy\xff.CartService.Missing",
 		strings.Repeat("a.", 5000) + "B.c",
 		strings.Repeat("../", 2000) + "passwd.py:root",
 	} {

@@ -205,7 +205,7 @@ func (ix *Index) locate(rel string, f Frame, pkg string) (Match, holds) {
 	defer file.Close()
 	var inPackage *regexp.Regexp
 	if pkg != "" {
-		inPackage = regexp.MustCompile(`^\s*(?:package|namespace|Namespace)\s+` + regexp.QuoteMeta(pkg) + `\s*[;{]?\s*$`)
+		inPackage = compile(`^\s*(?:package|namespace|Namespace)\s+` + regexp.QuoteMeta(pkg) + `\s*[;{]?\s*$`)
 	}
 	pkgSeen := false
 
@@ -295,8 +295,19 @@ func declaration(ext string, f Frame) *regexp.Regexp {
 			pattern = `^\s*(?:(?:public|protected|private|internal)\s+)?` + s + `\s*\(`
 		}
 	}
-	return regexp.MustCompile(pattern)
+	return compile(pattern)
 }
+
+// compile is the pattern, or nil for one that does not compile: a name that
+// is not valid UTF-8 cannot be quoted into one, and then matches no line.
+func compile(pattern string) *regexp.Regexp {
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return nil
+	}
+	return re
+}
+
 
 // typeDeclaration is the pattern of the line that declares the frame's type.
 func typeDeclaration(ext string, f Frame) *regexp.Regexp {
@@ -308,7 +319,7 @@ func typeDeclaration(ext string, f Frame) *regexp.Regexp {
 		if f.Notation != Go {
 			return nil // main.main: main is the package
 		}
-		return regexp.MustCompile(`^type\s+` + regexp.QuoteMeta(f.Type) + `\b`)
+		return compile(`^type\s+` + regexp.QuoteMeta(f.Type) + `\b`)
 	}
-	return regexp.MustCompile(`(?i:\b(?:class|interface|enum|record|object|struct|trait|module|type))\s+` + regexp.QuoteMeta(outer) + `\b`)
+	return compile(`(?i:\b(?:class|interface|enum|record|object|struct|trait|module|type))\s+` + regexp.QuoteMeta(outer) + `\b`)
 }
