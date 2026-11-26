@@ -620,7 +620,7 @@ var specs = []*Spec{
 	frontendsSpec, databasesSpec, genaiSpec, vulnsSpec, attacksSpec, metricsSpec,
 	sessionsSpec, userEventsSpec, bizeventsSpec, breakpointsSpec, snapshotsSpec,
 	patternsSpec, slosSpec, detectorsSpec, dashboardsSpec,
-	hotspotsSpec, allocationsSpec,
+	hotspotsSpec,
 	syntheticSpec, executionsSpec,
 	dictionarySpec,
 	tablesSpec, bucketsSpec, filesSpec, recordsSpec,

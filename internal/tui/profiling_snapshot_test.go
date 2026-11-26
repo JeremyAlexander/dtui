@@ -203,8 +203,9 @@ func TestProfilingFocusWalksAndReturns(t *testing.T) {
 	}
 }
 
-// h is the profiling key: from a process into its hotspots, and between
-// hotspots and allocations of the same process.
+// h is the profiling key of a process row. Inside the view it does nothing:
+// allocations are its last lens, so switching to them keeps the view, its
+// place on the trail and the way back to the thread state.
 func TestProfilingDrillsFromAProcess(t *testing.T) {
 	a := testApp(t, "processes")
 	seedRows(t, a, []map[string]any{
@@ -216,11 +217,47 @@ func TestProfilingDrillsFromAProcess(t *testing.T) {
 		t.Fatalf("h on a process opened %s scoped to %+v", hot.spec.Name, hot.scope.Entity)
 	}
 	seedRows(t, a, loadProfilingScenario(t, "hotspots-running").Records)
-	press(a, key("h"))
-	alloc := a.top().(*tableView)
-	if alloc.spec.Name != "allocations" || alloc.scope.Entity == nil || alloc.scope.Entity.ID != "PROCESS-000000000000A001" {
-		t.Fatalf("h on hotspots opened %s scoped to %+v", alloc.spec.Name, alloc.scope.Entity)
+	press(a, key("]")) // lock
+	depth := len(a.stack)
+	for range 6 {
+		press(a, key("h"))
 	}
+	if len(a.stack) != depth || a.top() != viewModel(hot) || hot.scope.Lens != 1 {
+		t.Fatalf("six h presses: stack %d deep (was %d), lens %d", len(a.stack), depth, hot.scope.Lens)
+	}
+	press(a, key("["))
+	press(a, key("[")) // wraps from running to the last lens
+	if len(a.stack) != depth || hot.spec.LensAt(hot.scope.Lens).Name != "allocations" {
+		t.Fatalf("the lens before running is %s, stack %d deep", hot.spec.LensAt(hot.scope.Lens).Name, len(a.stack))
+	}
+	if got := hot.columns()[0].Title; got != "ALLOC" {
+		t.Errorf("the allocations lens shows the column %s first", got)
+	}
+}
+
+// Enter on an allocation path shows the whole record; there is no function
+// to focus.
+func TestEnterOnAnAllocationPathInspects(t *testing.T) {
+	sc := loadProfilingScenario(t, "allocations")
+	a, tv := openProfiling(t, sc)
+	sc.answer(tv)
+	if got := hintFor(tv, "enter"); got != "inspect" {
+		t.Errorf("enter is hinted as %q, want inspect", got)
+	}
+	press(a, key("enter"))
+	if _, ok := a.top().(*tableView); ok {
+		t.Fatalf("enter on an allocation path left the table on top (%T)", a.top())
+	}
+}
+
+// hintFor is the label the footer gives a key on the view, "" if none.
+func hintFor(v *tableView, k string) string {
+	for _, h := range v.Hints() {
+		if h.Key == k {
+			return h.Desc
+		}
+	}
+	return ""
 }
 
 // `:hotspots PROCESS-…` scopes the view; any other argument filters it.

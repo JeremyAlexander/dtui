@@ -1,6 +1,7 @@
  ▛▞▟ dtui  ·  context:test  ·  ● readonly                                                                       last 2h
- allocations (shop-backend) ───────────────────────────────────────────────────────────────────────────────────────────
+ hotspots·allocations (shop-backend) ──────────────────────────────────────────────────────────────────────────────────
  97 rows · 38s
+  running    lock    net_io    disk_io    wait    allocations
  FIXTURE java-webapp (a recording, not this environment) · last 2h (10:00–12:00 UTC)
  134.3 GiB allocated, 152.9 GiB survived* (pressure, not heap content)
       ALLOC  ALLOC ▇    SURVIVED*  SURV/ALLOC        COUNT  SITE ← CALLERS
@@ -34,7 +35,6 @@
   812.0 MiB  ▍          828.2 MiB       1.02×    8,869,205  c.f.j.c.util.TextBuffer.contentsAsString ← UTF8JsonGenerato…
   793.0 MiB  ▍          808.9 MiB       1.02×    8,661,674  c.f.j.c.util.TextBuffer.contentsAsString ← UTF8JsonGenerato…
   789.0 MiB  ▍          796.9 MiB       1.01×    8,617,984  c.example.shop.bundle.BundleMapper.toDto ← BundleService.lo…
-  786.0 MiB  ▍          801.7 MiB       1.02×    8,585,216  c.f.j.c.util.TextBuffer.contentsAsString ← UTF8JsonGenerato…
  * SURVIVED adds an object's bytes once per GC it lived through: not a size, can exceed ALLOC, not live heap
- enter inspect  h hotspots  / filter  J/K sort  : views  t timeframe  S segments  r refresh  ? help  q quit
- ≡ dtctl exec profiling allocations PROCESS-000000000000A001 --default-timeframe-start 'now()-2h'
+ tab lens  enter inspect  / filter  J/K sort  : views  t timeframe  S segments  r refresh  ? help  q quit
+ ✓ lens: allocations — allocated bytes per allocation site and call path

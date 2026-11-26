@@ -1,7 +1,7 @@
  ▛▞▟ dtui  ·  context:test  ·  ● readonly                                                                       last 2h
  hotspots (shop-frontend) ─────────────────────────────────────────────────────────────────────────────────────────────
  0 rows
-  running    lock    net_io    disk_io    wait
+  running    lock    net_io    disk_io    wait    allocations
 
 ✗ SERVICE-000000000000B001 cannot be profiled: an analysis runs on a process (PROCESS-… or PROCESS_GROUP-…), not on a
 service — open the service's processes and press h there
@@ -36,5 +36,5 @@ service — open the service's processes and press h there
 
 
 
- tab lens  enter callers/callees  h allocations  / filter  J/K sort  : views  t timeframe  S segments  r refresh  ? hel…
+ tab lens  / filter  J/K sort  : views  t timeframe  S segments  r refresh  ? help  q quit
  ≡ dtctl exec profiling hotspots SERVICE-000000000000B001 --view functions --state running --default-timeframe-start 'n…

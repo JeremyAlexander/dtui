@@ -10,11 +10,11 @@ import (
 	"github.com/mattn/go-runewidth"
 )
 
-// Code-level profiling of one process: where its threads spend their samples
-// (hotspots) and where it allocates (allocations). Both are API-backed — an
-// analysis is run by the "hotspots" / "allocations" sources in the main
-// package, never by DQL — and both need a process: the scope's Entity, set by
-// the 'h' drill on a processes row or by the command-bar argument
+// Code-level profiling of one process, as one view: where its threads spend
+// their samples, one lens per thread state, and where it allocates, the last
+// lens. It is API-backed — an analysis is run by the "hotspots" source in the
+// main package, never by DQL — and needs a process: the scope's Entity, set
+// by the 'h' drill on a processes row or by the command-bar argument
 // (`hotspots PROCESS-…`).
 //
 // The rows are dtui's own vocabulary (the Prof* keys below), filled in by the
@@ -82,6 +82,7 @@ const (
 const (
 	ProfEmptyNoSamples = "no_samples"       // the window holds no samples at all
 	ProfEmptyState     = "no_state_samples" // no samples in the lens' thread state
+	ProfEmptyFocus     = "focus"            // the allocations lens on a focused function
 )
 
 // Relations of a focus row that the views tell apart; "self" is the fourth.
@@ -94,19 +95,29 @@ const (
 // profRootCaller is the caller of a function nothing above it called.
 const profRootCaller = "(root)"
 
-// HotspotLenses are the thread states the hotspots view counts, one at a
-// time. Name is also the value of dtctl's --state flag. The source reads the
-// state from Scope.Lens; there is no DQL filter to compose.
+// profAllocations names the lens that reads the allocations analysis.
+const profAllocations = "allocations"
+
+// HotspotLenses are the readings of the profiling view: the thread states
+// the hotspots analysis counts, one at a time, and the allocations analysis.
+// A state's Name is also the value of dtctl's --state flag. The source reads
+// the lens from Scope.Lens; there is no DQL filter to compose.
 var HotspotLenses = []Lens{
 	{Name: "running", Desc: "samples on CPU"},
 	{Name: "lock", Desc: "samples waiting for a lock or monitor"},
 	{Name: "net_io", Desc: "samples blocked on network I/O"},
 	{Name: "disk_io", Desc: "samples blocked on disk I/O"},
 	{Name: "wait", Desc: "samples of parked or sleeping threads"},
+	{Name: profAllocations, Desc: "allocated bytes per allocation site and call path", Columns: allocationColumns},
 }
 
-// HotspotState is the thread state a hotspots scope counts.
+// HotspotState is the thread state a hotspots scope counts. It is not one on
+// the allocations lens: see ProfileAllocations.
 func HotspotState(s Scope) string { return lensAt(HotspotLenses, s.Lens).Name }
+
+// ProfileAllocations reports whether the scope reads the allocations
+// analysis and not a thread state of the hotspots one.
+func ProfileAllocations(s Scope) bool { return HotspotState(s) == profAllocations }
 
 // ProfileWindow is the window a profiling view analyses for a timeframe.
 type ProfileWindow struct {
@@ -198,23 +209,27 @@ func profileEntity(rec map[string]any) *Entity {
 	return &Entity{ID: id, Name: Str(rec, ProfEntityName), Type: typ}
 }
 
-func profileLoading(what string) func(Scope) string {
-	return func(s Scope) string {
-		if s.Entity == nil {
-			return ""
-		}
-		name := s.Entity.Name
-		if name == "" {
-			name = s.Entity.ID
-		}
-		return fmt.Sprintf("analysing %s of %s, which can take minutes", what, name)
+func profileLoading(s Scope) string {
+	if s.Entity == nil {
+		return ""
 	}
+	name := s.Entity.Name
+	if name == "" {
+		name = s.Entity.ID
+	}
+	what := "hotspots"
+	if ProfileAllocations(s) {
+		what = "allocations"
+	}
+	return fmt.Sprintf("analysing the %s of %s, which can take minutes", what, name)
 }
 
 func profileEmpty(s Scope, summary map[string]any) string {
 	switch Str(summary, ProfSumEmpty) {
 	case ProfEmptyNoSamples:
 		return "no samples in this window — the process may have been idle or restarted"
+	case ProfEmptyFocus:
+		return "allocations are read per process, not per function — esc returns to the functions, [ and ] to a thread state"
 	case ProfEmptyState:
 		where := "in this window"
 		if s.Arg != "" {
@@ -236,7 +251,7 @@ var hotspotsSpec = &Spec{
 	Name:    "hotspots",
 	Aliases: []string{"hot", "cpu", "profile"},
 	Kind:    KindSignal,
-	Desc:    "CPU and wait hotspots of a process, per function — enter shows callers and callees",
+	Desc:    "CPU, wait and allocation hotspots of a process — enter shows a function's callers and callees",
 	API:     "hotspots",
 	Lenses:  HotspotLenses,
 	Columns: []Column{
@@ -251,7 +266,7 @@ var hotspotsSpec = &Spec{
 	},
 	// A focused function (Scope.Arg) reads as its callers and callees.
 	ScopeColumns: func(s Scope) []Column {
-		if s.Arg == "" {
+		if s.Arg == "" || ProfileAllocations(s) {
 			return nil
 		}
 		return []Column{
@@ -263,6 +278,7 @@ var hotspotsSpec = &Spec{
 		}
 	},
 	Decode: func(records []map[string]any) []map[string]any {
+		stampRelative(records, ProfAllocBytes)
 		// Every bar is a share of the samples counted, on one scale, so
 		// that equal shares draw equal bars and a flat profile looks flat.
 		for _, rec := range records {
@@ -275,6 +291,9 @@ var hotspotsSpec = &Spec{
 		return records
 	},
 	Echo: func(s Scope, _ string) string {
+		if ProfileAllocations(s) {
+			return fmt.Sprintf("dtctl exec profiling allocations %s %s", profileEntityArg(s), profileEchoWindow(s.Timeframe))
+		}
 		var b strings.Builder
 		fmt.Fprintf(&b, "dtctl exec profiling hotspots %s", profileEntityArg(s))
 		if s.Arg != "" {
@@ -291,11 +310,21 @@ var hotspotsSpec = &Spec{
 		return b.String() + " " + profileEchoWindow(s.Timeframe)
 	},
 	Caption: func(s Scope, summary map[string]any) []string {
-		if summary == nil {
+		if summary == nil || Str(summary, ProfSumEmpty) == ProfEmptyFocus {
 			return nil
 		}
 		segs := profileFixture(summary)
 		segs = append(segs, profileWindowLabel(s, summary))
+		if ProfileAllocations(s) {
+			alloc, _ := FloatValue(summary[ProfSumAlloc])
+			survived, _ := FloatValue(summary[ProfSumSurvived])
+			segs = append(segs, fmt.Sprintf("%s allocated, %s survived* (pressure, not heap content)",
+				FormatBytes(int64(alloc)), FormatBytes(int64(survived))))
+			if rows, _ := FloatValue(summary[ProfSumRows]); rows > ProfileRowCap {
+				segs = append(segs, fmt.Sprintf("top %d of %s call paths by allocated bytes", ProfileRowCap, groupInt(int64(rows))))
+			}
+			return segs
+		}
 		state := HotspotState(s)
 		samples, _ := FloatValue(summary[ProfSumSamples])
 		rows, _ := FloatValue(summary[ProfSumRows])
@@ -318,9 +347,15 @@ var hotspotsSpec = &Spec{
 		return segs
 	},
 	Empty:   profileEmpty,
-	Loading: profileLoading("the hotspots"),
+	Loading: profileLoading,
 	// The table shortens long frames; the selected one is spelled out here.
-	Footnote: func(_ Scope, _, selected map[string]any) string {
+	Footnote: func(s Scope, summary, selected map[string]any) string {
+		if ProfileAllocations(s) {
+			if Str(summary, ProfSumEmpty) == ProfEmptyFocus {
+				return ""
+			}
+			return survivedCaveat
+		}
 		if fn := Str(selected, ProfFunction); fn != "" {
 			return "▸ " + fn
 		}
@@ -332,12 +367,15 @@ var hotspotsSpec = &Spec{
 	NoPreview:     true,
 	CancelOnLeave: true,
 	EnterTarget:   "function-focus", // sentinel: the same view, focused on the row's function
-	Drills:        map[string]string{"h": "allocations"},
 }
 
 // FocusTarget names the function enter on a hotspots row focuses: the row's
-// own, unless it is the synthetic root or the function already in focus.
+// own, unless it is the synthetic root or the function already in focus. An
+// allocation path has none.
 func FocusTarget(s Scope, rec map[string]any) string {
+	if ProfileAllocations(s) {
+		return ""
+	}
 	fn := Str(rec, ProfFunction)
 	if fn == profRootCaller || fn == s.Arg {
 		return ""
@@ -367,45 +405,6 @@ var allocationColumns = []Column{
 		Title: "SITE ← CALLERS", Value: allocationPathText, ValueW: allocationPath,
 		Sort: func(rec map[string]any) any { return allocationPathText(rec) },
 	},
-}
-
-var allocationsSpec = &Spec{
-	Name:    "allocations",
-	Aliases: []string{"alloc", "allocs", "memory"},
-	Kind:    KindSignal,
-	Desc:    "Allocation pressure of a process, per allocation site and call path",
-	API:     "allocations",
-	Columns: allocationColumns,
-	Decode: func(records []map[string]any) []map[string]any {
-		stampRelative(records, ProfAllocBytes)
-		return records
-	},
-	Echo: func(s Scope, _ string) string {
-		return fmt.Sprintf("dtctl exec profiling allocations %s %s", profileEntityArg(s), profileEchoWindow(s.Timeframe))
-	},
-	Caption: func(s Scope, summary map[string]any) []string {
-		if summary == nil {
-			return nil
-		}
-		segs := profileFixture(summary)
-		segs = append(segs, profileWindowLabel(s, summary))
-		alloc, _ := FloatValue(summary[ProfSumAlloc])
-		survived, _ := FloatValue(summary[ProfSumSurvived])
-		segs = append(segs, fmt.Sprintf("%s allocated, %s survived* (pressure, not heap content)",
-			FormatBytes(int64(alloc)), FormatBytes(int64(survived))))
-		if rows, _ := FloatValue(summary[ProfSumRows]); rows > ProfileRowCap {
-			segs = append(segs, fmt.Sprintf("%d of %s call paths", ProfileRowCap, groupInt(int64(rows))))
-		}
-		return segs
-	},
-	Empty:         profileEmpty,
-	Loading:       profileLoading("the allocations"),
-	Footnote:      func(Scope, map[string]any, map[string]any) string { return survivedCaveat },
-	Entity:        profileEntity,
-	EntityArg:     true,
-	NoPreview:     true,
-	CancelOnLeave: true,
-	Drills:        map[string]string{"h": "hotspots"},
 }
 
 // --- cells --------------------------------------------------------------------

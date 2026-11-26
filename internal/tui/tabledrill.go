@@ -50,7 +50,15 @@ var enterHandlers = map[string]enterHandler{
 	},
 	"function-focus": {
 		open: (*tableView).openFunctionFocus,
-		hint: func(*tableView) string { return "callers/callees" },
+		hint: func(v *tableView) string {
+			switch {
+			case len(v.rows) == 0:
+				return ""
+			case catalog.ProfileAllocations(v.scope):
+				return "inspect"
+			}
+			return "callers/callees"
+		},
 	},
 	// Page tabs whose rows are slices of the page's own subject (a
 	// vulnerability's entities/timeline): enter shows the full record
@@ -200,6 +208,9 @@ func (v *tableView) openModelFields(rec map[string]any) tea.Cmd {
 // function's callers and callees. Enter on one of those walks the call graph;
 // esc walks back.
 func (v *tableView) openFunctionFocus(rec map[string]any) tea.Cmd {
+	if catalog.ProfileAllocations(v.scope) {
+		return v.inspect(rec) // an allocation path names no single function
+	}
 	fn := catalog.FocusTarget(v.scope, rec)
 	if fn == "" {
 		return status("this row is the function in focus — enter a caller or callee to walk on")

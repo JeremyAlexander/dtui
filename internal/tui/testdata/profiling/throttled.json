@@ -1,3 +1,3 @@
-{"view":"allocations","entity":{"id":"PROCESS-000000000000A001","name":"shop-backend","type":"PROCESS"},"timeframe":"2h","error":"the environment is throttling profiling requests (429) and kept refusing this one — wait a moment, then press r",
+{"view":"hotspots","entity":{"id":"PROCESS-000000000000A001","name":"shop-backend","type":"PROCESS"},"timeframe":"2h","lens":"allocations","error":"the environment is throttling profiling requests (429) and kept refusing this one — wait a moment, then press r",
 "records":[
 ]}

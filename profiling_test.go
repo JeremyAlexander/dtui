@@ -105,11 +105,16 @@ func fixtureProfilerAt(t *testing.T, path string) *fixtureProfiler {
 	return p
 }
 
-// sourcesAt builds both sources with the analysis clock pinned.
+// sourcesAt builds the view's source with the analysis clock pinned, as its
+// two readings: the thread states, and the allocations lens.
 func sourcesAt(p profiler, fixture string) (hotspots, allocations tui.Source) {
 	runs := newProfileRuns()
 	runs.now = func() time.Time { return scenarioNow }
-	return hotspotsSource(p, runs, fixture), allocationsSource(p, runs, fixture)
+	src := profileSource(p, runs, fixture)
+	return src, func(ctx context.Context, scope catalog.Scope, query string) ([]map[string]any, error) {
+		scope.Lens = len(catalog.HotspotLenses) - 1
+		return src(ctx, scope, query)
+	}
 }
 
 func lensIndex(t *testing.T, name string) int {
@@ -152,7 +157,7 @@ func TestProfilingScenarios(t *testing.T) {
 		// A 24h selection: the analysis covers its last 2h, and says so.
 		{"hotspots-lock", fixture, profilingScenario{View: "hotspots", Entity: shop, Timeframe: "24h", Lens: "lock"}},
 		{"hotspots-focus", fixture, profilingScenario{View: "hotspots", Entity: shop, Timeframe: "2h", Lens: "running", Arg: hot}},
-		{"allocations", fixture, profilingScenario{View: "allocations", Entity: shop, Timeframe: "2h"}},
+		{"allocations", fixture, profilingScenario{View: "hotspots", Entity: shop, Timeframe: "2h", Lens: "allocations"}},
 		{"no-data", profilerOver(t, answering(200, nil, `{"dataRootNodeId":"0","dataNodes":[]}`)),
 			profilingScenario{View: "hotspots", Entity: shop, Timeframe: "2h", Lens: "running"}},
 		{"no-lock-samples", profilerOver(t, answering(200, nil, `{"dataRootNodeId":"1","dataNodes":[
@@ -163,7 +168,7 @@ func TestProfilingScenarios(t *testing.T) {
 		{"not-found", profilerOver(t, answering(404, nil, apiError(404, "Not found"))),
 			profilingScenario{View: "hotspots", Entity: shop, Timeframe: "2h", Lens: "running"}},
 		{"throttled", profilerOver(t, answering(429, http.Header{"Retry-After": []string{"0"}}, apiError(429, "Too many requests"))),
-			profilingScenario{View: "allocations", Entity: shop, Timeframe: "2h"}},
+			profilingScenario{View: "hotspots", Entity: shop, Timeframe: "2h", Lens: "allocations"}},
 		{"service-refused", fixture, profilingScenario{View: "hotspots", Timeframe: "2h", Lens: "running",
 			Entity: &scenarioEntity{ID: "SERVICE-000000000000B001", Name: "shop-frontend", Type: "SERVICE"}}},
 		{"no-process", fixture, profilingScenario{View: "hotspots", Timeframe: "2h", Lens: "running"}},
@@ -175,13 +180,8 @@ func TestProfilingScenarios(t *testing.T) {
 			if tc.p == profiler(fixture) {
 				name = filepath.Base(profilingFixture)
 			}
-			hotspots, allocations := sourcesAt(tc.p, name)
-			scope := catalog.Scope{Entity: sc.Entity.entity(), Timeframe: timeframe(t, sc.Timeframe), Arg: sc.Arg}
-			src := allocations
-			if sc.View == "hotspots" {
-				src = hotspots
-				scope.Lens = lensIndex(t, sc.Lens)
-			}
+			src, _ := sourcesAt(tc.p, name)
+			scope := catalog.Scope{Entity: sc.Entity.entity(), Timeframe: timeframe(t, sc.Timeframe), Arg: sc.Arg, Lens: lensIndex(t, sc.Lens)}
 			records, err := src(context.Background(), scope, "")
 			if err != nil {
 				sc.Error = err.Error()
@@ -351,7 +351,7 @@ func TestProfilingSourcesHonourTheFixtureSwitch(t *testing.T) {
 	scope := catalog.Scope{Entity: shopProcess, Timeframe: timeframe(t, "2h")}
 
 	t.Setenv(profilingFixtureEnv, profilingFixture)
-	hotspots, _ := profilingSourcesFor(c)
+	hotspots := profilingSourceFor(c)
 	records, err := hotspots(context.Background(), scope, "")
 	if err != nil {
 		t.Fatal(err)
@@ -361,11 +361,8 @@ func TestProfilingSourcesHonourTheFixtureSwitch(t *testing.T) {
 	}
 
 	t.Setenv(profilingFixtureEnv, filepath.Join(t.TempDir(), "missing"))
-	hotspots, allocations := profilingSourcesFor(c)
-	for _, src := range []tui.Source{hotspots, allocations} {
-		if _, err := src(context.Background(), scope, ""); err == nil || !strings.Contains(err.Error(), profilingFixtureEnv) {
-			t.Errorf("a missing fixture must fail naming the switch, got %v", err)
-		}
+	if _, err := profilingSourceFor(c)(context.Background(), scope, ""); err == nil || !strings.Contains(err.Error(), profilingFixtureEnv) {
+		t.Errorf("a missing fixture must fail naming the switch, got %v", err)
 	}
 }
 
@@ -1177,5 +1174,24 @@ func TestProfilingFocusCapsEachDirection(t *testing.T) {
 	}
 	if last := rows[len(rows)-1]; catalog.Str(last, catalog.ProfRelation) != "callee" {
 		t.Errorf("the last row is a %s, want a callee", catalog.Str(last, catalog.ProfRelation))
+	}
+}
+
+// The allocations lens on a focused function asks the environment for
+// nothing: the analysis is of the process, and the view says so.
+func TestProfilingFocusHasNoAllocationsReading(t *testing.T) {
+	p := &recordingProfiler{}
+	_, allocations := sourcesAt(p, "")
+	records, err := allocations(context.Background(),
+		catalog.Scope{Entity: shopProcess, Timeframe: timeframe(t, "2h"), Arg: "com.example.X.run"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	summary, rows := catalog.SplitSummary(records)
+	if len(rows) != 0 || summary[catalog.ProfSumEmpty] != catalog.ProfEmptyFocus {
+		t.Errorf("%d rows, empty=%v; want none and %s", len(rows), summary[catalog.ProfSumEmpty], catalog.ProfEmptyFocus)
+	}
+	if n := p.asked(); n != 0 {
+		t.Errorf("asked for %d analyses", n)
 	}
 }

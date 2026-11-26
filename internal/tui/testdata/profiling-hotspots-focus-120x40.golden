@@ -1,7 +1,7 @@
  ▛▞▟ dtui  ·  context:test  ·  ● readonly                                                                       last 2h
  hotspots (shop-backend) › hotspots (UTF8JsonGenerator.writeString) (shop-backend) ────────────────────────────────────
  28 rows · 38s
-  running    lock    net_io    disk_io    wait
+  running    lock    net_io    disk_io    wait    allocations
  FIXTURE java-webapp (a recording, not this environment) · last 2h (10:00–12:00 UTC)
  19,223 running samples with the function on the stack · top 25 of 85 callers · all threads, leaf: total
  RELATION  SHARE%  SHARE ▇    SAMPLES  FUNCTION
@@ -36,5 +36,5 @@
 
 
  ▸ com.fasterxml.jackson.core.json.UTF8JsonGenerator.writeString
- tab lens  enter callers/callees  h allocations  / filter  J/K sort  : views  t timeframe  S segments  r refresh  esc b…
+ tab lens  enter callers/callees  / filter  J/K sort  : views  t timeframe  S segments  r refresh  esc back  ? help  q …
  ≡ dtctl exec profiling hotspots PROCESS-000000000000A001 --focus 'com.fasterxml.jackson.core.json.UTF8JsonGenerator.wr…

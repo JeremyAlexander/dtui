@@ -1,6 +1,7 @@
  ▛▞▟ dtui  ·  context:test  ·  ● readonly                               last 2h
- allocations (shop-backend) ───────────────────────────────────────────────────
+ hotspots·allocations (shop-backend) ──────────────────────────────────────────
  0 rows
+  running    lock    net_io    disk_io    wait    allocations
 
 ✗ the environment is throttling profiling requests (429) and kept refusing this
 one — wait a moment, then press r
@@ -19,6 +20,5 @@ one — wait a moment, then press r
 
 
 
-
- enter inspect  h hotspots  / filter  J/K sort  : views  t timeframe  S segment…
- ≡ dtctl exec profiling allocations PROCESS-000000000000A001 --default-timefram…
+ tab lens  / filter  J/K sort  : views  t timeframe  S segments  r refresh  ? h…
+ ✓ lens: allocations — allocated bytes per allocation site and call path

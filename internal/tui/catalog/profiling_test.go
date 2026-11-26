@@ -138,7 +138,7 @@ func TestSplitSummary(t *testing.T) {
 		t.Errorf("no records: %v, %v", summary, rows)
 	}
 	for _, s := range All() {
-		if want := s.Name == "hotspots" || s.Name == "allocations"; s.ReadsSummary() != want {
+		if want := s.Name == "hotspots"; s.ReadsSummary() != want {
 			t.Errorf("%s: ReadsSummary = %v, want %v", s.Name, s.ReadsSummary(), want)
 		}
 	}
@@ -296,5 +296,56 @@ func TestHotspotBarsShareOneScale(t *testing.T) {
 	}
 	if k := selfBar.Sort(rows[0]); k != 0.04 {
 		t.Errorf("the 4%% self bar sorts as %v, want 0.04", k)
+	}
+}
+
+// Allocations are a lens of the one profiling view, next to the thread
+// states: there is no second view to flip to.
+func TestAllocationsAreALensOfHotspots(t *testing.T) {
+	for _, name := range []string{"allocations", "alloc", "allocs", "memory"} {
+		if Lookup(name) != nil {
+			t.Errorf(":%s still names a view", name)
+		}
+	}
+	spec := Lookup("hotspots")
+	var names []string
+	for _, l := range spec.Lenses {
+		names = append(names, l.Name)
+	}
+	if got := strings.Join(names, " "); got != "running lock net_io disk_io wait allocations" {
+		t.Fatalf("lenses: %s", got)
+	}
+	if _, ok := spec.Drills["h"]; ok {
+		t.Error("h still drills from the profiling view")
+	}
+	alloc := Scope{Lens: 5, Entity: &Entity{ID: "PROCESS-000000000000A001", Name: "shop-backend"}}
+	alloc.Timeframe, _ = ParseTimeframe("2h")
+	if !ProfileAllocations(alloc) || ProfileAllocations(Scope{Lens: 1}) {
+		t.Error("ProfileAllocations must be true on the allocations lens only")
+	}
+	if got := spec.LensAt(5).Columns[0].Title; got != "ALLOC" {
+		t.Errorf("first column of the lens is %s", got)
+	}
+	if cols := spec.ScopeColumns(Scope{Lens: 5, Arg: "a.B.c"}); cols != nil {
+		t.Errorf("a focused function keeps the lens' columns, got %d of its own", len(cols))
+	}
+	if got := spec.Loading(alloc); got != "analysing the allocations of shop-backend, which can take minutes" {
+		t.Errorf("loading line: %q", got)
+	}
+	if got := spec.Footnote(alloc, nil, nil); got != survivedCaveat {
+		t.Errorf("footnote: %q", got)
+	}
+	if got := spec.Echo(alloc, ""); !strings.HasPrefix(got, "dtctl exec profiling allocations PROCESS-000000000000A001 ") {
+		t.Errorf("echo: %q", got)
+	}
+	// A function in focus has no allocations of its own to show.
+	const want = "allocations are read per process, not per function — esc returns to the functions, [ and ] to a thread state"
+	focused := alloc
+	focused.Arg = "a.B.c"
+	if got := spec.Empty(focused, map[string]any{ProfSumEmpty: ProfEmptyFocus}); got != want {
+		t.Errorf("empty text: %q", got)
+	}
+	if got := spec.Caption(focused, map[string]any{ProfSumEmpty: ProfEmptyFocus}); got != nil {
+		t.Errorf("caption over the refusal: %q", got)
 	}
 }

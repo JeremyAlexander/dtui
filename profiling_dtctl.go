@@ -248,23 +248,22 @@ const profilingFixtureEnv = "DTUI_PROFILING_FIXTURE"
 // duration, "8s"), to look at the loading state.
 const profilingFixtureDelayEnv = "DTUI_PROFILING_FIXTURE_DELAY"
 
-// profilingSourcesFor builds the hotspots and allocations sources: over the
+// profilingSourceFor builds the source of the profiling view: over the
 // environment c talks to, or over a recorded analysis when the developer
 // switch names one.
-func profilingSourcesFor(c *session.Client) (hotspots, allocations tui.Source) {
+func profilingSourceFor(c *session.Client) tui.Source {
 	path := os.Getenv(profilingFixtureEnv)
 	if path == "" {
-		return profileSources(newDtctlProfiler(c), "")
+		return profileSource(newDtctlProfiler(c), newProfileRuns(), "")
 	}
 	delay, _ := time.ParseDuration(os.Getenv(profilingFixtureDelayEnv))
 	p, err := newFixtureProfiler(path, delay)
 	if err != nil {
-		failed := func(context.Context, catalog.Scope, string) ([]map[string]any, error) {
+		return func(context.Context, catalog.Scope, string) ([]map[string]any, error) {
 			return nil, fmt.Errorf("%s: %w", profilingFixtureEnv, err)
 		}
-		return failed, failed
 	}
-	return profileSources(p, filepath.Base(path))
+	return profileSource(p, newProfileRuns(), filepath.Base(path))
 }
 
 // recordedAnalysis is one analysis as `--raw -o json` prints it.

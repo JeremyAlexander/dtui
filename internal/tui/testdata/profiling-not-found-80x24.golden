@@ -1,7 +1,7 @@
  ▛▞▟ dtui  ·  context:test  ·  ● readonly                               last 2h
  hotspots (shop-backend) ──────────────────────────────────────────────────────
  0 rows
-  running    lock    net_io    disk_io    wait
+  running    lock    net_io    disk_io    wait    allocations
 
 ✗ the environment knows no process PROCESS-000000000000A001 (404): process
 instances are short-lived, and ids belong to one environment — pick a current
@@ -20,5 +20,5 @@ one from :processes
 
 
 
- tab lens  enter callers/callees  h allocations  / filter  J/K sort  : views  t…
+ tab lens  / filter  J/K sort  : views  t timeframe  S segments  r refresh  ? h…
  ≡ dtctl exec profiling hotspots PROCESS-000000000000A001 --view functions --st…

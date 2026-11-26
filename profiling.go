@@ -367,12 +367,23 @@ func (run *profileRun) finished() bool {
 	}
 }
 
-// profileSources builds the hotspots and allocations sources over one
-// profiler. fixture names the recorded analysis they serve ("" = live); it
-// goes into every summary so the view can say so.
-func profileSources(p profiler, fixture string) (hotspots, allocations tui.Source) {
-	runs := newProfileRuns()
-	return hotspotsSource(p, runs, fixture), allocationsSource(p, runs, fixture)
+// profileSource builds the source of the profiling view over one profiler:
+// the allocations analysis for its allocations lens, the hotspots analysis
+// for every other. fixture names the recorded analysis it serves ("" =
+// live); it goes into every summary so the view can say so.
+func profileSource(p profiler, runs *profileRuns, fixture string) tui.Source {
+	hotspots, allocations := hotspotsSource(p, runs, fixture), allocationsSource(p, runs, fixture)
+	return func(ctx context.Context, scope catalog.Scope, query string) ([]map[string]any, error) {
+		switch {
+		case !catalog.ProfileAllocations(scope):
+			return hotspots(ctx, scope, query)
+		case scope.Arg != "":
+			// The allocations analysis is of the process; it has no
+			// reading for one function. Nothing is asked for.
+			return []map[string]any{{catalog.SummaryKey: true, catalog.ProfSumEmpty: catalog.ProfEmptyFocus}}, nil
+		}
+		return allocations(ctx, scope, query)
+	}
 }
 
 // profileTarget is the process a profiling scope analyses and the id the
@@ -518,7 +529,7 @@ func hotspotsSource(p profiler, runs *profileRuns, fixture string) tui.Source {
 	}
 }
 
-// allocationsSource serves the allocations view: one row per allocation site
+// allocationsSource serves the allocations lens: one row per allocation site
 // and call path.
 func allocationsSource(p profiler, runs *profileRuns, fixture string) tui.Source {
 	return func(ctx context.Context, scope catalog.Scope, _ string) ([]map[string]any, error) {
