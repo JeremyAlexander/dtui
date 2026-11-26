@@ -127,8 +127,10 @@ func escapePath(slashed string) string {
 }
 
 // URL is the link that opens an absolute path in the editor, at a line when
-// one is known (line > 0). Every byte of the path that could end the path
-// or start another part of the link is percent-encoded.
+// one is known (line > 0). The path is the platform's own: a volume name
+// (C:, \\server\share) becomes the path's first part. Every byte of the path
+// that could end the path or start another part of the link is
+// percent-encoded.
 func (e Editor) URL(abs string, line int) (string, error) {
 	if e.scheme == "" {
 		return "", fmt.Errorf("no editor")
@@ -140,6 +142,12 @@ func (e Editor) URL(abs string, line int) (string, error) {
 	if !strings.HasPrefix(slashed, "/") {
 		slashed = "/" + slashed // a drive letter
 	}
+	return e.link(slashed, line), nil
+}
+
+// link words the link for a path that is absolute and slash-separated on
+// every platform, which is all a link knows of a path.
+func (e Editor) link(slashed string, line int) string {
 	escaped := escapePath(slashed)
 	switch e.form {
 	case formOpen:
@@ -147,17 +155,17 @@ func (e Editor) URL(abs string, line int) (string, error) {
 		if line > 0 {
 			link += fmt.Sprintf("&line=%d", line)
 		}
-		return link, nil
+		return link
 	case formURL:
 		link := e.scheme + "://open?url=" + url.QueryEscape("file://"+escaped)
 		if line > 0 {
 			link += fmt.Sprintf("&line=%d", line)
 		}
-		return link, nil
+		return link
 	}
 	link := e.scheme + "://file" + escaped
 	if line > 0 {
 		link += fmt.Sprintf(":%d", line)
 	}
-	return link, nil
+	return link
 }

@@ -77,21 +77,43 @@ func onFrame(t *testing.T, a *app, fv *flameView, label string) {
 	t.Fatalf("no frame %q to move to", label)
 }
 
+// editorLink is the link the editor is handed for a file of the test's
+// directory, and the file's path as the platform spells it. How a link is
+// worded is internal/source's to test: here it is which file and which line.
+func editorLink(t *testing.T, editor, root, rel string, line int) (link, abs string) {
+	t.Helper()
+	abs = filepath.Join(root, filepath.FromSlash(rel))
+	e, ok := source.EditorByID(editor)
+	if !ok {
+		t.Fatalf("no editor %q", editor)
+	}
+	link, err := e.URL(abs, line)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return link, abs
+}
+
 func TestOpenSourceFromAFrame(t *testing.T) {
 	a, fv, root, opened := sourceApp(t, "vscode")
-	java := root + "/src/main/java/com/example/shop/CartService.java"
+	total, java := editorLink(t, "vscode", root, "src/main/java/com/example/shop/CartService.java", 6)
+	addItem, _ := editorLink(t, "vscode", root, "src/main/java/com/example/shop/CartService.java", 4)
+	generated, unnamed := editorLink(t, "vscode", root, "src/main/java/com/example/shop/Unnamed.java", 3)
+	if !strings.HasPrefix(total, "vscode://file/") || !strings.HasSuffix(total, "/src/main/java/com/example/shop/CartService.java:6") {
+		t.Fatalf("the link of a file: %q", total)
+	}
 	for _, tc := range []struct {
 		frame  string
 		link   string
 		status string
 		isErr  bool
 	}{
-		{"com.example.shop.CartService.total", "vscode://file" + java + ":6",
+		{"com.example.shop.CartService.total", total,
 			"asked the system to open src/main/java/com/example/shop/CartService.java:6 in VS Code (the declaration of total) · if nothing opened, the file is " + java, false},
-		{"com.example.shop.CartService.addItem", "vscode://file" + java + ":4",
+		{"com.example.shop.CartService.addItem", addItem,
 			"asked the system to open src/main/java/com/example/shop/CartService.java:4 in VS Code (approximate: the first of several declarations of addItem) · if nothing opened, the file is " + java, false},
-		{"com.example.shop.Unnamed.generated", "vscode://file" + root + "/src/main/java/com/example/shop/Unnamed.java:3",
-			"asked the system to open src/main/java/com/example/shop/Unnamed.java:3 in VS Code (approximate: the type's declaration, the function was not found by name) · if nothing opened, the file is " + root + "/src/main/java/com/example/shop/Unnamed.java", false},
+		{"com.example.shop.Unnamed.generated", generated,
+			"asked the system to open src/main/java/com/example/shop/Unnamed.java:3 in VS Code (approximate: the type's declaration, the function was not found by name) · if nothing opened, the file is " + unnamed, false},
 		{"java.lang.Thread.run", "", "java.lang.Thread.run is part of the JDK: its source is not in this directory", false},
 		{"org.library.Client.call", "", "no source file for org.library.Client.call under " + filepath.Base(root) +
 			": a library, or another repository (y copies the name)", true},
@@ -143,8 +165,9 @@ func TestOpenSourcePicksAmongSeveral(t *testing.T) {
 		t.Errorf("the picker:\n%s", out)
 	}
 	press(a, key("2"))
-	if got := strings.Join(*opened, " "); got != "idea://open?file="+strings.ReplaceAll(root, "/", "%2F")+"%2Fb%2Fhandler.ts&line=1" || a.overlay != nil {
-		t.Errorf("2 opened %q", got)
+	second, _ := editorLink(t, "idea", root, "b/handler.ts", 1)
+	if got := strings.Join(*opened, " "); got != second || !strings.HasSuffix(got, "%2Fb%2Fhandler.ts&line=1") || a.overlay != nil {
+		t.Errorf("2 opened %q, want %q", got, second)
 	}
 	*opened = nil
 	press(a, key("O"))
@@ -204,7 +227,7 @@ func TestOpenSourceSaysWhatWasNotRead(t *testing.T) {
 	one := []source.Match{{Path: "src/main/java/com/example/shop/CartService.java", Line: 6, How: source.Declaration}}
 	a.Update(sourceFoundMsg{view: fv, label: "com.example.shop.CartService.total", index: ix, matches: one, unread: 1250})
 	want := "asked the system to open src/main/java/com/example/shop/CartService.java:6 in VS Code (the declaration of total; the first found, 1,250 files that could hold it were not read)" +
-		" · if nothing opened, the file is " + root + "/src/main/java/com/example/shop/CartService.java"
+		" · if nothing opened, the file is " + filepath.Join(root, "src", "main", "java", "com", "example", "shop", "CartService.java")
 	if len(*opened) != 1 {
 		t.Errorf("opened %v", *opened)
 	}
