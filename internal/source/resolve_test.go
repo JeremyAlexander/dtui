@@ -190,8 +190,8 @@ func TestResolve(t *testing.T) {
 
 		{"", nil}, {"main", nil}, {"...", nil},
 	} {
-		got, unread := ix.Resolve(context.Background(), Parse(tc.label))
-		if !reflect.DeepEqual(got, tc.want) || unread != 0 {
+		got, unread, late := ix.Resolve(context.Background(), Parse(tc.label))
+		if !reflect.DeepEqual(got, tc.want) || unread != 0 || late {
 			t.Errorf("%s\n got  %+v (%d unread)\n want %+v", tc.label, got, unread, tc.want)
 		}
 		if likely := ix.Likely(Parse(tc.label)); !likely && len(tc.want) > 0 {
@@ -242,7 +242,7 @@ func TestResolveIsConfinedToTheRoot(t *testing.T) {
 		strings.Repeat("a.", 5000) + "B.c",
 		strings.Repeat("../", 2000) + "passwd.py:root",
 	} {
-		matches, _ := ix.Resolve(context.Background(), Parse(label))
+		matches, _, _ := ix.Resolve(context.Background(), Parse(label))
 		for _, m := range matches {
 			abs, err := ix.Abs(m.Path)
 			if err != nil || !strings.HasPrefix(abs, ix.Root()+string(filepath.Separator)) || strings.Contains(abs, "Secret") || strings.Contains(abs, "passwd") {
@@ -270,7 +270,7 @@ func TestResolveIsConfinedToTheRoot(t *testing.T) {
 	if abs, err := ix.Abs("api/cmd/api/main.go"); err == nil {
 		t.Errorf("a file that now links outside the root is handed out as %q", abs)
 	}
-	if got, _ := ix.Resolve(context.Background(), Parse("main.main")); len(got) != 0 {
+	if got, _, _ := ix.Resolve(context.Background(), Parse("main.main")); len(got) != 0 {
 		t.Errorf("a file that now links outside the root is matched: %+v", got)
 	}
 }
@@ -286,12 +286,35 @@ func TestResolveSaysWhatItDidNotRead(t *testing.T) {
 	files["cmd/tool007/run.go"] = "package main\n\nfunc main() {}\n"
 	files[fmt.Sprintf("cmd/tool%03d/run.go", maxCandidates+20)] = "package main\n\nfunc main() {}\n"
 	ix := scan(t, tree(t, files))
-	got, unread := ix.Resolve(context.Background(), Parse("main.main"))
-	if len(got) != 1 || got[0].Path != "cmd/tool007/run.go" || unread != 50 {
+	got, unread, late := ix.Resolve(context.Background(), Parse("main.main"))
+	if len(got) != 1 || got[0].Path != "cmd/tool007/run.go" || unread != 50 || late {
 		t.Errorf("got %+v, %d unread; want the one main among the files read and 50 unread", got, unread)
 	}
-	if got, unread := ix.Resolve(context.Background(), Parse("main.absent")); len(got) != 0 || unread != 50 {
+	if got, unread, _ := ix.Resolve(context.Background(), Parse("main.absent")); len(got) != 0 || unread != 50 {
 		t.Errorf("a miss: %+v, %d unread", got, unread)
+	}
+}
+
+// Reading the files for one frame is bounded in time too: a slow disk does
+// not keep a lookup going. What the time did not reach is counted as unread,
+// and the answer says that it was the time that ran out.
+func TestResolveIsBoundedInTime(t *testing.T) {
+	if maxResolveTime > 5*time.Second {
+		t.Errorf("a lookup may take %v", maxResolveTime)
+	}
+	ix := scan(t, tree(t, map[string]string{
+		"cmd/a/main.go": "package main\n\nfunc main() {}\n",
+		"cmd/b/main.go": "package main\n\nfunc main() {}\n",
+		"cmd/c/run.go":  "package main\n\nfunc run() {}\n",
+	}))
+	over, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+	got, unread, late := ix.Resolve(over, Parse("main.main"))
+	if len(got) != 0 || unread != 3 || !late {
+		t.Errorf("out of time: %+v, %d unread, late %v; want nothing, 3 unread, late", got, unread, late)
+	}
+	if got, unread, late := ix.Resolve(context.Background(), Parse("main.main")); len(got) != 2 || unread != 0 || late {
+		t.Errorf("in time: %+v, %d unread, late %v", got, unread, late)
 	}
 }
 

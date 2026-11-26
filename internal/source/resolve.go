@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 )
 
 // How says what a match's line is.
@@ -44,6 +45,8 @@ const (
 	maxCandidates = 400
 	maxMatches    = 9
 	maxFileBytes  = 2 << 20
+	// maxResolveTime is the longest the files for one frame are read.
+	maxResolveTime = 2 * time.Second
 )
 
 // Likely reports, without reading a file, whether the index has a file the
@@ -57,14 +60,18 @@ func (ix *Index) Likely(f Frame) bool {
 // first. A runtime's frame has none. It reads the candidate files, up to a
 // bound, to find the line the function is declared on; unread is how many
 // files that could hold the frame were beyond that bound, so that one match
-// is not taken for the only one.
-func (ix *Index) Resolve(ctx context.Context, f Frame) (matches []Match, unread int) {
+// is not taken for the only one. Reading stops after ResolveTime as well, or
+// when ctx ends: the files not reached are unread too, and late says so.
+func (ix *Index) Resolve(ctx context.Context, f Frame) (matches []Match, unread int, late bool) {
+	ctx, cancel := context.WithTimeout(ctx, maxResolveTime)
+	defer cancel()
 	files, need := ix.candidates(f)
 	if len(files) > maxCandidates {
 		files, unread = files[:maxCandidates], len(files)-maxCandidates
 	}
-	for _, rel := range files {
+	for i, rel := range files {
 		if ctx.Err() != nil {
+			unread, late = unread+len(files)-i, true
 			break
 		}
 		m, has := ix.locate(rel, f, need.pkg)
@@ -77,8 +84,11 @@ func (ix *Index) Resolve(ctx context.Context, f Frame) (matches []Match, unread 
 	if len(matches) > maxMatches {
 		matches = matches[:maxMatches]
 	}
-	return matches, unread
+	return matches, unread, late
 }
+
+// ResolveTime is the longest Resolve reads files for one frame.
+const ResolveTime = maxResolveTime
 
 // needs is what a candidate file must hold to count, where its name and
 // place say too little: a declaration of the function, or of the package.

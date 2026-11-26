@@ -92,7 +92,8 @@ and the browser, so its limits are part of this decision.
   directory, and percent-encoded.
 - **The directory is the repository dtui was started in**, and nothing
   outside it is read or opened. The walk does not follow symbolic links, is
-  bounded in entries, files and time, and runs off the update loop.
+  bounded in entries, files and time, and runs off the update loop. Reading
+  the files for one frame is bounded the same way, in files, bytes and time.
 - **dtui starts no editor.** It hands the system a link in the editor's
   scheme, as `o` hands it a Dynatrace link. A terminal editor in dtui's
   terminal would need the alternate-screen handling dtui chose never to

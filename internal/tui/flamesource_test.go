@@ -217,6 +217,17 @@ func TestOpenSourceSaysWhatWasNotRead(t *testing.T) {
 	if !a.statusErr || !strings.HasSuffix(a.status, "· 50 files that could hold it were not read") {
 		t.Errorf("a miss: status %q", a.status)
 	}
+	// The time ran out before the files did.
+	_, cmd = a.Update(sourceFoundMsg{view: fv, label: "main.main", index: ix, unread: 50, late: true})
+	deliver(a, cmd)
+	if !a.statusErr || !strings.HasSuffix(a.status, "· the search was cut after 2 seconds: 50 files that could hold it were not read") {
+		t.Errorf("a miss out of time: status %q", a.status)
+	}
+	_, cmd = a.Update(sourceFoundMsg{view: fv, label: "com.example.shop.CartService.total", index: ix, matches: one, unread: 7, late: true})
+	deliver(a, cmd)
+	if !strings.HasSuffix(a.status, "(the declaration of total; the first found, the search was cut after 2 seconds: 7 files that could hold it were not read)") {
+		t.Errorf("one match out of time: status %q", a.status)
+	}
 }
 
 // Without an editor the place is copied and said; without a directory to

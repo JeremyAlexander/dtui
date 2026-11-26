@@ -115,7 +115,9 @@ type sourceFoundMsg struct {
 	matches []source.Match
 	// unread is how many files that could hold the frame were not read.
 	unread int
-	err    error
+	// late says the lookup ran out of time before it ran out of files.
+	late bool
+	err  error
 }
 
 // sourceWarmMsg says the directory has been walked: the footer can now tell
@@ -153,8 +155,8 @@ func (a *app) findSource(view viewModel, label string) tea.Cmd {
 		if err != nil {
 			return sourceFoundMsg{view: view, label: label, err: err}
 		}
-		matches, unread := ix.Resolve(context.Background(), f)
-		return sourceFoundMsg{view: view, label: label, index: ix, matches: matches, unread: unread}
+		matches, unread, late := ix.Resolve(context.Background(), f)
+		return sourceFoundMsg{view: view, label: label, index: ix, matches: matches, unread: unread, late: late}
 	})
 }
 
@@ -177,11 +179,11 @@ func (a *app) foundSource(msg sourceFoundMsg) tea.Cmd {
 			text += " · the directory was not read to its end: " + msg.index.Partial
 		}
 		if msg.unread > 0 {
-			text += fmt.Sprintf(" · %s files that could hold it were not read", catalog.GroupInt(int64(msg.unread)))
+			text += " · " + sourceUnread(msg.unread, msg.late)
 		}
 		return statusErr(text)
 	case len(msg.matches) == 1:
-		return a.openSource(msg.index, source.Parse(msg.label), msg.matches[0], msg.unread)
+		return a.openSource(msg.index, source.Parse(msg.label), msg.matches[0], msg.unread, msg.late)
 	}
 	a.overlay = &sourcePicker{app: a, index: msg.index, frame: source.Parse(msg.label), label: short, list: msg.matches}
 	return nil
@@ -209,18 +211,28 @@ func sourceHow(f source.Frame, m source.Match) string {
 	return "the top of the file: no line could be told"
 }
 
+// sourceUnread says how many files that could hold a frame a lookup left
+// unread, and that it was the time that ran out when it was.
+func sourceUnread(files int, late bool) string {
+	text := catalog.GroupInt(int64(files)) + " files that could hold it were not read"
+	if late {
+		text = fmt.Sprintf("the search was cut after %d seconds: %s", int(source.ResolveTime.Seconds()), text)
+	}
+	return text
+}
+
 // openSource opens one match in the editor, or copies its place when no
 // editor is known. The path is the index's own, checked again to be inside
 // the source directory. unread is how many files that could hold the frame
 // were not read: the match is then the first found, and the reader is told.
-func (a *app) openSource(ix *source.Index, f source.Frame, m source.Match, unread int) tea.Cmd {
+func (a *app) openSource(ix *source.Index, f source.Frame, m source.Match, unread int, late bool) tea.Cmd {
 	abs, err := ix.Abs(m.Path)
 	if err != nil {
 		return statusErr(oneLine(err.Error()))
 	}
 	how := sourceHow(f, m)
 	if unread > 0 {
-		how += fmt.Sprintf("; the first found, %s files that could hold it were not read", catalog.GroupInt(int64(unread)))
+		how += "; the first found, " + sourceUnread(unread, late)
 	}
 	editor := a.ds.source.editor
 	if editor.ID == "" {
@@ -282,14 +294,14 @@ func (p *sourcePicker) HandleKey(msg tea.KeyMsg) tea.Cmd {
 		return status("copied " + oneLine(sourceWhere(m.Path, m)))
 	case "enter":
 		a.overlay = nil
-		return a.openSource(p.index, p.frame, p.list[p.sel], 0)
+		return a.openSource(p.index, p.frame, p.list[p.sel], 0, false)
 	}
 	if moveSel(key, &p.sel, len(p.list)) {
 		return nil
 	}
 	if idx, ok := digitIndex(key, len(p.list)); ok {
 		a.overlay = nil
-		return a.openSource(p.index, p.frame, p.list[idx], 0)
+		return a.openSource(p.index, p.frame, p.list[idx], 0, false)
 	}
 	return nil
 }

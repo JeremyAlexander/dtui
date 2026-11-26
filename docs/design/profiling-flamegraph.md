@@ -162,8 +162,9 @@ it must never do, is in ADR-0023; this is how it behaves.
 6. **The answer.** One file opens. Several (the same class in two modules)
    are offered in a short list: `enter` or a digit opens, `y` copies. None
    says so, and that the frame is a library's or another repository's.
-   At most 400 files are read for one frame. Where more could hold it, the
-   status line says how many were not read, on a miss and on the one file
+   At most 400 files, 2 MB of each, are read for one frame, for at most
+   2 seconds. Where more could hold it, or the time ran out, the
+   status line says how many were not read and that the search was cut, on a miss and on the one file
    that opens, which is then the first found and not known to be the only
    one.
 
