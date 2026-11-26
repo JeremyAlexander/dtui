@@ -20,9 +20,9 @@ type queryNotice struct {
 // noticeFor picks the most actionable notice from a query's notifications, or
 // reports false when none warrant surfacing. dtctl's exec package owns the
 // same mapping for its CLI/agent output but keeps it unexported; the category
-// set (scan limit, result limit, fetch timeout, sampling) mirrors
-// exec.classifyNotification so the TUI and CLI stay in step; the size limit
-// is told apart from the row limit here only.
+// set (scan limit, result limit, fetch timeout, sampling, consumption limit)
+// mirrors exec.classifyNotification so the TUI and CLI stay in step; the size
+// limit is told apart from the row limit here only.
 func noticeFor(ns []exec.QueryNotification) (queryNotice, bool) {
 	for _, n := range ns {
 		if !noticeWarns(n) {
@@ -41,6 +41,9 @@ func noticeFor(ns []exec.QueryNotification) (queryNotice, bool) {
 		case noticeTimeout:
 			return queryNotice{warn: true,
 				text: "fetch timed out — result may be incomplete; narrow the timeframe (t)"}, true
+		case noticeConsumption:
+			return queryNotice{warn: true,
+				text: "partial result — query consumption limit reached; narrow the timeframe (t) to read less"}, true
 		case noticeSampling:
 			return queryNotice{text: "results are sampled (approximate)"}, true
 		}
@@ -58,7 +61,7 @@ func noticeWarns(n exec.QueryNotification) bool {
 }
 
 // partialNotice reports whether the notifications say the result may be
-// incomplete (scan limit, truncation, or timeout) — the callers that must not
+// incomplete (scan limit, truncation, timeout, or consumption limit) — the callers that must not
 // react to an empty result as if the data simply weren't there.
 func partialNotice(ns []exec.QueryNotification) bool {
 	n, ok := noticeFor(ns)
@@ -73,6 +76,7 @@ const (
 	noticeSizeLimit
 	noticeTimeout
 	noticeSampling
+	noticeConsumption
 )
 
 // classifyNotice maps a notification to a category by its type, falling back to
@@ -84,6 +88,10 @@ const (
 // BYTE_LIMIT_ADDED, "Your result has been limited because the maximum bytes
 // (N) were reached." (validated live on a OneAgent-fed tenant); dtctl's own
 // classifier does not know that type.
+//
+// Every type and message exec.ResultIsPartial reads as a cut result has a
+// category here (TestClassifyNoticeKnowsWhatDtctlCallsPartial): one this
+// function missed would leave a cut result looking whole.
 func classifyNotice(notificationType, message string) int {
 	switch notificationType {
 	case "SCAN_LIMIT_GBYTES":
@@ -92,10 +100,12 @@ func classifyNotice(notificationType, message string) int {
 		return noticeResultLimit
 	case "BYTE_LIMIT_ADDED", "RESULT_LIMIT_BYTES":
 		return noticeSizeLimit
-	case "FETCH_TIMEOUT":
+	case "FETCH_TIMEOUT", "FETCH_EXEC_TIME_LIMIT":
 		return noticeTimeout
 	case "SAMPLING_APPLIED":
 		return noticeSampling
+	case "QUERY_CONSUMPTION_LIMIT":
+		return noticeConsumption
 	}
 	msg := strings.ToLower(message)
 	switch {
@@ -105,7 +115,8 @@ func classifyNotice(notificationType, message string) int {
 		return noticeSizeLimit
 	case strings.Contains(msg, "result has been limited") || strings.Contains(msg, "limited to"):
 		return noticeResultLimit
-	case strings.Contains(msg, "timed out") || strings.Contains(msg, "timeout"):
+	case strings.Contains(msg, "timed out") || strings.Contains(msg, "timeout") ||
+		strings.Contains(msg, "internal time limit"):
 		return noticeTimeout
 	}
 	return noticeNone

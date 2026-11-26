@@ -14,8 +14,9 @@ func TestClassifyNoticeByType(t *testing.T) {
 		"RESULT_LIMIT_BYTES":      noticeSizeLimit,
 		"BYTE_LIMIT_ADDED":        noticeSizeLimit,
 		"FETCH_TIMEOUT":           noticeTimeout,
+		"FETCH_EXEC_TIME_LIMIT":   noticeTimeout,
 		"SAMPLING_APPLIED":        noticeSampling,
-		"QUERY_CONSUMPTION_LIMIT": noticeNone, // no dedicated banner
+		"QUERY_CONSUMPTION_LIMIT": noticeConsumption,
 		"":                        noticeNone,
 	}
 	for typ, want := range cases {
@@ -34,6 +35,42 @@ func TestClassifyNoticeByMessageFallback(t *testing.T) {
 	}
 	if got := classifyNotice("", "The result has been limited to 1000 records"); got != noticeResultLimit {
 		t.Errorf("result-limit message classified as %d, want result limit", got)
+	}
+}
+
+// dtctl reads these notifications as a cut result (exec.ResultIsPartial). A
+// type or message this package did not know would leave the footer silent
+// and the result looking whole, so each must warn here too.
+func TestClassifyNoticeKnowsWhatDtctlCallsPartial(t *testing.T) {
+	for _, n := range []exec.QueryNotification{
+		{NotificationType: "SCAN_LIMIT_GBYTES"},
+		{NotificationType: "RESULT_LIMIT_RECORDS"},
+		{NotificationType: "RESULT_LIMIT_BYTES"},
+		{NotificationType: "FETCH_TIMEOUT"},
+		{NotificationType: "FETCH_EXEC_TIME_LIMIT"},
+		{NotificationType: "QUERY_CONSUMPTION_LIMIT"},
+		{Message: "Your execution was stopped after 500 gigabytes of data were scanned."},
+		{Message: "The result has been limited to 1000 records"},
+		{Message: "The query reached an internal time limit."},
+	} {
+		if !exec.ResultIsPartial(n) {
+			t.Fatalf("dtctl no longer reads %+v as a cut result; the case is stale", n)
+		}
+		if classifyNotice(n.NotificationType, n.Message) == noticeNone {
+			t.Errorf("classifyNotice does not know %+v", n)
+		}
+		n.Severity = "WARNING"
+		if !partialNotice([]exec.QueryNotification{n}) {
+			t.Errorf("%+v raises no partial-result warning", n)
+		}
+	}
+}
+
+// A query stopped at its consumption limit has a footer of its own.
+func TestNoticeForConsumptionLimit(t *testing.T) {
+	n, ok := noticeFor([]exec.QueryNotification{{Severity: "WARNING", NotificationType: "QUERY_CONSUMPTION_LIMIT"}})
+	if !ok || !n.warn || !strings.Contains(n.text, "consumption limit") || !strings.Contains(n.text, "narrow the timeframe (t)") {
+		t.Errorf("notice = %+v ok=%v, want a consumption-limit warning with the lever", n, ok)
 	}
 }
 
