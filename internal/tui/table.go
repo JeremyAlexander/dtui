@@ -527,7 +527,8 @@ func (v *tableView) Crumb() string {
 		if v.spec.ArgLabel != nil {
 			arg = v.spec.ArgLabel(v.scope.Arg)
 		}
-		label += fmt.Sprintf(" (%s)", arg)
+		// The argument can be a row's own text (a focused function).
+		label += fmt.Sprintf(" (%s)", oneLine(arg))
 	}
 	if v.scope.Entity != nil && v.spec.UsesScope() {
 		name := v.scope.Entity.Name
@@ -1168,7 +1169,7 @@ func (v *tableView) captionLines(width int) []string {
 	var lines []string
 	line := ""
 	for _, seg := range v.spec.Caption(v.scope, v.summary) {
-		seg = catalog.SafeText(seg)
+		seg = oneLine(seg)
 		switch {
 		case line == "":
 			line = seg
@@ -1193,7 +1194,7 @@ func (v *tableView) footnote() string {
 	if v.spec.Footnote == nil || v.err != nil || v.loading {
 		return ""
 	}
-	return catalog.SafeText(v.spec.Footnote(v.scope, v.summary, v.selected()))
+	return oneLine(v.spec.Footnote(v.scope, v.summary, v.selected()))
 }
 
 // loadingText words the wait for a slow first result: the spec's line, how
@@ -1202,7 +1203,7 @@ func (v *tableView) loadingText() []string {
 	if v.spec.Loading == nil || !v.loading || len(v.all) > 0 {
 		return nil
 	}
-	text := v.spec.Loading(v.scope)
+	text := oneLine(v.spec.Loading(v.scope))
 	if text == "" {
 		return nil
 	}
@@ -1211,7 +1212,7 @@ func (v *tableView) loadingText() []string {
 	}
 	lines := []string{text}
 	if p := v.progress.get(); p != "" {
-		lines = append(lines, catalog.SafeText(p))
+		lines = append(lines, oneLine(p))
 	}
 	return lines
 }
@@ -1460,6 +1461,10 @@ func (v *tableView) columnWidths(total int) []int {
 	}
 	return widths
 }
+
+// oneLine makes text that may repeat tenant data safe for a line of chrome:
+// control characters made visible (catalog.SafeText) and line breaks folded.
+func oneLine(s string) string { return flatten(catalog.SafeText(s)) }
 
 // flatten collapses line breaks and tabs to single spaces — a multi-line
 // value (SQL statements, log content) must not shear a table row apart.

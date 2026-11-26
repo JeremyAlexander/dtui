@@ -12,6 +12,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/dynatrace-oss/dtui/internal/tui/catalog"
 )
@@ -735,5 +736,49 @@ func TestEnterOnARowThatIsNoFunction(t *testing.T) {
 	}
 	if a.top() != viewModel(tv) {
 		t.Error("enter on a row that is no function opened a view")
+	}
+}
+
+// A function name is the environment's text. Wherever the view repeats it —
+// the breadcrumb, the loading line, the footnote, the echo in the footer —
+// it can neither style the terminal nor break a line; what c copies is the
+// command as it is.
+func TestHostileFunctionNameStaysInItsCell(t *testing.T) {
+	pinSnapshotClock(t)
+	const hostile = "com.example.\x1b[31mRED\x1b[0m\nsecond.line\tClass.method"
+	sc := loadProfilingScenario(t, "hotspots-running")
+	a, tv := openProfiling(t, sc)
+	sc.answer(tv)
+	a.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	tv.rows[0][catalog.ProfFunction] = hostile
+	tv.cursor = 0
+
+	check := func(state string) {
+		t.Helper()
+		frame := a.View()
+		if strings.Contains(frame, "\x1b[31mRED") || strings.Contains(frame, "\x1b[0m\nsecond") {
+			t.Errorf("%s: the frame carries the name's own escape sequence", state)
+		}
+		if n := strings.Count(frame, "\n") + 1; n != 40 {
+			t.Errorf("%s: the frame is %d lines on a 40 line screen", state, n)
+		}
+		if !strings.Contains(ansi.Strip(frame), "␛[31mRED") {
+			t.Errorf("%s: the name is not shown with its escape made visible", state)
+		}
+	}
+	check("selected in the table") // the footnote spells the selected name out
+	press(a, key("enter"))
+	focus := a.top().(*tableView)
+	if focus == tv || focus.scope.Arg != hostile {
+		t.Fatalf("enter opened %q", focus.scope.Arg)
+	}
+	check("loading the focus") // breadcrumb and echo
+	focus.Update(dataMsg{owner: focus, seq: focus.seq, elapsed: time.Second, records: []map[string]any{
+		{catalog.SummaryKey: true, catalog.ProfSumSamples: 10.0},
+		{catalog.ProfRelation: "total", catalog.ProfFunction: hostile, catalog.ProfSamples: 10.0, catalog.ProfShare: 100.0},
+	}})
+	check("focused")
+	if echo := focus.Echo(); !strings.Contains(echo, hostile) {
+		t.Errorf("the copied command lost the name as it is: %q", echo)
 	}
 }

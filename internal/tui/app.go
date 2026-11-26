@@ -1356,8 +1356,10 @@ func (a *app) renderFooter() string {
 	case a.notice.text != "":
 		line2 = " " + theme.Echo.Render("≈ "+a.notice.text)
 	default:
+		// Shown on one line and with nothing a terminal would obey; c
+		// copies the command as it is.
 		if echo := a.top().Echo(); echo != "" {
-			line2 = " " + theme.Echo.Render("≡ "+echo)
+			line2 = " " + theme.Echo.Render("≡ "+oneLine(echo))
 		}
 	}
 	return line1 + "\n" + ansi.Truncate(line2, a.width, "…")
