@@ -41,6 +41,22 @@ func safeRune(r rune) rune {
 	return r
 }
 
+// OneLine makes text that may repeat tenant data safe for one line of the
+// screen: control characters made visible (SafeText) and line breaks folded
+// (Flatten).
+func OneLine(s string) string { return Flatten(SafeText(s)) }
+
+// Flatten collapses line breaks and tabs to single spaces — a multi-line
+// value (SQL statements, log content) must not shear a row apart.
+func Flatten(s string) string {
+	if !strings.ContainsAny(s, "\n\r\t") {
+		return s
+	}
+	return strings.Join(strings.FieldsFunc(s, func(r rune) bool {
+		return r == '\n' || r == '\r' || r == '\t' || r == ' '
+	}), " ")
+}
+
 // FormatValue renders an arbitrary record value as table-cell text.
 func FormatValue(v any) string {
 	switch val := v.(type) {

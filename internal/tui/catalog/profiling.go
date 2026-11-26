@@ -388,7 +388,7 @@ var hotspotsSpec = &Spec{
 	// A pinned process is analysed like one named in the command bar. The
 	// source has the last word on what an analysis runs on.
 	Scopable:      profilable,
-	ArgLabel:      func(arg string) string { return shortFrame(arg, 32) },
+	ArgLabel:      func(arg string) string { return ShortFrame(arg, 32) },
 	Entity:        profileEntity,
 	EntityArg:     true,
 	NoPreview:     true,
@@ -488,7 +488,7 @@ func barColumn(title, key string) Column {
 func frameColumn(title, key string) Column {
 	return Column{
 		Title: title, Field: key,
-		ValueW: func(rec map[string]any, width int) string { return shortFrame(Str(rec, key), width) },
+		ValueW: func(rec map[string]any, width int) string { return ShortFrame(Str(rec, key), width) },
 	}
 }
 
@@ -525,12 +525,12 @@ func allocationPath(rec map[string]any, width int) string {
 	site := Str(rec, ProfSite)
 	callers, _ := rec[ProfCallers].([]any)
 	if len(callers) == 0 {
-		return shortFrame(site, width)
+		return ShortFrame(site, width)
 	}
 	// The site is the row's identity: it gets the room it needs, up to
 	// two thirds, and the callers share the rest.
 	siteW := min(runewidth.StringWidth(site), max(width*2/3, 8))
-	parts := []string{shortFrame(site, siteW)}
+	parts := []string{ShortFrame(site, siteW)}
 	for _, c := range callers {
 		parts = append(parts, tailFrame(FormatValue(c)))
 	}
@@ -567,12 +567,12 @@ func lastDots(s string, n int) int {
 	return i
 }
 
-// shortFrame fits a frame label into width cells. A package.Class.method
+// ShortFrame fits a frame label into width cells. A package.Class.method
 // label has its package segments shrunk to their initial, left to right, then
 // loses the package, then its parameter list; only then is it cut — from the
 // left, since the method at its end is what tells two frames apart. A label
 // of another shape (a script's path/file.js:function) is only cut.
-func shortFrame(label string, width int) string {
+func ShortFrame(label string, width int) string {
 	if width <= 0 || runewidth.StringWidth(label) <= width {
 		return label
 	}

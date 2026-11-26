@@ -125,3 +125,20 @@ func TestSafeText(t *testing.T) {
 		}
 	}
 }
+
+func TestOneLine(t *testing.T) {
+	for in, want := range map[string]string{
+		"plain":                "plain",
+		"a\n\tb  c":            "a b c",
+		"a  b":                 "a  b", // nothing to fold: spaces stay as they are
+		"x\x1b[31mred\r\nnext": "x␛[31mred next",
+		"tab\there":            "tab here",
+	} {
+		if got := OneLine(in); got != want {
+			t.Errorf("OneLine(%q) = %q, want %q", in, got, want)
+		}
+	}
+	if got := Flatten("a\x1b\nb"); got != "a\x1b b" {
+		t.Errorf("Flatten changes more than line breaks: %q", got)
+	}
+}

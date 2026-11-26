@@ -62,7 +62,7 @@ func TestProfileEchoWindow(t *testing.T) {
 func TestShortFrameKeepsTheMethod(t *testing.T) {
 	const fn = "com.fasterxml.jackson.core.json.UTF8JsonGenerator.writeString"
 	for _, width := range []int{80, 52, 40, 30, 19, 8} {
-		got := shortFrame(fn, width)
+		got := ShortFrame(fn, width)
 		if utf8.RuneCountInString(got) > width {
 			t.Errorf("width %d: %q is %d wide", width, got, utf8.RuneCountInString(got))
 		}
@@ -70,7 +70,7 @@ func TestShortFrameKeepsTheMethod(t *testing.T) {
 			t.Errorf("width %d: %q lost the class and method", width, got)
 		}
 	}
-	if got := shortFrame(fn, 80); got != fn {
+	if got := ShortFrame(fn, 80); got != fn {
 		t.Errorf("a frame that fits must stay whole, got %q", got)
 	}
 }
@@ -186,8 +186,8 @@ func TestShortFrameReadsOtherLabelShapes(t *testing.T) {
 		{"main", 2, "…n"},
 		{"", 5, ""},
 	} {
-		if got := shortFrame(tc.label, tc.width); got != tc.want {
-			t.Errorf("shortFrame(%q, %d) = %q, want %q", tc.label, tc.width, got, tc.want)
+		if got := ShortFrame(tc.label, tc.width); got != tc.want {
+			t.Errorf("ShortFrame(%q, %d) = %q, want %q", tc.label, tc.width, got, tc.want)
 		}
 	}
 }
@@ -196,11 +196,11 @@ func TestShortFrameReadsOtherLabelShapes(t *testing.T) {
 // length does, not its length squared.
 func TestShortFrameIsLinear(t *testing.T) {
 	label := strings.Repeat("pkg.", 20000) + "Class.method"
-	allocs := testing.AllocsPerRun(5, func() { shortFrame(label, 40) })
+	allocs := testing.AllocsPerRun(5, func() { ShortFrame(label, 40) })
 	if allocs > 20 {
 		t.Errorf("shortening a 20,000 segment label allocated %.0f times, want a handful", allocs)
 	}
-	if got := shortFrame(label, 40); got != "Class.method" {
+	if got := ShortFrame(label, 40); got != "Class.method" {
 		t.Errorf("got %q", got)
 	}
 }

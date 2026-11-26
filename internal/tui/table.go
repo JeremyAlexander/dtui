@@ -1465,20 +1465,12 @@ func (v *tableView) columnWidths(total int) []int {
 	return widths
 }
 
-// oneLine makes text that may repeat tenant data safe for a line of chrome:
-// control characters made visible (catalog.SafeText) and line breaks folded.
-func oneLine(s string) string { return flatten(catalog.SafeText(s)) }
+// oneLine makes text that may repeat tenant data safe for a line of chrome
+// (catalog.OneLine).
+func oneLine(s string) string { return catalog.OneLine(s) }
 
-// flatten collapses line breaks and tabs to single spaces — a multi-line
-// value (SQL statements, log content) must not shear a table row apart.
-func flatten(s string) string {
-	if !strings.ContainsAny(s, "\n\r\t") {
-		return s
-	}
-	return strings.Join(strings.FieldsFunc(s, func(r rune) bool {
-		return r == '\n' || r == '\r' || r == '\t' || r == ' '
-	}), " ")
-}
+// flatten collapses line breaks and tabs to single spaces (catalog.Flatten).
+func flatten(s string) string { return catalog.Flatten(s) }
 
 // pad truncates or pads s to exactly w display cells (ANSI-aware).
 func pad(s string, w int) string {

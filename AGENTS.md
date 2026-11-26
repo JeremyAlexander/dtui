@@ -61,7 +61,8 @@ belongs in a shared file; a third copy is a bug.
 | Need | Shared home |
 | --- | --- |
 | Show tenant-supplied text safely | `catalog.SafeText` (`internal/tui/catalog/format.go`); `sanitizeFrame` (`internal/tui/sanitize.go`) is the last guard |
-| Tenant text on one line of chrome (crumb, caption, footer) | `oneLine` (`internal/tui/table.go`) |
+| Tenant text on one line of chrome (crumb, caption, footer) | `catalog.OneLine` (`internal/tui/catalog/format.go`); `oneLine` (`internal/tui/table.go`) calls it |
+| Fit a frame label (`package.Class.method`) into a width | `catalog.ShortFrame` (`internal/tui/catalog/profiling.go`) |
 | Centre or wrap a message in a table body | `placeNote` (`internal/tui/table.go`) |
 | Severity colors | `internal/tui/catalog/severity.go` |
 | Sparklines | `internal/tui/catalog/spark.go` |
