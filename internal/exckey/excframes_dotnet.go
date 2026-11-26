@@ -27,6 +27,12 @@ var (
 	// type is qualified and a colon or the end of the line follows it.
 	dotnetInnerRe = regexp.MustCompile(
 		"---> (?:\\(Inner Exception #\\d+\\) )?((?:[\\p{L}\\p{N}_+`]+\\.)+[\\p{L}\\p{N}_+`]+)(?:\\[[^\\]]*\\])?(?::|$)")
+	// Since .NET Core 3.0 an inner exception starts a line of its own
+	// (Exception.ToString writes a line break before the arrow). There a
+	// type needs no namespace to be told from a word of the message, as
+	// long as the colon before its message follows it.
+	dotnetInnerLineRe = regexp.MustCompile(
+		"^---> (?:\\(Inner Exception #\\d+\\) )?([\\p{L}\\p{N}_+`]+)(?:\\[[^\\]]*\\])?:")
 	// The method of top-level statements ("<Main>$"); see dotnetLambdaMark
 	// for the generated names that nest.
 	dotnetMainRe = regexp.MustCompile(`<([\p{L}\p{N}_]+)>\$`)
@@ -299,7 +305,8 @@ func countDigits(s string) int {
 
 // dotnetRootCause returns the frames of the innermost exception, which is
 // printed first, and its type: the last one an arrow introduces ("--->")
-// above the first frame. An inner exception thrown without a stack has no
+// above the first frame, qualified anywhere in a line (dotnetInnerRe) or
+// without a namespace at the start of one (dotnetInnerLineRe). An inner exception thrown without a stack has no
 // frames before the line that closes it, so the frames that follow belong
 // to the exception around it.
 func dotnetRootCause(lines []string) (frames []StackFrame, typ string) {
@@ -316,6 +323,11 @@ func dotnetRootCause(lines []string) (frames []StackFrame, typ string) {
 		if f, ok := dotnetFrame(line); ok {
 			frames = append(frames, f)
 		} else if len(frames) == 0 {
+			// A type without a namespace is not one dotnetInnerRe reads,
+			// so no arrow is read twice.
+			if m := dotnetInnerLineRe.FindStringSubmatch(line); m != nil {
+				inner = append(inner, m[1])
+			}
 			for _, m := range dotnetInnerRe.FindAllStringSubmatch(line, -1) {
 				inner = append(inner, m[1])
 			}

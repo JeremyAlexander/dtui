@@ -1434,6 +1434,23 @@ func TestDotNetInnerExceptionTypes(t *testing.T) {
 		{"a nested and a generic type", "Example.Shop.CheckoutException: failed\n ---> Example.Shop.Cart+LockedException`1[System.String]: locked\n" +
 			"   at Example.Shop.Cart.Add(String sku)\n   --- End of inner exception stack trace ---\n   at Example.Shop.Checkout.Run()",
 			frames(StackDotNet, "Example.Shop.Cart", "Add"), "Example.Shop.Cart+LockedException`1"},
+		// .NET prints an inner exception on a line of its own, so there a
+		// type needs no namespace to be told from a word of the message.
+		{"a type without a namespace on its own line", `Example.Shop.OrderException: order failed
+ ---> CartLockedException: cart 7
+   at Example.Shop.Cart.Lock()
+   --- End of inner exception stack trace ---
+   at Example.Shop.Orders.Place()`, frames(StackDotNet, "Example.Shop.Cart", "Lock"), "CartLockedException"},
+		{"a generic type without a namespace, in an aggregate", "System.AggregateException: One or more errors occurred. (cart 7)\n" +
+			" ---> (Inner Exception #0) Locked`1[System.String]: cart 7<---\n   at Example.Shop.Cart.Lock()",
+			frames(StackDotNet, "Example.Shop.Cart", "Lock"), "Locked`1"},
+		{"a word without a colon on its own line", "Example.Shop.StateException: order moved Open\n ---> Pending\n" +
+			"   at Example.Shop.Orders.Move(String id)", frames(StackDotNet, "Example.Shop.Orders", "Move"), ""},
+		{"words and a colon on their own line", "Example.Shop.StateException: order moved Open\n ---> Pending now: retry\n" +
+			"   at Example.Shop.Orders.Move(String id)", frames(StackDotNet, "Example.Shop.Orders", "Move"), ""},
+		{"a qualified type on its own line is read once", "Example.Shop.OrderException: order failed\n" +
+			" ---> Example.Shop.CartLockedException: cart 7\n   --- End of inner exception stack trace ---\n   at Example.Shop.Orders.Place()",
+			frames(StackDotNet, "Example.Shop.Orders", "Place"), ""},
 		{"a type in another script", "Boutique.CommandeException: échec\n ---> Boutique.Panier.ÉchecException: verrouillé\n" +
 			"   at Boutique.Panier.Ajouter(String sku)\n   --- End of inner exception stack trace ---\n   at Boutique.Commande.Lancer()",
 			frames(StackDotNet, "Boutique.Panier", "Ajouter"), "Boutique.Panier.ÉchecException"},
