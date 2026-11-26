@@ -28,26 +28,47 @@ const (
 )
 
 const (
+	// msgWinPathWord is one word of a segment of a Windows path.
+	msgWinPathWord = `(?:[^\s"'<>:\\()\[\]{},;]|<\w+>|\(\w+\))+`
+	// msgWinPathWords is how many words may follow the first in a segment:
+	// "Documents and Settings" has two.
+	msgWinPathWords = `2`
+)
+
+// msgPlaceholders are all of them, for the cut.
+var msgPlaceholders = []string{msgQuoted, msgURL, msgUUID, msgDate, msgIP, msgPath, msgHex, msgID, msgNumber}
+
+const (
 	// exceptionMessageInput caps how much of a raw message is read at all.
 	exceptionMessageInput = 4096
 	// ExceptionMessageMax caps a parameterised message, in bytes.
 	ExceptionMessageMax = 256
 	// msgIPv6Max is the longest IPv6 text form (an IPv4-mapped address).
 	msgIPv6Max = 45
+	// msgIPv6Colons separate the eight groups of an address written in
+	// full; one less where the last two groups are an IPv4 address.
+	msgIPv6Colons = 7
+	// msgIPv6WordColons is how many colons make an address of a bare
+	// candidate without a digit.
+	msgIPv6WordColons = 3
 	// msgPlaceholderMax is the longest placeholder; a cut never leaves a
 	// shorter, unclosed one behind.
 	msgPlaceholderMax = len(msgUUID)
 )
 
 var (
-	msgDoubleQuotedRe = regexp.MustCompile(`"[^"]{0,200}"`)
+	// A quoted value runs to the next quote of its kind, whatever its
+	// length; a backslash takes the character after it along (\").
+	msgDoubleQuotedRe = regexp.MustCompile(`"(?:[^"\\]|\\.)*"`)
 	// \B on both sides keeps an apostrophe inside a word ("can't") from
 	// opening or closing a quoted value.
-	msgSingleQuotedRe = regexp.MustCompile(`\B'[^']{0,200}'\B`)
-	msgBackQuotedRe   = regexp.MustCompile("`[^`]{0,200}`")
+	msgSingleQuotedRe = regexp.MustCompile(`\B'(?:[^'\\]|\\.)*'\B`)
+	msgBackQuotedRe   = regexp.MustCompile("`[^`]*`")
 	msgURLRe          = regexp.MustCompile(`\b[A-Za-z][A-Za-z0-9+.-]*://[^\s<>"']+`)
-	msgUUIDRe         = regexp.MustCompile(
-		`\b[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}\b`)
+	// A UUID, also behind the prefix of an id ("order_<uuid>"), which is
+	// kept.
+	msgUUIDRe = regexp.MustCompile(
+		`(\b|_)[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}\b`)
 	msgIPv4Re = regexp.MustCompile(`\b(?:\d{1,3}\.){3}\d{1,3}(?::\d{1,5})?\b`)
 	// IPv6 candidates; netip decides which ones are addresses.
 	msgIPv6BracketRe = regexp.MustCompile(`\[([0-9A-Fa-f:.]+)\](?::\d{1,5})?`)
@@ -65,9 +86,13 @@ var (
 	msgFileNameRe = regexp.MustCompile(`\.[A-Za-z][A-Za-z0-9]{0,4}$`)
 	// A Windows path may hold spaces in its directories ("C:\Program
 	// Files\…"): a segment with spaces counts only when a backslash ends it,
-	// so the path stops at the first space after its last backslash.
+	// so the path stops at the first space after its last backslash. A
+	// segment has at most msgWinPathWords words, so that the prose after a
+	// path does not become part of it wherever a backslash follows later
+	// ("… is locked by CORP\alice"). Brackets, commas and semicolons end a
+	// path; a word in parentheses ("(x86)") is part of one.
 	msgWinPathRe = regexp.MustCompile(
-		`\b[A-Za-z]:\\(?:(?:[^\s"'<>:\\]|<\w+>)+(?: (?:[^\s"'<>:\\]|<\w+>)+)*\\)*(?:[^\s"'<>:\\]|<\w+>)*`)
+		`\b[A-Za-z]:\\(?:` + msgWinPathWord + `(?: ` + msgWinPathWord + `){0,` + msgWinPathWords + `}\\)*(?:` + msgWinPathWord + `)?`)
 	msgHexLitRe = regexp.MustCompile(`\b0[xX][0-9A-Fa-f]+\b`)
 	// Object identity suffixes ("Cart@1b2c3d") and long hex runs.
 	msgHexAtRe  = regexp.MustCompile(`@[0-9A-Fa-f]+\b`)
@@ -78,17 +103,39 @@ var (
 	msgPrefixedIDRe = regexp.MustCompile(`\b((?:[a-z]+_)+)[A-Za-z0-9]*\d[A-Za-z0-9]*\b`)
 	// One pass over the numbers, first alternative first:
 	//
-	//  1. a code after the wording that names it — an HTTP status, a status,
-	//     exit or error code, an errno, a SQLSTATE — of at most five
-	//     characters, or an Oracle-style code ("ORA-00942"). It is kept: 404
-	//     and 500 are different failures.
-	//  2. a number with an optional unit ("250ms", "12.5secs") and, after
-	//     the start, a space or one of =:([,; a minus sign ("Index -1").
+	//  1. a SQLSTATE, five digits or upper-case letters, and an Oracle-style
+	//     code ("ORA-00942"). Kept: they name the failure.
+	//  2. a number after the wording of a code: an HTTP status, a status, an
+	//     errno, or "code" behind what says whose it is (exit, error,
+	//     response, return, result, SQL). Kept where it is at most
+	//     msgCodeDigits digits and nothing else, since 404 and 500 are
+	//     different failures; "code" alone names a value ("promo code
+	//     12345"), and "status: 12.5ms" is a duration.
+	//  3. a number (msgNumberText) and, after the start, a space or one of
+	//     msgNumberLeads, a minus sign before it ("Index -1").
 	msgNumberRe = regexp.MustCompile(
-		`(?i:\b(?:HTTP(?:/\d(?:\.\d)?)?(?: status)?|(?:(?:http|exit|response)[ _-]?)?status(?:[ _-]?code)?` +
-			`|(?:(?:error|err|exit|response|return|result|sql)[ _-]?)?code|SQLSTATE|errno)[ :=#\[(]{1,3}(?:\d{1,5}|[0-9A-Z]{5})\b)` +
+		`(?i:\bSQLSTATE)[ :=#\[(]{1,3}(?:\d{1,5}|[0-9A-Z]{5})\b` +
 			`|\b(?:ORA|PLS|TNS)-\d{5}\b` +
-			`|(?:(?:^|[\s=:(\[,;])-)?\b\d+(?:\.\d+)?[A-Za-z]{0,7}\b`)
+			`|(?i:\b(?:HTTP(?:/\d(?:\.\d)?)?(?: status)?|(?:(?:http|exit|response)[ _-]?)?status(?:[ _-]?code)?` +
+			`|(?:error|err|exit|response|return|result|sql)[ _-]?code|errno)[ :=#\[(]{1,3})(` + msgNumberText + `)\b` +
+			`|(?:(?:^|[\s=:(\[,;])-)?\b` + msgNumberText + `\b`)
+	// A CSI sequence (a colour, a cursor move), or any other control
+	// character but the white space collapseSpaces handles.
+	msgControlRe = regexp.MustCompile(`\x1b\[[0-?]*[ -/]*[@-~]|[\x00-\x08\x0b\x0e-\x1f\x7f]`)
+)
+
+const (
+	// msgNumberText is a number with an optional unit of up to seven
+	// letters ("250ms", "12.5secs", "1.5µs"), or a run of them without a
+	// space ("1m0s", "2h45m30.5s").
+	msgNumberText = `(?:\d+(?:\.\d+)?[A-Za-zµ]{1,7})*\d+(?:\.\d+)?[A-Za-zµ]{0,7}`
+	// msgNumberLeads are the characters a minus sign may follow, as
+	// msgNumberRe lists them.
+	msgNumberLeads = " \t\n\f\r=:([,;"
+	// msgCodeDigits is the longest status or error code that is kept.
+	msgCodeDigits = 5
+	// msgEscape starts a control sequence.
+	msgEscape = "\x1b"
 )
 
 // messageRule is one replacement step of the parameteriser. applies is a
@@ -118,16 +165,27 @@ var messageRules = []messageRule{
 	{"url", func(s string) bool { return strings.Contains(s, "://") },
 		func(s string) string { return msgURLRe.ReplaceAllString(s, msgURL) }},
 	{"uuid", func(s string) bool { return strings.Count(s, "-") >= 4 },
-		func(s string) string { return msgUUIDRe.ReplaceAllString(s, msgUUID) }},
+		func(s string) string { return msgUUIDRe.ReplaceAllString(s, "${1}"+msgUUID) }},
+	// Each expression of the IP rule runs only on text that holds what it
+	// needs: most messages with colons or full stops hold no address.
 	{"ip", func(s string) bool { return strings.Count(s, ".") >= 3 || strings.Count(s, ":") >= 2 }, func(s string) string {
-		s = msgIPv6BracketRe.ReplaceAllStringFunc(s, func(m string) string {
-			if isIPv6(msgIPv6BracketRe.FindStringSubmatch(m)[1]) {
-				return msgIP
-			}
-			return m
-		})
+		colons := strings.Count(s, ":") >= 2
+		if colons && strings.Contains(s, "[") {
+			s = msgIPv6BracketRe.ReplaceAllStringFunc(s, func(m string) string {
+				if isIPv6(msgIPv6BracketRe.FindStringSubmatch(m)[1]) {
+					return msgIP
+				}
+				return m
+			})
+		}
 		// IPv6 before IPv4, so an IPv4-mapped address is taken whole.
-		return msgIPv4Re.ReplaceAllString(replaceBareIPv6(s), msgIP)
+		if colons {
+			s = replaceBareIPv6(s)
+		}
+		if hasDigit(s) && strings.Count(s, ".") >= 3 {
+			s = msgIPv4Re.ReplaceAllString(s, msgIP)
+		}
+		return s
 	}},
 	{"date", func(s string) bool { return hasDigit(s) && strings.ContainsAny(s, "-:") },
 		func(s string) string { return msgDateRe.ReplaceAllString(s, msgDate) }},
@@ -154,7 +212,7 @@ var messageRules = []messageRule{
 	}},
 	{"id", func(s string) bool { return hasDigit(s) && strings.Contains(s, "_") },
 		func(s string) string { return msgPrefixedIDRe.ReplaceAllString(s, "${1}"+msgID) }},
-	{"number", hasDigit, func(s string) string { return msgNumberRe.ReplaceAllStringFunc(s, replaceNumber) }},
+	{"number", hasDigit, replaceNumbers},
 }
 
 // replaceFilePath decides what a path match becomes. A path that names a
@@ -176,17 +234,37 @@ func replaceFilePath(m string) string {
 	return lead + msgPath
 }
 
-// replaceNumber decides what a msgNumberRe match becomes: a code after its
-// wording stays as it is, a number is replaced, and the character a minus
-// sign followed is kept.
-func replaceNumber(m string) string {
-	switch c := m[0]; {
-	case c >= '0' && c <= '9', c == '-':
-		return msgNumber
-	case isWordByte(c):
-		return m
+// replaceNumbers decides what each msgNumberRe match becomes: a number is
+// replaced, and the character a minus sign followed is kept; a number after
+// the wording of a code is replaced behind the wording unless it is a code;
+// any other match is a code and stays as it is.
+func replaceNumbers(s string) string {
+	var b strings.Builder
+	last := 0
+	for _, m := range msgNumberRe.FindAllStringSubmatchIndex(s, -1) {
+		start, end, code := m[0], m[1], m[2]
+		keep := start
+		switch c := s[start]; {
+		case code >= 0:
+			if value := s[code:end]; len(value) <= msgCodeDigits && strings.Trim(value, digits) == "" {
+				continue
+			}
+			keep = code
+		case c == '-' || strings.IndexByte(digits, c) >= 0:
+		case strings.IndexByte(msgNumberLeads, c) >= 0:
+			keep = start + 1
+		default:
+			continue
+		}
+		b.WriteString(s[last:keep])
+		b.WriteString(msgNumber)
+		last = end
 	}
-	return m[:1] + msgNumber
+	if last == 0 {
+		return s
+	}
+	b.WriteString(s[last:])
+	return b.String()
 }
 
 // ParameterizeMessage replaces the variable parts of an exception message
@@ -194,7 +272,17 @@ func replaceNumber(m string) string {
 // <n>), collapses whitespace and bounds the result to ExceptionMessageMax
 // bytes. It is idempotent: parameterising its own output changes nothing.
 func ParameterizeMessage(msg string) string {
-	s := cutBytes(strings.ToValidUTF8(msg, ""), exceptionMessageInput)
+	// The cap is on the bytes that arrived, so nothing past it is looked
+	// at; a rune it goes through is invalid and dropped with the rest.
+	s := strings.ToValidUTF8(msg[:min(len(msg), exceptionMessageInput)], "")
+	if strings.ContainsAny(s, msgControls) {
+		s = msgControlRe.ReplaceAllStringFunc(s, func(m string) string {
+			if strings.HasPrefix(m, msgEscape) && len(m) > len(msgEscape) {
+				return "" // a control sequence is not text
+			}
+			return " "
+		})
+	}
 	// A replacement or the cut can expose a new match (a quote pair around a
 	// placeholder, a number at the new end), so run to a fixed point. Every
 	// changing pass removes literal text, which bounds the passes; the cap
@@ -239,17 +327,29 @@ func collapseSpaces(s string) string {
 }
 
 // cutMessage bounds s to ExceptionMessageMax bytes without leaving half a
-// placeholder at the end.
+// placeholder at the end: a "<" near the cut goes with what follows it
+// where a placeholder starts that way, and is text otherwise ("x < y").
 func cutMessage(s string) string {
 	if len(s) <= ExceptionMessageMax {
 		return s
 	}
 	s = cutBytes(s, ExceptionMessageMax)
-	tail := s[len(s)-msgPlaceholderMax+1:]
-	if open := strings.LastIndexByte(tail, '<'); open >= 0 && !strings.Contains(tail[open:], ">") {
+	tail := s[max(0, len(s)-msgPlaceholderMax+1):]
+	if open := strings.LastIndexByte(tail, '<'); open >= 0 && hasPrefixIn(msgPlaceholders, tail[open:]) {
 		s = s[:len(s)-len(tail)+open]
 	}
 	return s
+}
+
+// hasPrefixIn reports whether prefix starts one of the words without being
+// the whole of it.
+func hasPrefixIn(words []string, prefix string) bool {
+	for _, word := range words {
+		if len(prefix) < len(word) && strings.HasPrefix(word, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // cutBytes truncates s to at most limit bytes on a rune boundary.
@@ -278,6 +378,10 @@ func replaceBareIPv6(s string) string {
 			(end < len(s) && isWordByte(s[end])) {
 			continue
 		}
+		// Hex letters around a scope operator are a name ("db::add").
+		if cand := s[start:end]; !hasDigit(cand) && strings.Count(cand, ":") < msgIPv6WordColons {
+			continue
+		}
 		b.WriteString(s[last:start])
 		b.WriteString(msgIP)
 		last = end
@@ -293,7 +397,13 @@ func replaceBareIPv6(s string) string {
 // unspecified address but reads as an operator in a message, so it is not
 // one here.
 func isIPv6(s string) bool {
-	if len(s) > msgIPv6Max || strings.Count(s, ":") < 2 || strings.Trim(s, ":.") == "" {
+	if len(s) > msgIPv6Max || strings.Trim(s, ":.") == "" {
+		return false
+	}
+	// An address has a "::" or all of its groups; the test spares parsing
+	// the many candidates that are neither ("10:11:12").
+	if colons := strings.Count(s, ":"); !strings.Contains(s, "::") &&
+		colons != msgIPv6Colons && (colons != msgIPv6Colons-1 || !strings.Contains(s, ".")) {
 		return false
 	}
 	addr, err := netip.ParseAddr(s)
@@ -301,10 +411,15 @@ func isIPv6(s string) bool {
 }
 
 func hasDigit(s string) bool {
-	return strings.ContainsAny(s, "0123456789")
+	return strings.ContainsAny(s, digits)
 }
 
-const hexLetters = "abcdefABCDEF"
+const (
+	hexLetters = "abcdefABCDEF"
+	digits     = "0123456789"
+	// msgControls are the control characters msgControlRe matches.
+	msgControls = "\x00\x01\x02\x03\x04\x05\x06\x07\x08\x0b\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f\x7f"
+)
 
 // wordBytes are the bytes regexp's \w matches.
 const wordBytes = "_0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"

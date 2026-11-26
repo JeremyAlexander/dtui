@@ -109,7 +109,40 @@ func TestParameterizeMessageReplacesEachKind(t *testing.T) {
 		{"sqlstate with a letter", "SQLSTATE 2200G", "SQLSTATE 2200G"},
 		{"vendor error code", "ORA-00942: table or view does not exist", "ORA-00942: table or view does not exist"},
 		{"a long number after code wording is an id", "code 1234567", "code <n>"},
-		{"code wording after a hyphen", "x-code 5 and x -code -5", "x-code 5 and x -code <n>"},
+		{"a number after code alone is a value", "x-code 5 and x -code -5", "x-code <n> and x -code <n>"},
+		{"a promo code is a value", "Invalid promo code 12345", "Invalid promo code <n>"},
+		{"a zip code is a value", "zip code 90210 not served", "zip code <n> not served"},
+		{"a verification code is a value", "verification code 4821 expired", "verification code <n> expired"},
+		{"a duration after status wording", "status: 200ms elapsed", "status: <n> elapsed"},
+		{"a decimal after status wording", "status: 12.5ms", "status: <n>"},
+		{"a status ends a sentence", "upstream answered HTTP 404.", "upstream answered HTTP 404."},
+		{"sqlstate in lower case letters is no code", "sqlstate error on row 7", "sqlstate error on row <n>"},
+		{"a long s is no s", "a\u017ftatus 404", "a\u017ftatus 404"},
+		{"a kelvin sign is no k", "to\u212aen 42", "to\u212aen <n>"},
+
+		{"a compound duration", "timeout after 1m0s", "timeout after <n>"},
+		{"a longer compound duration", "ran 2h45m30.5s then 1.5µs", "ran <n> then <n>"},
+		{"digits and letters in turns", "part 12gh34kl missing", "part <n> missing"},
+
+		{"a long quoted value", `value "` + strings.Repeat("x", 300) + `" rejected`, "value <q> rejected"},
+		{"escaped quotes inside a quoted value", `value "a \"red\" b" bad`, "value <q> bad"},
+		{"an escaped quote inside single quotes", `name 'O\'Brien' taken`, "name <q> taken"},
+
+		{"colour codes are no text", "\x1b[31mCart 7 is locked\x1b[0m", "Cart <n> is locked"},
+		{"a colour code inside a word", "ERR\x1b[1mOR\x1b[0m: cart 7", "ERROR: cart <n>"},
+		{"control characters separate words", "cart\x007\x1fis locked\x7f", "cart <n> is locked"},
+
+		{"prose after a windows path", `C:\app\a.json is locked by CORP\alice`, `<path> is locked by CORP\alice`},
+		{"a windows path in parentheses", `open (C:\data\cart.json) failed`, "open (<path>) failed"},
+		{"a windows path in a list", `read [C:\data\a.json, C:\data\b.json]; gave up`, "read [<path>, <path>]; gave up"},
+		{"a windows directory with parentheses", `open C:\Program Files (x86)\Shop\cart.json failed`, "open <path> failed"},
+		{"a windows directory of three words", `open C:\Documents and Settings\cart.json failed`, "open <path> failed"},
+
+		{"a scoped name of hex letters", "db::add failed", "db::add failed"},
+		{"a scoped name of hex letters, upper case", "A::B failed", "A::B failed"},
+		{"three colons make an address without a digit", "peer fe::ab:cd gone", "peer <ip> gone"},
+
+		{"a uuid behind an id prefix", "order_123e4567-e89b-12d3-a456-426614174000 gone", "order_<uuid> gone"},
 		{"a number elsewhere is still a number", "404 items in cart 500", "<n> items in cart <n>"},
 		{"digits inside a word stay", "utf8 and http2 and x86_64", "utf8 and http2 and x86_64"},
 		{"version", "v 1.2.3", "v <n>.<n>"},
@@ -213,6 +246,22 @@ func TestParameterizeMessageRulesMergeAndSplit(t *testing.T) {
 			[2]string{"HTTP 404 sendError called", "HTTP 500 sendError called"}},
 		{"error codes", [2]string{"SQLSTATE 23505 on row 7", "SQLSTATE 23505 on row 9"},
 			[2]string{"SQLSTATE 23505", "SQLSTATE 08006"}},
+		{"a code that is a value", [2]string{"Invalid promo code 12345", "Invalid promo code 777"},
+			[2]string{"Invalid promo code 12345", "Invalid zip code 12345"}},
+		{"a zip code", [2]string{"zip code 90210 not served", "zip code 10115 not served"},
+			[2]string{"zip code 90210 not served", "zip code 90210 not found"}},
+		{"a verification code", [2]string{"verification code 4821 expired", "verification code 77 expired"},
+			[2]string{"verification code 4821 expired", "error code 4821 expired"}},
+		{"compound durations", [2]string{"timeout after 1m0s", "timeout after 59s"},
+			[2]string{"timeout after 1m0s", "timeout before 1m0s"}},
+		{"colour codes", [2]string{"\x1b[31mCart 7 is locked\x1b[0m", "Cart 9 is locked"},
+			[2]string{"\x1b[31mCart 7 is locked\x1b[0m", "\x1b[31mOrder 7 is locked\x1b[0m"}},
+		{"windows path and prose", [2]string{`C:\app\a.json is locked by CORP\alice`, `D:\data\b.json is locked by CORP\alice`},
+			[2]string{`C:\app\a.json is locked by CORP\alice`, `C:\app\a.json is missing for CORP\bob`}},
+		{"scoped names", [2]string{"peer fd00::1f gone", "peer fd00::2a gone"},
+			[2]string{"db::add failed", "ab::cd failed"}},
+		{"prefixed uuid", [2]string{"order_123e4567-e89b-12d3-a456-426614174000 gone", "order_0a1b2c3d-4e5f-4b7c-8e21-3f2b8c1e9d4a gone"},
+			[2]string{"order_123e4567-e89b-12d3-a456-426614174000 gone", "cart_123e4567-e89b-12d3-a456-426614174000 gone"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.rule, func(t *testing.T) {
@@ -310,6 +359,12 @@ func TestParameterizeMessageIsBounded(t *testing.T) {
 	if want := head + msgQuoted; got != want {
 		t.Errorf("the cut behind a whole placeholder left %q", got[len(got)-12:])
 	}
+	// A literal "<" at the cut is text unless a placeholder starts like
+	// what follows it.
+	head = strings.Repeat("a", ExceptionMessageMax-5)
+	if got, want := ParameterizeMessage(head+" x < y zzzz"), head+" x <"; got != want {
+		t.Errorf("a literal < at the cut took the text before it: %q", got[len(got)-12:])
+	}
 	// A literal "<" far from the end is not mistaken for one.
 	head = "a < b " + strings.Repeat("a", ExceptionMessageMax)
 	if got := ParameterizeMessage(head); got != head[:ExceptionMessageMax] {
@@ -334,6 +389,18 @@ func TestParameterizeMessageIsBounded(t *testing.T) {
 		t.Errorf("the last byte inside the input cap was lost: %q", got)
 	}
 
+	// The cap counts the bytes of the input, whatever they are: invalid
+	// ones before it do not let later text in.
+	if got := ParameterizeMessage(strings.Repeat("\x80", exceptionMessageInput) + "late"); got != "" {
+		t.Errorf("text past the input cap leaked behind invalid bytes: %q", got)
+	}
+	if got := ParameterizeMessage(strings.Repeat("\x80", exceptionMessageInput-4) + "late"); got != "late" {
+		t.Errorf("text inside the input cap was lost: %q", got)
+	}
+	// A rune the cap goes through is dropped whole.
+	if got := ParameterizeMessage(strings.Repeat("a", exceptionMessageInput-1) + "é"); !utf8.ValidString(got) {
+		t.Errorf("the cap split a rune: %q", got[len(got)-4:])
+	}
 	// Input beyond the read cap is never looked at.
 	if got := ParameterizeMessage(strings.Repeat(" ", exceptionMessageInput) + "late"); got != "" {
 		t.Errorf("text past the input cap leaked: %q", got)
@@ -361,7 +428,9 @@ func FuzzParameterizeMessage(f *testing.F) {
 		"/a/b '/c/d' 0x1F 10.0.0.7:80 2026-03-01T10:11:12Z 250ms", "<", "<uui", "a@1b", `C:\a\b`,
 		"GET /cart/42/items", "/a/b.c.", `C:\a b\c d\e.f g`, "user_1 cus_9s6X", "Index -1", "x=-5",
 		"HTTP 404", "status code: 500", "SQLSTATE[08006]", "ORA-00942", "2001:db8:10:20:30::1", "5000msec",
-		strings.Repeat("9 ", 300), strings.Repeat("<", 300), "\xff'\xfe'",
+		strings.Repeat("9 ", 300), strings.Repeat("<", 300), "\xff'\xfe'", "a\u017ftatus 404", "to\u212aen 42",
+		"\x1b[31mCart 7\x1b[0m", `"a \"b\" c"`, "1m0s", `C:\a (x86)\b c d e\f`, "db::add", "order_123e4567-e89b-12d3-a456-426614174000",
+		strings.Repeat("a", 251) + " x < y zzzz", strings.Repeat("\x80", 300) + "<n", "status: 12.5ms",
 	} {
 		f.Add(seed)
 	}

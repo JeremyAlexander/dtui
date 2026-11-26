@@ -7,14 +7,16 @@ db5f196278c8cf9a	const FrameAnonymous
 a8d17c595d4d967b	const customClassifierField
 91060a6753d16f13	const dotnetInnerEnd
 1dbd793c56756a76	const dotnetMonoOffset
-522deeaf409507c6	const exceptionMessageInput, ExceptionMessageMax, msgIPv6Max, msgPlaceholderMax
+61a640576f8dd7db	const exceptionMessageInput, ExceptionMessageMax, msgIPv6Max, msgIPv6Colons, msgIPv6WordColons, msgPlaceholderMax
 6511a88fc8d4cab7	const fingerprintKeyLen
 13a0afea61cdc2a9	const goVendorDir
-9125b18ba3f768e5	const hexLetters
+93ff8fef9db5608a	const hexLetters, digits, msgControls
 9753a90bf181f7cc	const javaSyntheticClass
 d4727ff604b5e9d7	const javaUnknownSource, javaNotInFile
 9a4a8c14fe76725b	const jsRuntimeScheme, jsDependencyDir
+9ba37082d5b0fd6f	const msgNumberText, msgNumberLeads, msgCodeDigits, msgEscape
 3326b310fbb605a5	const msgQuoted, msgURL, msgUUID, msgDate, msgIP, msgPath, msgHex, msgID, msgNumber
+b29bd30168fc254b	const msgWinPathWord, msgWinPathWords
 474756cfd1208541	const pythonFramePrefix, pythonTraceback, pythonGutter
 14ebf31c1d78cb21	const pythonStdlibDir
 be49c176bdbf2914	const sourceCurrentDir
@@ -69,10 +71,11 @@ bd9679cbcb4e4662	var jsLocationRe
 93aecd587dee03a1	var jsNoFile
 cd703a5c9f6742dd	var jsPassThrough
 2665c76d0111cdc6	var jsSourceFileRe
-5ff2f62f99ecc3a1	var messageRules
-774915664109b5a3	var msgBackQuotedRe
+a177ee3a0a8fa052	var messageRules
+55199c0a5afe8500	var msgBackQuotedRe
+c46144748cfdf72a	var msgControlRe
 4a2a15eef729e09b	var msgDateRe
-9a7b09aee81e39b5	var msgDoubleQuotedRe
+f14d4659e0454d20	var msgDoubleQuotedRe
 ed8e489e1a57d751	var msgFileNameRe
 2e9eaf0e20f3d7ae	var msgHexAtRe
 b9a004cbcac48ca4	var msgHexLitRe
@@ -80,13 +83,14 @@ b9a004cbcac48ca4	var msgHexLitRe
 9d34338d0b4105f6	var msgIPv4Re
 b31800458cf9cc82	var msgIPv6BracketRe
 7ae7d4aa677de534	var msgIPv6Re
-e8744e0d58d68600	var msgNumberRe
+6dca6ee0b9bf80bc	var msgNumberRe
+1750cf4410b42118	var msgPlaceholders
 36207411439c96ce	var msgPrefixedIDRe
-eaff88ed45459b5b	var msgSingleQuotedRe
+530fa174fda670a0	var msgSingleQuotedRe
 b5dc00612ce32c5f	var msgURLRe
-b7c0e04c4db8aa9c	var msgUUIDRe
+95fa6350781d692b	var msgUUIDRe
 246d1b1e27dc378c	var msgUnixPathRe
-6cdbb0e32054a65f	var msgWinPathRe
+590b91abad6d02aa	var msgWinPathRe
 a231b8c2c60d6c9c	var pythonFrameRe
 4fa9e3e2d46bd00e	var pythonGroupRuleRe
 4ab2df08053537fa	var pythonPackageDirs
