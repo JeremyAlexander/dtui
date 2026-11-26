@@ -1,7 +1,7 @@
  ▛▞▟ dtui  ·  context:test  ·  ● readonly                               last 2h
  exceptions ───────────────────────────────────────────────────────────────────
  6 rows · 1s
- last 2h · limit hit: newest 1000 exception spans, back to 11:48:19; older ones…
+ limit hit: newest 1000 exception spans, back to 11:48:19; older ones are not c…
  COUNT  LAST          EXCEPTION               MESSAGE      SERVICE       BY
 ▌  650  11:59:59      lang.IllegalStateExce…  cart <n> i…  cart +1       app
    100  11:59:56      sql.SQLException        connection…  orders        app

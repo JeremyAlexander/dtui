@@ -98,9 +98,12 @@ func cutFor(notices []exec.QueryNotification) sampleCut {
 	return cut
 }
 
-// line renders the header: the window, what cut the sample, how many records
-// arrived and how far back they reach. warn is set when the sample was cut.
-// "" for an empty sample nothing cut: an empty view needs no caveat.
+// line renders the header: what cut the sample, how many records arrived,
+// how far back they reach, and last the window they were fetched over. The
+// window comes last because a narrow table truncates the line, and the
+// screen's own header names the window anyway; the reach is nowhere else.
+// warn is set when the sample was cut. "" for an empty sample nothing cut:
+// an empty view needs no caveat.
 func (f *sampleFacts) line() (text string, warn bool) {
 	if f == nil || (f.fetched == 0 && f.cut == cutNone) {
 		return "", false
@@ -116,9 +119,9 @@ func (f *sampleFacts) line() (text string, warn bool) {
 	var what string
 	switch {
 	case f.cut == cutNone && f.fetched == 1:
-		return f.window + " · " + count, false
+		return count + " · " + f.window, false
 	case f.cut == cutNone:
-		return f.window + " · all " + count, false
+		return "all " + count + " · " + f.window, false
 	case f.fetched == 0 && f.cut == cutBytes:
 		what = "no " + f.noun + " fit"
 	case f.fetched == 0:
@@ -134,7 +137,7 @@ func (f *sampleFacts) line() (text string, warn bool) {
 		}
 		what += "; older ones are not counted"
 	}
-	return f.window + " · " + reason + ": " + what, true
+	return reason + ": " + what + " · " + f.window, true
 }
 
 // sampleOpts are a sample query's execution options: the usual ones, with
