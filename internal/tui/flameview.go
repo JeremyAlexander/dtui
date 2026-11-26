@@ -512,7 +512,7 @@ func (v *flameView) handleKey(msg tea.KeyMsg) tea.Cmd {
 		g.ZoomIn()
 	case "O":
 		fn, _ := v.selectedFunction()
-		return func() tea.Msg { return sourceAskMsg{label: fn} }
+		return func() tea.Msg { return sourceAskMsg{view: v, label: fn} }
 	case "d":
 		v.detailsFirst = !v.detailsFirst
 		switch {

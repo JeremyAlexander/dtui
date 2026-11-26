@@ -516,7 +516,7 @@ func (a *app) dispatch(msg tea.Msg) tea.Cmd {
 		return tea.Batch(a.navigate(msg.view, false), a.ds.source.warm())
 
 	case sourceAskMsg:
-		return a.findSource(msg.label)
+		return a.findSource(msg.view, msg.label)
 
 	case sourceFoundMsg:
 		return a.foundSource(msg)

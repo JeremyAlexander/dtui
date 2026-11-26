@@ -167,6 +167,30 @@ func TestOpenSourcePicksAmongSeveral(t *testing.T) {
 	_ = p
 }
 
+// A lookup that answers after the reader has left the graph opens nothing
+// and offers nothing: the editor does not come up over another view, and no
+// list of files covers it.
+func TestOpenSourceIsDroppedOnceTheGraphIsLeft(t *testing.T) {
+	for _, frame := range []string{"com.example.shop.CartService.total", "handler.ts:resolve"} {
+		a, fv, _, opened := sourceApp(t, "vscode")
+		onFrame(t, a, fv, frame)
+		_, ask := a.Update(key("O"))
+		_, lookup := a.Update(ask())
+		press(a, key("tab")) // back on the functions before the lookup answers
+		a.status = ""
+		deliver(a, lookup)
+		if len(*opened) != 0 || a.overlay != nil || strings.Contains(a.status, "opened") {
+			t.Errorf("%s: after leaving, opened %v, overlay %T, status %q", frame, *opened, a.overlay, a.status)
+		}
+		// Back on the graph the key works as before.
+		press(a, key("tab"))
+		press(a, key("O"))
+		if len(*opened) == 0 && a.overlay == nil {
+			t.Errorf("%s: O on the graph again did nothing (status %q)", frame, a.status)
+		}
+	}
+}
+
 // Without an editor the place is copied and said; without a directory to
 // look in the key says so and the footer does not offer it; an opener that
 // fails is reported.

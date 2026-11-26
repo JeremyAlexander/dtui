@@ -87,10 +87,16 @@ func (s *sourceLookup) likely(label string) bool {
 	return true
 }
 
-// sourceAskMsg asks for the source of a frame, and sourceFoundMsg answers.
-type sourceAskMsg struct{ label string }
+// sourceAskMsg asks for the source of a frame of a view, and sourceFoundMsg
+// answers. The answer is for the view that asked, while it is what the
+// reader looks at.
+type sourceAskMsg struct {
+	view  viewModel
+	label string
+}
 
 type sourceFoundMsg struct {
+	view    viewModel
 	label   string
 	index   *source.Index
 	matches []source.Match
@@ -113,7 +119,7 @@ func (s *sourceLookup) warm() tea.Cmd {
 }
 
 // findSource looks a frame's file up, off the update loop.
-func (a *app) findSource(label string) tea.Cmd {
+func (a *app) findSource(view viewModel, label string) tea.Cmd {
 	s := a.ds.source
 	short := catalog.ShortFrame(oneLine(label), 48)
 	f := source.Parse(label)
@@ -130,15 +136,20 @@ func (a *app) findSource(label string) tea.Cmd {
 	return tea.Batch(status("looking for "+short+" under "+filepath.Base(s.root)), func() tea.Msg {
 		ix, err := s.get(context.Background())
 		if err != nil {
-			return sourceFoundMsg{label: label, err: err}
+			return sourceFoundMsg{view: view, label: label, err: err}
 		}
-		return sourceFoundMsg{label: label, index: ix, matches: ix.Resolve(context.Background(), f)}
+		return sourceFoundMsg{view: view, label: label, index: ix, matches: ix.Resolve(context.Background(), f)}
 	})
 }
 
 // foundSource acts on a lookup: one file opens, several are offered, and
-// none says so.
+// none says so. A lookup that answers after the reader left the view that
+// asked, or opened something over it, is dropped: an editor must not come up
+// for a screen that is no longer there.
 func (a *app) foundSource(msg sourceFoundMsg) tea.Cmd {
+	if a.top() != msg.view || a.overlay != nil {
+		return nil
+	}
 	short := catalog.ShortFrame(oneLine(msg.label), 48)
 	switch {
 	case msg.err != nil:
