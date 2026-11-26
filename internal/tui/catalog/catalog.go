@@ -597,9 +597,11 @@ type HopSpec struct {
 	Apply func(s Scope, records []map[string]any) []Entity
 }
 
-// specs is the ordered registry; order drives command-bar suggestions.
+// specs is the ordered registry; order drives command-bar suggestions, so a
+// new view goes behind the ones whose prefixes people already type
+// (exceptions after events: `:e` stays events).
 var specs = []*Spec{
-	problemsSpec, servicesSpec, hostsSpec, processesSpec, logsSpec, tracesSpec, exceptionsSpec, eventsSpec,
+	problemsSpec, servicesSpec, hostsSpec, processesSpec, logsSpec, tracesSpec, eventsSpec, exceptionsSpec,
 	podsSpec, containersSpec, workloadsSpec, namespacesSpec, nodesSpec, clustersSpec, fleetSpec, modulesSpec, agentLogsSpec,
 	awsSpec, azureSpec, entitiesSpec, resourcesSpec,
 	frontendsSpec, databasesSpec, genaiSpec, vulnsSpec, attacksSpec, metricsSpec,

@@ -389,3 +389,18 @@ func TestPreviewFactsExceptionIssueOfOneWrappedSpan(t *testing.T) {
 		t.Error("no last-seen line")
 	}
 }
+
+// The command bar opens its first match, and equal matches rank in registry
+// order. The exceptions view must not take the prefixes people already type
+// for the events view.
+func TestExceptionsViewLeavesEventsItsPrefixes(t *testing.T) {
+	for input, want := range map[string]string{
+		"e": "events", "ev": "events",
+		"ex": "exceptions", "exc": "exceptions", "exceptions": "exceptions",
+		"exe": "executions", "exec": "executions",
+	} {
+		if got := Match(input); len(got) == 0 || got[0].Name != want {
+			t.Errorf(":%s opens %v, want %s", input, got[0].Name, want)
+		}
+	}
+}
