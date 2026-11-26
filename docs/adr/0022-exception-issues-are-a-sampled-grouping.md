@@ -42,12 +42,15 @@ rest how the view uses it.
   One vector for another implementation: an event with the type `é` and
   nothing else hashes the bytes `1:42:é` to `e1:c7bd5892e50a`.
 - **One event per span is keyed.** Of a span's exception events that give a
-  type, a message or a frame a reader can use, take the last one flagged
-  `exception.is_caused_by_root`, else the last one. Stack text no reader can
-  use does not make an event count, and neither does a Go stack that is not a
-  panic's. A span with no such event has no key. Where that event's stack
+  type, a message that is not empty once parameterised, or a frame a reader
+  can use, take the last one flagged `exception.is_caused_by_root`, else the
+  last one. Stack text no reader can use does not make an event count, and
+  neither does a Go stack that is not a panic's, nor a message of which
+  parameterising leaves nothing, such as one of control characters only. A
+  span with no such event has no key. Where that event's stack
   text holds a whole chain (`Caused by:` in Java, an inner exception in .NET,
-  an earlier traceback in Python), the frames are the root cause's, read from
+  an earlier traceback in Python, the first member of a Python exception
+  group that is itself the first exception), the frames are the root cause's, read from
   the text, and so is the type where the text names one. A cause whose type
   cannot be read keeps the event's type, and a cause without frames is not
   the root: the nearest exception with frames is. A JavaScript `[cause]`
