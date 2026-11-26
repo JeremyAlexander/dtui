@@ -68,7 +68,7 @@ func pythonOwns(line string) bool {
 func pythonModule(path string) string {
 	path = strings.ReplaceAll(path, `\`, "/")
 	for _, dir := range pythonPackageDirs {
-		if i := strings.LastIndex(path, dir); i >= 0 {
+		if i := lastDirectory(path, dir); i >= 0 {
 			return path[i:]
 		}
 	}

@@ -26,14 +26,20 @@ import (
 // standard library where its path starts with one of the library's names.
 
 var (
-	goGoroutineRe = regexp.MustCompile(`^goroutine \d+ \[`)
+	// "goroutine 1 [running]:", and the header of a system dump, which
+	// names the goroutine's pointers first ("goroutine 1 gp=0x… m=0 […").
+	goGoroutineRe = regexp.MustCompile(`^goroutine \d+ (?:[\w=]+ )*\[`)
 	goNameRe      = regexp.MustCompile(`^[\p{L}\p{N}_./~%·*()\[\],-]+$`)
 	// Arguments are printed as hex words ("0x1f", "0xc000012345?"), in
-	// braces where they are the fields of one value, "..." when elided.
-	goArgsRe     = regexp.MustCompile(`^(?:0x[0-9a-f]+\??|\.\.\.|[{},\s])*$`)
+	// braces where they are the fields of one value, "..." when elided and
+	// "_" where the runtime cannot read one.
+	goArgsRe     = regexp.MustCompile(`^(?:0x[0-9a-f]+\??|\.\.\.|[{},\s_])*$`)
 	goTypeArgsRe = regexp.MustCompile(`\[[^\]]*\]`)
 	// The file line under a frame, and what in its path shows a dependency.
-	goFileRe       = regexp.MustCompile(`^(\S+\.go):\d+(?: \+0x[0-9a-f]+)?$`)
+	// An absolute path may hold spaces; a system dump prints the frame's
+	// pointers after it.
+	goFileRe = regexp.MustCompile(
+		`^((?:/|[A-Za-z]:[\\/]).*\.go|\S+\.go):\d+(?: \+0x[0-9a-f]+)?(?: fp=0x[0-9a-f]+ sp=0x[0-9a-f]+ pc=0x[0-9a-f]+)?$`)
 	goDependencyRe = regexp.MustCompile(`@v\d|/pkg/mod/|(?:^|/)vendor/`)
 	// The runtime's entry points of a panic. "panic" itself is printed
 	// without a package.
@@ -147,9 +153,10 @@ func isGoPanic(f StackFrame) bool {
 	return f.Module == "" && f.Function == "panic" || f.Module == "runtime" && goPanicRe.MatchString(f.Function)
 }
 
+// goFirstGoroutine reads the frames up to the first header that follows
+// one: a dump may start without the header of the goroutine it is about.
 func goFirstGoroutine(lines []string) []StackFrame {
 	var out []StackFrame
-	goroutines := 0
 	framed := false // the line before was a frame; this one may be its file
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
@@ -158,7 +165,7 @@ func goFirstGoroutine(lines []string) []StackFrame {
 		case ok:
 			out = append(out, f)
 		case goGoroutineRe.MatchString(line):
-			if goroutines++; goroutines > 1 {
+			if len(out) > 0 {
 				return out
 			}
 		case framed:

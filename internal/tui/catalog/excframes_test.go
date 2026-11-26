@@ -447,10 +447,10 @@ async*post@https://shop.example.invalid/static/js/api.js:17:5
 @https://shop.example.invalid/static/js/main.js:5:1
 CartService.prototype.total@https://shop.example.invalid/static/js/cart.js:60:9`,
 			frames(StackJS,
-				"/static/js/cart.js", "addItem",
-				"/static/js/api.js", "post",
-				"/static/js/main.js", "<anonymous>",
-				"/static/js/cart.js", "CartService.prototype.total")},
+				"static/js/cart.js", "addItem",
+				"static/js/api.js", "post",
+				"static/js/main.js", "<anonymous>",
+				"static/js/cart.js", "CartService.prototype.total")},
 		{"a mail address is not a frame", "bob@shop.example.invalid\nask bob@shop.example.invalid:25:1", nil},
 		{"at without a frame", "    at \n    at async \n    at some words here", nil},
 	}
@@ -581,8 +581,9 @@ func TestSourceModulesAreDeployIndependent(t *testing.T) {
 		"shop/cart.py": {
 			py("/app/shop/cart.py"), py("/srv/releases/20261126101112/shop/cart.py"), py("/var/task/shop/cart.py"),
 			py("/home/deploy/shop/cart.py"), py(`C:\app\shop\cart.py`), py("/usr/src/app/shop/cart.py"),
-			py("/srv/www/checkout/current/shop/cart.py"), py("/opt/shop/cart.py"), py("./shop/cart.py"),
-			py("/data/builds/3f2b8c1e9d/shop/cart.py"), py("/opt/apps/v2.14.0-rc.1/shop/cart.py"),
+			py("/var/www/checkout/releases/20261126101112/shop/cart.py"), py("./shop/cart.py"),
+			py("/data/builds/3f2b8c1e9d/shop/cart.py"), py("/opt/v2.14.0-rc.1/shop/cart.py"),
+			py("/srv/current/shop/cart.py"), py("/opt/shop/cart.py"),
 		},
 		"lib/python/json/decoder.py": {
 			py("/usr/lib/python3.11/json/decoder.py"), py("/usr/local/lib/python3.12/json/decoder.py"),
@@ -603,7 +604,7 @@ func TestSourceModulesAreDeployIndependent(t *testing.T) {
 			js(`C:\app\node_modules\express\lib\router\layer.js`),
 			js("/app/node_modules/.pnpm/express@4.19.2/node_modules/express/lib/router/layer.js"),
 		},
-		"/static/js/main.js": {
+		"static/js/main.js": {
 			js("https://shop.example.invalid/static/js/main.8f3a2b1c.js"),
 			js("https://staging.shop.example.invalid:8443/static/js/main-0a1b2c3d4e5f.js?v=7"),
 			js("http://localhost:3000/static/js/main.js"),
@@ -736,7 +737,7 @@ func TestBuiltinInApp(t *testing.T) {
 
 		{StackFrame{Module: "src/cart/service.js", Syntax: StackJS}, true},
 		{StackFrame{Module: "index.js", Syntax: StackJS}, true},
-		{StackFrame{Module: "/static/js/cart.js", Syntax: StackJS}, true},
+		{StackFrame{Module: "static/js/cart.js", Syntax: StackJS}, true},
 		{StackFrame{Module: "lib/node_modules.js", Syntax: StackJS}, true},
 		{StackFrame{Module: "node_modules/express/lib/router/layer.js", Syntax: StackJS}, false},
 		{StackFrame{Module: "node:internal/process/task_queues", Syntax: StackJS}, false},
@@ -869,7 +870,7 @@ func TestFrameNamesBeyondASCII(t *testing.T) {
 	assertFrames(t, "   at Beispiel.Größe.Berechne(String wert)\n   at Beispiel.Api.Get()",
 		frames(StackDotNet, "Beispiel.Größe", "Berechne", "Beispiel.Api", "Get"))
 	assertFrames(t, "    at Größe.berechne (/app/src/größe.js:4:2)\ngröße@https://shop.example.invalid/static/app.js:1:2",
-		frames(StackJS, "src/größe.js", "Größe.berechne", "/static/app.js", "größe"))
+		frames(StackJS, "src/größe.js", "Größe.berechne", "static/app.js", "größe"))
 	assertFrames(t, "shop/größe.(*Maß).Berechne(0xc000010000)\nmain.main()",
 		frames(StackGo, "shop/größe", "Maß.Berechne", "main", "main"))
 }
@@ -1391,6 +1392,159 @@ func TestDotNetGeneratedNames(t *testing.T) {
 		if !ok || f.Module != tc.module || f.Function != tc.function {
 			t.Errorf("%s\n got %q %q %v\nwant %q %q", tc.line, f.Module, f.Function, ok, tc.module, tc.function)
 		}
+	}
+}
+
+// The runtime prints more than the plain dump shows: a system header with
+// the goroutine's pointers, frame pointers after a file line, "_" for an
+// argument it cannot read. A dump that starts without a header still ends
+// at the first one.
+func TestGoRuntimeDumpForms(t *testing.T) {
+	dump := func(header, background string) string {
+		return header + `
+main.process(0xc000012345, 0x2)
+	/app/main.go:42 +0x1d
+main.main()
+	/app/main.go:12 +0x25
+
+goroutine 2 gp=0xc000002a80 m=nil [force gc (idle)]:
+` + background + `()
+	/app/worker.go:7 +0x33
+`
+	}
+	want := frames(StackGo, "main", "process", "main", "main")
+	for name, header := range map[string]string{
+		"plain header":  "goroutine 1 [running]:",
+		"system header": "goroutine 1 gp=0xc000002380 m=0 mp=0x5a3c20 [running]:",
+		"no header":     "panic: cart locked\n",
+	} {
+		if got := ParseStackFrames(dump(header, "main.background")); !reflect.DeepEqual(got, want) {
+			t.Errorf("%s: %+v, want %+v", name, got, want)
+		}
+		a := mustFingerprint(t, SpanException{Type: "panic", StackTrace: dump(header, "main.background")})
+		b := mustFingerprint(t, SpanException{Type: "panic", StackTrace: dump(header, "main.sweeper")})
+		if a.Key != b.Key {
+			t.Errorf("%s: another goroutine's function is in the key: %s, %s", name, a.Key, b.Key)
+		}
+	}
+
+	dependency := StackFrame{Module: "shop.example.invalid/queue", Function: "Client.Send", Syntax: StackGo, Dependency: true}
+	for name, stack := range map[string]string{
+		"frame pointers after the file": "goroutine 1 [running]:\nshop.example.invalid/queue.(*Client).Send(0xc000012345)\n" +
+			"\t/go/pkg/mod/shop.example.invalid/queue@v1.4.2/client.go:88 +0x1d fp=0xc00007df60 sp=0xc00007df00 pc=0x48a2bd\n",
+		"a space in the module cache's path": "goroutine 1 [running]:\nshop.example.invalid/queue.(*Client).Send(0xc000012345)\n" +
+			"\t/Users/deploy/Go Workspace/pkg/mod/shop.example.invalid/queue@v1.4.2/client.go:88 +0x1d\n",
+		"the autogenerated wrapper of a dependency": "goroutine 1 [running]:\nshop.example.invalid/queue.(*Client).Send(0xc000012345)\n" +
+			"\t/go/pkg/mod/shop.example.invalid/queue@v1.4.2/client.go:88 +0x1d\n" +
+			"shop.example.invalid/queue.(*Client).Send(0xc000012345)\n\t<autogenerated>:1 +0x2a\n",
+	} {
+		if got := ParseStackFrames(stack); !reflect.DeepEqual(got, []StackFrame{dependency}) {
+			t.Errorf("%s: %+v, want %+v", name, got, dependency)
+		}
+	}
+
+	got := ParseStackFrames("goroutine 1 [running]:\nmain.Process({{{...}}}, _)\n\t/app/main.go:42 +0x1d\nmain.main()\n\t/app/main.go:12 +0x25\n")
+	if want := frames(StackGo, "main", "Process", "main", "main"); !reflect.DeepEqual(got, want) {
+		t.Errorf("an unreadable argument: %+v, want %+v", got, want)
+	}
+	// Prose with a file name in it is not a file line.
+	if goOwns("see the notes in cart.go:12") || !goOwns("/Users/deploy/Go Workspace/shop/cart.go:12 +0x1d") {
+		t.Error("goOwns reads prose as a file line, or not a path with a space")
+	}
+}
+
+// A module is the same file wherever it is deployed, and two files are two
+// modules: a directory counts as a release only where a release is put.
+func TestSourceModulesKeepDirectoriesOfTheCode(t *testing.T) {
+	py := func(path string) string { return `File "` + path + `", line 42, in add_item` }
+	js := func(loc string) string { return "at addItem (" + loc + ":42:17)" }
+	for line, want := range map[string]string{
+		js("/app/api/1.0/handlers.js"):                           "api/1.0/handlers.js",
+		js("/app/api/2.0/handlers.js"):                           "api/2.0/handlers.js",
+		js("/app/billing/current/invoice.js"):                    "billing/current/invoice.js",
+		js("/app/tax/current/invoice.js"):                        "tax/current/invoice.js",
+		js("/app/current/src/cart.js"):                           "src/cart.js",
+		js("/app/1.4.2/src/cart.js"):                             "src/cart.js",
+		js("/var/www/shop/releases/1.4.2/src/cart.js"):           "src/cart.js",
+		js("/data/shop/versions/20261126101112/src/cart.js"):     "src/cart.js",
+		js("src/cart.js"):                                        "src/cart.js",
+		js("./src/cart.js"):                                      "src/cart.js",
+		js("events.js"):                                          "node:events",
+		js("internal/modules/cjs/loader.js"):                     "node:internal/modules/cjs/loader",
+		js("/app/custom_node_modules/pkg/index.js"):              "custom_node_modules/pkg/index.js",
+		js("node_modules/pkg/index.js"):                          "node_modules/pkg/index.js",
+		py("/app/mysite-packages/pkg/mod.py"):                    "mysite-packages/pkg/mod.py",
+		py("site-packages/pkg/mod.py"):                           "site-packages/pkg/mod.py",
+		js("file:///C:/app/shop/cart.js"):                        "shop/cart.js",
+		js(`C:\app\shop\cart.js`):                                "shop/cart.js",
+		js("http://localhost:3000/static/js/main.js"):            "static/js/main.js",
+		js("https://shop.example.invalid/app/static/js/main.js"): "app/static/js/main.js",
+		js("https://shop.example.invalid/assets/1.4.2/main.js"):  "main.js",
+		js("https://shop.example.invalid/main.js"):               "main.js",
+		js("webpack://shop/./src/cart.js"):                       "src/cart.js",
+	} {
+		got := ParseStackFrames(line)
+		if len(got) != 1 || got[0].Module != want {
+			t.Errorf("%s: module %+v, want %q", line, got, want)
+		}
+	}
+	for line, inApp := range map[string]bool{
+		js("src/cart.js"): true, js("events.js"): false, js("/app/custom_node_modules/pkg/index.js"): true,
+		py("/app/mysite-packages/pkg/mod.py"): true, py("/app/.venv/lib/python3.12/site-packages/pkg/mod.py"): false,
+	} {
+		if got := ParseStackFrames(line); len(got) != 1 || builtinInApp(got[0]) != inApp {
+			t.Errorf("%s: in-app is not %v: %+v", line, inApp, got)
+		}
+	}
+}
+
+// A trace whose breaks arrived escaped reads like the same trace with real
+// ones, also where a Windows path holds a backslash before an "n" or a "t".
+func TestEscapedBreaksLeaveWindowsPaths(t *testing.T) {
+	real := "Error: cart locked\n    at addItem (C:\\app\\node_modules\\cart\\index.js:42:17)\n" +
+		"    at run (C:\\app\\src\\tools\\main.js:7:3)\n    at C:\\app\\src\\new\\index.js:1:1"
+	escaped := strings.ReplaceAll(real, "\n", `\n`)
+	want := frames(StackJS, "node_modules/cart/index.js", "addItem", "src/tools/main.js", "run", "src/new/index.js", FrameAnonymous)
+	for name, stack := range map[string]string{"real": real, "escaped": escaped} {
+		if got := ParseStackFrames(stack); !reflect.DeepEqual(got, want) {
+			t.Errorf("%s breaks: %+v\nwant %+v", name, got, want)
+		}
+	}
+	py := "Traceback (most recent call last):\n  File \"C:\\app\\shop\\nested\\tasks.py\", line 42, in add_item\n    raise ValueError(sku)\nValueError: kettle"
+	if got, want := ParseStackFrames(strings.ReplaceAll(py, "\n", `\n`)), ParseStackFrames(py); len(want) != 1 || !reflect.DeepEqual(got, want) {
+		t.Errorf("python, escaped: %+v, want %+v", got, want)
+	}
+	// Lines at the first column are split too: the header of a cause, a Go
+	// frame.
+	chain := "com.example.shop.CheckoutException: failed\n\tat com.example.shop.Api.post(Api.java:12)\n" +
+		"Caused by: java.lang.IllegalStateException: locked\n\tat com.example.shop.Cart.add(Cart.java:42)\n\t... 1 more"
+	if got, want := ParseStackFrames(strings.ReplaceAll(strings.ReplaceAll(chain, "\n", `\n`), "\t", `\t`)), ParseStackFrames(chain); len(want) != 2 || !reflect.DeepEqual(got, want) {
+		t.Errorf("java chain, escaped: %+v, want %+v", got, want)
+	}
+	dump := "goroutine 1 [running]:\nmain.process(0xc000012345)\n\t/app/main.go:42 +0x1d\nmain.main()\n\t/app/main.go:12 +0x25"
+	if got, want := ParseStackFrames(strings.ReplaceAll(strings.ReplaceAll(dump, "\n", `\n`), "\t", `\t`)), ParseStackFrames(dump); len(want) != 2 || !reflect.DeepEqual(got, want) {
+		t.Errorf("go dump, escaped: %+v, want %+v", got, want)
+	}
+}
+
+// A getter and a setter are functions of their own.
+func TestJavaScriptAccessors(t *testing.T) {
+	for line, want := range map[string]string{
+		"at get left (/app/src/box.js:4:11)":                 "get left",
+		"at set left (/app/src/box.js:8:11)":                 "set left",
+		"at Box.get right [as right] (/app/src/box.js:4:11)": "Box.get right",
+		"at get (/app/src/box.js:4:11)":                      "get",
+	} {
+		got := ParseStackFrames(line)
+		if len(got) != 1 || got[0].Function != want || got[0].Module != "src/box.js" {
+			t.Errorf("%s: %+v, want function %q", line, got, want)
+		}
+	}
+	caller := "\n    at render (/app/src/page.js:9:3)"
+	a := mustFingerprint(t, SpanException{Type: "TypeError", StackTrace: "TypeError: x\n    at get left (/app/src/box.js:4:11)" + caller})
+	b := mustFingerprint(t, SpanException{Type: "TypeError", StackTrace: "TypeError: x\n    at get right (/app/src/box.js:5:11)" + caller})
+	if a.Key == b.Key {
+		t.Errorf("two getters share the key %s", a.Key)
 	}
 }
 

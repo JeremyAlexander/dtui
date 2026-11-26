@@ -11,10 +11,11 @@ import (
 
 var (
 	// "at fn (location)": the function is one name, with "new" before a
-	// constructor and "[as alias]" after a renamed method. Prose after "at"
-	// ("at least 3 items (max 5)") has more words. The closing parenthesis
-	// may be cut off.
-	jsCallRe = regexp.MustCompile(`^at (?:async )?((?:new )?[\p{L}\p{N}_$.<>#]+(?: \[as [^\]]+\])?) \((.*?)\)?$`)
+	// constructor, "get" or "set" before an accessor and "[as alias]" after
+	// a renamed method. Prose after "at" ("at least 3 items (max 5)") has
+	// more words. The closing parenthesis may be cut off.
+	jsCallRe = regexp.MustCompile(
+		`^at (?:async )?((?:new |(?:[\p{L}\p{N}_$.<>#]+\.)?[gs]et )?[\p{L}\p{N}_$.<>#]+(?: \[as [^\]]+\])?) \((.*?)\)?$`)
 	// "at location": no function name.
 	jsBareRe = regexp.MustCompile(`^at (?:async )?(\S+)$`)
 	// A location is a file with its line, or one of V8's words for code
@@ -29,8 +30,10 @@ var (
 	jsAliasRe = regexp.MustCompile(` \[as [^\]]*\]$`)
 	jsIndexRe = regexp.MustCompile(`^index \d+$`)
 	jsLinesRe = regexp.MustCompile(`(?::\d+)+`)
-	// The application's files are named by an absolute path or a URL.
-	jsAbsoluteRe = regexp.MustCompile(`^(?:/|[A-Za-z]:/|[A-Za-z][A-Za-z0-9+.-]+://)`)
+	// Node's own files, as it printed them before it had the "node:"
+	// scheme: a bare name ("events.js") or one under "internal/". The
+	// application's are named by a path.
+	jsRuntimeFileRe = regexp.MustCompile(`^(?:internal/[\w/.-]+|[\w-]+)\.js$`)
 	// The content hash a bundler puts into a file name ("main.8f3a2b1c.js").
 	jsContentHashRe = regexp.MustCompile(`^(.*[^/.-])[.-][0-9a-f]{8,}((?:\.\w+)+)$`)
 )
@@ -109,8 +112,7 @@ func jsFunction(name string) string {
 //   - A dependency is addressed from its innermost node_modules directory,
 //     wherever that is installed.
 //   - Node's own code is "node:<name>"; before Node had that scheme it
-//     printed a bare or relative file ("events.js"), which the application's
-//     files, always absolute, never are.
+//     printed a bare file ("events.js") or one under "internal/".
 //   - Anything else is the application's and goes through sourceModule,
 //     then loses the content hash of a bundle's file name.
 func jsModule(loc string) string {
@@ -121,10 +123,10 @@ func jsModule(loc string) string {
 	case loc == FrameAnonymous, loc == "native", strings.HasPrefix(loc, jsRuntimeScheme):
 		return loc
 	}
-	if i := strings.LastIndex(loc, jsDependencyDir); i >= 0 {
+	if i := lastDirectory(loc, jsDependencyDir); i >= 0 {
 		return loc[i:]
 	}
-	if !jsAbsoluteRe.MatchString(loc) {
+	if jsRuntimeFileRe.MatchString(loc) {
 		return jsRuntimeScheme + strings.TrimSuffix(loc, ".js")
 	}
 	return jsContentHashRe.ReplaceAllString(sourceModule(loc), "$1$2")

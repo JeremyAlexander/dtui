@@ -2,6 +2,7 @@ package catalog
 
 import (
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -164,8 +165,17 @@ const (
 var (
 	stackLineBreaks = strings.NewReplacer("\r\n", "\n", "\r", "\n")
 	// stackEscapedBreaks are line breaks and tabs that arrived escaped.
-	stackEscapedBreaks = strings.NewReplacer(`\r\n`, "\n", `\n`, "\n", `\r`, "\n", `\t`, "\t")
+	stackEscapedBreaks = []struct{ escaped, plain string }{{`\r\n`, "\n"}, {`\n`, "\n"}, {`\r`, "\n"}, {`\t`, "\t"}}
+	// A Windows path starts with a drive or, on a share, two backslashes.
+	stackWindowsPathRe = regexp.MustCompile(`^(?:[A-Za-z]:\\|\\\\)`)
 )
+
+// stackIndents are what a line that continues a trace starts with.
+var stackIndents = []string{" ", "\t", `\t`}
+
+// stackWordEnds are what ends the word a Windows path is: a path with a
+// space in it is not seen whole.
+const stackWordEnds = " \t\"'("
 
 // stackLines splits a trace into lines at "\n", "\r\n" or "\r". A trace
 // without any line break whose breaks arrived escaped (a backslash and an
@@ -174,7 +184,7 @@ var (
 // also part of "C:\app\node_modules".
 func stackLines(stack string) []string {
 	if !strings.ContainsAny(stack, "\r\n") && (strings.Contains(stack, `\n `) || strings.Contains(stack, `\n\t`)) {
-		stack = stackEscapedBreaks.Replace(stack)
+		stack = unescapeBreaks(stack)
 	}
 	if strings.Contains(stack, "\r") {
 		stack = stackLineBreaks.Replace(stack)
@@ -191,6 +201,39 @@ func stackLines(stack string) []string {
 	return lines
 }
 
+// unescapeBreaks turns escaped line breaks and tabs into real ones. Inside
+// a Windows path a backslash before an "n", an "r" or a "t" separates two
+// directories ("C:\app\node_modules", "C:\src\tools"), so there only a
+// break that indentation follows is one.
+func unescapeBreaks(stack string) string {
+	var b strings.Builder
+	b.Grow(len(stack))
+	word := 0 // where the word around i starts
+scan:
+	for i := 0; i < len(stack); {
+		c := stack[i]
+		if c == '\\' {
+			inPath := stackWindowsPathRe.MatchString(stack[word : i+1])
+			for _, br := range stackEscapedBreaks {
+				rest, ok := strings.CutPrefix(stack[i:], br.escaped)
+				if !ok || inPath && (br.plain != "\n" || !hasAnyPrefix(rest, stackIndents)) {
+					continue
+				}
+				b.WriteString(br.plain)
+				i += len(br.escaped)
+				word = i
+				continue scan
+			}
+		}
+		b.WriteByte(c)
+		i++
+		if strings.IndexByte(stackWordEnds, c) >= 0 {
+			word = i
+		}
+	}
+	return b.String()
+}
+
 // framesOf reads every line that is a frame.
 func framesOf(lines []string, frame func(string) (StackFrame, bool)) []StackFrame {
 	var out []StackFrame
@@ -203,15 +246,27 @@ func framesOf(lines []string, frame func(string) (StackFrame, bool)) []StackFram
 }
 
 var (
-	// A URL's scheme and host, or a Windows drive.
-	sourceOriginRe = regexp.MustCompile(`^(?:[A-Za-z][A-Za-z0-9+.-]+://[^/]*|[A-Za-z]:)`)
+	// A URL's scheme and host, or a Windows drive, which a file URL has
+	// behind a slash ("file:///C:/app").
+	sourceOriginRe = regexp.MustCompile(`^(?:[A-Za-z][A-Za-z0-9+.-]+://[^/]*(?:/[A-Za-z]:)?|[A-Za-z]:)`)
 	// A directory named by a release, not by the code: a timestamp or build
 	// number, a version, a commit hash.
 	sourceReleaseRe = regexp.MustCompile(`^(?:\d{6,}|v?\d+(?:\.\d+)+(?:[-+][\w.]+)?|[0-9a-f]{7,40})$`)
 )
 
-// sourceCurrentDir is the link a release layout keeps to the live release.
-const sourceCurrentDir = "current"
+const (
+	// sourceCurrentDir is the link a release layout keeps to the live
+	// release.
+	sourceCurrentDir = "current"
+	// sourceURL marks an origin as a URL's, sourceFileScheme as that of a
+	// URL which names a file on the host.
+	sourceURL        = "://"
+	sourceFileScheme = "file:"
+)
+
+// sourceReleaseDirs are the directories a deployment keeps its releases in,
+// one directory each.
+var sourceReleaseDirs = []string{"releases", "versions", "builds", "deployments", "revisions"}
 
 // deployRoots are the directories an application is commonly deployed into,
 // each before any shorter root it starts with. deployHomes hold one
@@ -230,55 +285,98 @@ var (
 //
 //  1. A URL loses its scheme, host and query, a Windows path its drive, and
 //     "./" steps go.
-//  2. If a directory of the path is named by a release — six or more digits
-//     (a timestamp, a build number), a version ("1.4.2", "v2.14.0-rc.1"), a
+//  2. A path on the host loses the deploy root it starts with: one of
+//     deployRoots, or a user's directory under one of deployHomes. The
+//     path of a URL other than a file's is not one on the host, and only
+//     loses its leading "/".
+//  3. If a directory is named by a release — six or more digits (a
+//     timestamp, a build number), a version ("1.4.2", "v2.14.0-rc.1"), a
 //     hex hash of seven or more characters, or "current" — everything up to
-//     and including the last such directory goes.
-//  3. Otherwise the deploy root the path starts with goes: one of
-//     deployRoots, or a user's directory under one of deployHomes.
+//     and including the last such directory goes. On the host a directory
+//     is a release only where one is put: directly below the deploy root,
+//     or in one of sourceReleaseDirs. Anywhere else it is the code's own
+//     ("api/1.0/handlers.js", "billing/current/invoice.js"). A URL has no
+//     such place, so there it counts anywhere ("assets/1.4.2/main.js").
 //
 // What is left is the path below the deployment: "shop/cart.py" for
 // "/app/shop/cart.py" and for "/srv/releases/20261126101112/shop/cart.py".
 // A path under a root that is not listed stays whole, which is stable as
 // long as the application keeps being deployed there.
 func sourceModule(path string) string {
-	path = sourceOriginRe.ReplaceAllString(path, "")
-	path, _, _ = strings.Cut(path, "?")
+	origin := sourceOriginRe.FindString(path)
+	url := strings.Contains(origin, sourceURL) && !strings.HasPrefix(origin, sourceFileScheme)
+	path, _, _ = strings.Cut(path[len(origin):], "?")
 	path = strings.TrimPrefix(strings.ReplaceAll(path, "/./", "/"), "./")
 
-	for end := strings.LastIndexByte(path, '/'); end > 0; {
-		start := strings.LastIndexByte(path[:end], '/') + 1
-		if dir := path[start:end]; dir == sourceCurrentDir || sourceReleaseRe.MatchString(dir) && hasDigit(dir) {
-			return path[end+1:]
-		}
-		end = start - 1
+	rooted := url
+	if url {
+		path = strings.TrimPrefix(path, "/")
+	} else if below, ok := belowDeployRoot(path); ok {
+		path, rooted = below, true
 	}
+	cut, parent := 0, ""
+	for start := 0; ; {
+		length := strings.IndexByte(path[start:], '/')
+		if length < 0 {
+			break
+		}
+		dir := path[start : start+length]
+		placed := url || rooted && start == 0 || slices.Contains(sourceReleaseDirs, parent)
+		if placed && (dir == sourceCurrentDir || sourceReleaseRe.MatchString(dir) && hasDigit(dir)) {
+			cut = start + length + 1
+		}
+		parent, start = dir, start+length+1
+	}
+	return path[cut:]
+}
+
+// belowDeployRoot cuts the deploy root a path starts with.
+func belowDeployRoot(path string) (string, bool) {
 	for _, root := range deployRoots {
 		if rest, ok := strings.CutPrefix(path, root); ok {
-			return rest
+			return rest, true
 		}
 	}
 	for _, home := range deployHomes {
 		if rest, ok := strings.CutPrefix(path, home); ok {
 			if _, below, ok := strings.Cut(rest, "/"); ok {
-				return below
+				return below, true
 			}
 		}
 	}
-	return path
+	return path, false
 }
 
-// collapseFrames drops a frame equal to the one before it, so a recursion
-// counts once however deep it went.
+// lastDirectory returns where the last directory of that name ("name/")
+// starts in a path, or -1: a directory whose name only ends that way
+// ("custom_node_modules/") is another one.
+func lastDirectory(path, dir string) int {
+	for end := len(path); ; {
+		i := strings.LastIndex(path[:end], dir)
+		if i <= 0 || path[i-1] == '/' {
+			return i
+		}
+		end = i
+	}
+}
+
+// collapseFrames drops a frame that names the same code as the one before
+// it, so a recursion counts once however deep it went. Whether the trace
+// showed it to be a dependency is not part of what it names: a wrapper the
+// compiler generated for a dependency's method has no file to show it by,
+// and is a dependency like the method.
 func collapseFrames(frames []StackFrame) []StackFrame {
 	if len(frames) == 0 {
 		return nil
 	}
 	out := make([]StackFrame, 0, len(frames))
 	for _, f := range frames {
-		if len(out) == 0 || out[len(out)-1] != f {
-			out = append(out, f)
+		if last := len(out) - 1; last >= 0 && out[last].Module == f.Module && out[last].Function == f.Function &&
+			out[last].Syntax == f.Syntax {
+			out[last].Dependency = out[last].Dependency || f.Dependency
+			continue
 		}
+		out = append(out, f)
 	}
 	return out
 }
