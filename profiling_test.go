@@ -17,6 +17,8 @@ import (
 	"time"
 
 	"github.com/Dynatrace/dtctl/pkg/resources/profiling"
+	"github.com/Dynatrace/dtctl/sdk/api/codelevelanalysis"
+	"github.com/Dynatrace/dtctl/sdk/httpclient"
 	"github.com/Dynatrace/dtctl/sdk/session"
 	"github.com/dynatrace-oss/dtui/internal/tui"
 	"github.com/dynatrace-oss/dtui/internal/tui/catalog"
@@ -387,12 +389,12 @@ func TestProfilingFailuresAreClassified(t *testing.T) {
 			t.Errorf("403 wording lacks %q: %s", want, msg)
 		}
 	}
-	// A 500 is not one of dtui's reasons: it is shown as the API put it.
-	hotspots, _ := sourcesAt(profilerOver(t, answering(500, nil, `{"error":{"code":500,"message":"boom"}}`)), "")
+	// A status that says nothing about an analysis is shown as the API put it.
+	hotspots, _ := sourcesAt(profilerOver(t, answering(401, nil, `{"error":{"code":401,"message":"token expired"}}`)), "")
 	_, err := hotspots(context.Background(), scope, "")
 	var f *profileFailure
-	if err == nil || errors.As(err, &f) {
-		t.Errorf("HTTP 500: got %v, want the API's own error", err)
+	if err == nil || errors.As(err, &f) || !strings.Contains(err.Error(), "API error (401): token expired") {
+		t.Errorf("HTTP 401: got %v, want the API's own error", err)
 	}
 }
 
@@ -584,31 +586,6 @@ func TestProfilingSharesAndCancelsOneAnalysis(t *testing.T) {
 	}
 	if started() != 2 {
 		t.Errorf("%d analyses ran, want 2: lenses must share one", started())
-	}
-}
-
-// What the environment answers while an analysis runs reaches the waiting
-// view as progress.
-func TestAnalysisProgressNotes(t *testing.T) {
-	var notes []string
-	ctx := context.WithValue(context.Background(), profileNoteKey{}, func(s string) { notes = append(notes, s) })
-	p := profilerOver(t, answering(429, http.Header{"Retry-After": []string{"0"}}, `{"error":{"code":429,"message":"busy"}}`))
-	if _, err := p.Hotspots(ctx, profileQuery{Entity: shopProcess.ID, From: scenarioNow.Add(-time.Hour), To: scenarioNow}); err == nil {
-		t.Fatal("a throttled analysis must fail in the end")
-	}
-	if len(notes) < 2 || !strings.Contains(notes[0], "throttled (429, 1× so far)") || !strings.Contains(notes[1], "2× so far") {
-		t.Errorf("throttle notes = %q", notes)
-	}
-
-	var prog analysisProgress
-	if got := prog.note(http.StatusAccepted, ""); !strings.Contains(got, "accepted") {
-		t.Errorf("first 202 = %q", got)
-	}
-	if got := prog.note(http.StatusAccepted, ""); !strings.Contains(got, "asked 1×") {
-		t.Errorf("second 202 = %q", got)
-	}
-	if got := prog.note(http.StatusOK, ""); got != "" {
-		t.Errorf("a result needs no note, got %q", got)
 	}
 }
 
@@ -934,4 +911,230 @@ func TestProfilingKeepsAtMostFourAnalyses(t *testing.T) {
 	if got := kept(runs); got != 0 {
 		t.Errorf("4 failed analyses left %d cached, want none", got)
 	}
+}
+
+// Every failure the environment can answer with is worded for dtui: what
+// happened and which key to press, never the SDK's own text, a task token or
+// a sentence that ends in a colon.
+func TestProfilingFailureWording(t *testing.T) {
+	apiError := func(code int, msg string) string {
+		b, _ := json.Marshal(map[string]any{"error": map[string]any{"code": code, "message": msg}})
+		return string(b)
+	}
+	scope := catalog.Scope{Entity: shopProcess, Timeframe: timeframe(t, "2h")}
+	for _, tc := range []struct {
+		name   string
+		status int
+		body   string
+		reason profileReason
+		want   string
+	}{
+		{"400 with a message", 400, apiError(400, "from must be before to"), profileBadRequest,
+			"the environment rejected the analysis (400): from must be before to"},
+		{"400 without one", 400, "", profileBadRequest,
+			"the environment rejected the analysis (400)"},
+		{"429", 429, apiError(429, "Too many requests"), profileThrottled,
+			"the environment is throttling profiling requests (429) and kept refusing this one — wait a moment, then press r"},
+		{"500 with a message", 500, apiError(500, "boom"), profileServerError,
+			"the environment failed on the analysis (500): boom — press r to ask again"},
+		{"503 without one", 503, "", profileServerError,
+			"the environment failed on the analysis (503) — press r to ask again"},
+		{"a result that is not an object", 200, "[]", profileMalformed,
+			"the environment's answer is not an analysis result (this API is experimental and may have changed): the result of a completed analysis is an array, not an object"},
+	} {
+		env := answering(tc.status, http.Header{"Retry-After": []string{"0"}}, tc.body)
+		hotspots, _ := sourcesAt(profilerOver(t, env), "")
+		_, err := hotspots(context.Background(), scope, "")
+		var f *profileFailure
+		if !errors.As(err, &f) || f.Reason != tc.reason {
+			t.Errorf("%s: got %v, want reason %s", tc.name, err, tc.reason)
+			continue
+		}
+		if err.Error() != tc.want {
+			t.Errorf("%s reads\n %q, want\n %q", tc.name, err.Error(), tc.want)
+		}
+	}
+
+	// What only a poll can meet, in the shape the SDK returns it.
+	poll := func(err error) error {
+		return profilingFailure(&codelevelanalysis.Error{Phase: codelevelanalysis.PhasePoll, Err: err}, shopProcess.ID)
+	}
+	for _, tc := range []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"an expired task",
+			poll(fmt.Errorf("codelevelanalysis: poll (token t-4711): %w", httpclient.NewAPIError(404, "Unknown token", ""))),
+			"the environment no longer knows this analysis (404 while waiting for its result) — press r to run it again"},
+		{"an analysis that never completed",
+			poll(fmt.Errorf("%w within 60s (token t-4711)", codelevelanalysis.ErrNotCompleted)),
+			"the analysis was still running when dtui stopped asking for its result — press r to ask again"},
+		{"a throttled poll",
+			poll(fmt.Errorf("codelevelanalysis: poll (token t-4711): %w", httpclient.NewAPIError(429, "Too many requests", ""))),
+			"the environment is throttling profiling requests (429) and kept refusing this one — wait a moment, then press r"},
+		{"a window the profiler refuses",
+			profilingFailure(&codelevelanalysis.Error{Phase: codelevelanalysis.PhaseValidate, Err: profiling.ErrWindowEmpty}, shopProcess.ID),
+			"this analysis cannot be asked for: profiling: the window ends at or before its start"},
+	} {
+		var f *profileFailure
+		if !errors.As(tc.err, &f) {
+			t.Errorf("%s passed through unworded: %v", tc.name, tc.err)
+			continue
+		}
+		if got := tc.err.Error(); got != tc.want || strings.Contains(got, "t-4711") {
+			t.Errorf("%s reads\n %q, want\n %q", tc.name, got, tc.want)
+		}
+	}
+
+	// A failure that is not one of an analysis keeps its own text.
+	plain := errors.New("dial tcp: connection refused")
+	if got := profilingFailure(plain, shopProcess.ID); got != plain {
+		t.Errorf("a transport error became %v", got)
+	}
+}
+
+// focusTree is a hotspots result with three functions whose labels contain
+// one another: X.run has running samples only, the two longer ones are the
+// only ones that waited for a lock.
+const focusTree = `{"dataRootNodeId":"1","dataNodes":[
+	{"id":"1","classPath":"com.example","className":"Main","methodName":"main","samples":{},"childIds":["2","3","4"]},
+	{"id":"2","classPath":"com.example","className":"X","methodName":"run","samples":{"RUNNING":40},"childIds":[]},
+	{"id":"3","classPath":"com.example","className":"X","methodName":"runAsync","samples":{"RUNNING":5,"LOCK":7},"childIds":[]},
+	{"id":"4","classPath":"com.example","className":"X","methodName":"runRetry","samples":{"LOCK":3},"childIds":[]}]}`
+
+// A focused function is the one whose row was entered, by its whole label. In
+// a thread state it has no samples in, the view is empty and says so: it is
+// neither an error nor quietly another function whose name contains it.
+func TestProfilingFocusIsExact(t *testing.T) {
+	hotspots, _ := sourcesAt(profilerOver(t, answering(200, nil, focusTree)), "")
+	focus := func(lens, fn string) (map[string]any, []map[string]any) {
+		t.Helper()
+		records, err := hotspots(context.Background(),
+			catalog.Scope{Entity: shopProcess, Timeframe: timeframe(t, "2h"), Lens: lensIndex(t, lens), Arg: fn}, "")
+		if err != nil {
+			t.Fatalf("focus on %s in %s: %v", fn, lens, err)
+		}
+		return catalog.SplitSummary(records)
+	}
+
+	summary, rows := focus("running", "com.example.X.run")
+	if len(rows) != 3 || summary[catalog.ProfSumSamples] != 40.0 {
+		t.Errorf("X.run running: %d rows, %v samples; want total, self, caller and 40", len(rows), summary[catalog.ProfSumSamples])
+	}
+	// Two longer labels have lock samples, X.run has none.
+	summary, rows = focus("lock", "com.example.X.run")
+	if len(rows) != 0 || summary[catalog.ProfSumEmpty] != catalog.ProfEmptyState {
+		t.Errorf("X.run lock: %d rows, empty=%v; want none and %s", len(rows), summary[catalog.ProfSumEmpty], catalog.ProfEmptyState)
+	}
+	// Exactly one longer label has samples: still not the function meant.
+	summary, rows = focus("lock", "com.example.X.runRet")
+	if len(rows) != 0 || summary[catalog.ProfSumEmpty] != catalog.ProfEmptyState {
+		t.Errorf("a partial label: %d rows, empty=%v; want none and %s", len(rows), summary[catalog.ProfSumEmpty], catalog.ProfEmptyState)
+	}
+}
+
+// A window that has not happened yet is refused before anything is asked,
+// with a reason of dtui's own, and is not cached as an empty result.
+func TestProfilingRefusesAWindowInTheFuture(t *testing.T) {
+	sent := 0
+	env := roundTrip(func(r *http.Request) (*http.Response, error) {
+		sent++
+		return answering(200, nil, `{"dataNodes":[]}`)(r)
+	})
+	hotspots, allocations := sourcesAt(profilerOver(t, env), "")
+	for _, tc := range []struct {
+		name string
+		tf   catalog.Timeframe
+		want string
+	}{
+		{"closed, all of it ahead", catalog.Timeframe{From: scenarioNow.Add(time.Hour), To: scenarioNow.Add(2 * time.Hour), Dur: time.Hour},
+			"the selected window starts in the future: there is nothing to analyse yet — t picks another window"},
+		{"open, starting ahead", catalog.Timeframe{From: scenarioNow.Add(time.Hour), Dur: time.Hour},
+			"the selected window starts in the future: there is nothing to analyse yet — t picks another window"},
+		{"closed, ending ahead", catalog.Timeframe{From: scenarioNow.Add(-time.Hour), To: scenarioNow.Add(time.Hour), Dur: 2 * time.Hour},
+			"the selected window ends in the future: an analysis covers past time only — t picks another window"},
+		{"empty", catalog.Timeframe{From: scenarioNow.Add(-time.Hour), To: scenarioNow.Add(-time.Hour)},
+			"the selected window is empty — t picks another window"},
+	} {
+		for _, src := range []tui.Source{hotspots, allocations} {
+			_, err := src(context.Background(), catalog.Scope{Entity: shopProcess, Timeframe: tc.tf}, "")
+			var f *profileFailure
+			if !errors.As(err, &f) || err.Error() != tc.want {
+				t.Errorf("%s: got %v, want %q", tc.name, err, tc.want)
+			}
+		}
+	}
+	if sent != 0 {
+		t.Errorf("refused windows sent %d requests", sent)
+	}
+}
+
+// The notes say what the environment answered and promise nothing about what
+// the SDK does next. They carry no count, so the client's own retries beneath
+// the SDK's do not multiply it, and a Retry-After is read as seconds or as a
+// date.
+func TestAnalysisProgressNotes(t *testing.T) {
+	var prog analysisProgress
+	for _, tc := range []struct {
+		status     int
+		retryAfter string
+		want       string
+	}{
+		{429, "", "the environment answered 429: it is throttling profiling requests"},
+		{429, "10", "the environment answered 429: it is throttling profiling requests and asks to wait 10s"},
+		{429, "Wed, 15 Jul 2026 12:00:30 GMT", "the environment answered 429: it is throttling profiling requests and asks to wait until 12:00:30 UTC"},
+		{429, "soon", "the environment answered 429: it is throttling profiling requests"},
+		{202, "", "the environment accepted the analysis — waiting for its result"},
+		{202, "", "the analysis is still running on the server"},
+		{202, "", "the analysis is still running on the server"},
+		{200, "", ""},
+	} {
+		if got := prog.note(tc.status, tc.retryAfter); got != tc.want {
+			t.Errorf("note(%d, %q) = %q, want %q", tc.status, tc.retryAfter, got, tc.want)
+		}
+	}
+
+	// A client as dtui builds it retries a 429 itself, beneath the SDK.
+	c, err := session.NewClient("https://env.example.invalid", "token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	requests := 0
+	env := roundTrip(func(r *http.Request) (*http.Response, error) {
+		requests++
+		if requests <= 3 {
+			return answering(429, http.Header{"Retry-After": []string{"0"}}, "")(r)
+		}
+		return answering(200, nil, `{"dataNodes":[]}`)(r)
+	})
+	c.HTTP().SetTransport(analysisObserver{next: env}).SetRetryWaitTime(time.Millisecond).SetRetryMaxWaitTime(time.Millisecond)
+	seen := map[string]int{}
+	ctx := context.WithValue(context.Background(), profileNoteKey{}, func(s string) { seen[s]++ })
+	if _, err := (dtctlProfiler{h: profiling.NewHandler(c)}).Hotspots(ctx, profileQuery{Entity: shopProcess.ID, From: scenarioNow.Add(-time.Hour), To: scenarioNow}); err != nil {
+		t.Fatal(err)
+	}
+	const throttled = "the environment answered 429: it is throttling profiling requests and asks to wait 0s"
+	if len(seen) != 1 || seen[throttled] != 3 {
+		t.Errorf("three throttled answers gave the notes %v, want %q three times", seen, throttled)
+	}
+}
+
+type idleCloser struct {
+	roundTrip
+	closed int
+}
+
+func (c *idleCloser) CloseIdleConnections() { c.closed++ }
+
+// The observer stays transparent to http.Client.CloseIdleConnections, which
+// reaches the session client's shared pool through its transport.
+func TestAnalysisObserverForwardsCloseIdleConnections(t *testing.T) {
+	next := &idleCloser{}
+	(&http.Client{Transport: analysisObserver{next: next}}).CloseIdleConnections()
+	if next.closed != 1 {
+		t.Errorf("CloseIdleConnections reached the transport %d times, want 1", next.closed)
+	}
+	// A transport without the method is left alone.
+	(&http.Client{Transport: analysisObserver{next: roundTrip(nil)}}).CloseIdleConnections()
 }

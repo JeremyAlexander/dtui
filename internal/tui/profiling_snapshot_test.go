@@ -142,7 +142,7 @@ func TestSnapshotProfilingLoading(t *testing.T) {
 		t.Fatal("an opened view must be loading")
 	}
 	tv.started = catalog.Now().Add(-41 * time.Second)
-	tv.progress.set("throttled (429, 2× so far): the environment runs only a few analyses at once — trying again, it asks to wait 10s")
+	tv.progress.set("the environment answered 429: it is throttling profiling requests and asks to wait 10s")
 	assertProfilingSnapshots(t, "profiling-loading", a)
 }
 

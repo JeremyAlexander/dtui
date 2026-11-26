@@ -85,11 +85,18 @@ type profileReason string
 const (
 	profileNoProcess    profileReason = "no_process"    // the view has no entity to analyse
 	profileNotAProcess  profileReason = "not_a_process" // the entity is not one an analysis runs on
+	profileFutureStart  profileReason = "future_start"  // the window starts in the future
+	profileFutureEnd    profileReason = "future_end"    // the window ends in the future
+	profileEmptyWindow  profileReason = "empty_window"  // the window ends at or before its start
+	profileInvalid      profileReason = "invalid"       // dtctl refused the request before sending it
 	profileBadRequest   profileReason = "bad_request"   // 400
 	profileForbidden    profileReason = "forbidden"     // 403
-	profileNotFound     profileReason = "not_found"     // 404
+	profileNotFound     profileReason = "not_found"     // 404 on the request that starts the analysis
+	profileTaskExpired  profileReason = "task_expired"  // 404 while waiting for the result
 	profileThrottled    profileReason = "throttled"     // 429, after the retries
+	profileServerError  profileReason = "server_error"  // 5xx
 	profileNotCompleted profileReason = "not_completed" // still running after the last poll
+	profileMalformed    profileReason = "malformed"     // the answer is not an analysis result
 	profileNoRecording  profileReason = "no_recording"  // the fixture holds no analysis of this kind
 )
 
@@ -99,30 +106,73 @@ const (
 type profileFailure struct {
 	Reason profileReason
 	Entity string
+	// Status is the HTTP status the environment answered with, if it did.
+	Status int
 	// Message is the API's own message, when there is one.
 	Message string
 }
 
 func (f *profileFailure) Error() string {
+	// detail appends the API's message where there is one, so that a
+	// sentence never ends in a colon.
+	detail := func(text string) string {
+		if f.Message == "" {
+			return text
+		}
+		return text + ": " + f.Message
+	}
 	switch f.Reason {
 	case profileNoProcess:
 		return "profiling analyses one process — press h on a row of :processes, or open :hotspots PROCESS-…"
 	case profileNotAProcess:
 		return fmt.Sprintf("%s cannot be profiled: an analysis runs on a process (PROCESS-… or PROCESS_GROUP-…), not on a service — open the service's processes and press h there", f.Entity)
+	case profileFutureStart:
+		return "the selected window starts in the future: there is nothing to analyse yet — t picks another window"
+	case profileFutureEnd:
+		return "the selected window ends in the future: an analysis covers past time only — t picks another window"
+	case profileEmptyWindow:
+		return "the selected window is empty — t picks another window"
+	case profileInvalid:
+		return detail("this analysis cannot be asked for")
+	case profileBadRequest:
+		return detail("the environment rejected the analysis (400)")
 	case profileForbidden:
 		return "the environment refused the analysis (403): profiling needs storage:profiles:read and storage:entities:read, as scopes of the token and granted by an IAM policy — the scopes on the token alone are not enough"
 	case profileNotFound:
 		return fmt.Sprintf("the environment knows no process %s (404): process instances are short-lived, and ids belong to one environment — pick a current one from :processes", f.Entity)
+	case profileTaskExpired:
+		return "the environment no longer knows this analysis (404 while waiting for its result) — press r to run it again"
 	case profileThrottled:
-		return "the environment is running as many profiling analyses as it allows (429) and kept refusing this one — wait for another to finish, then press r"
+		return "the environment is throttling profiling requests (429) and kept refusing this one — wait a moment, then press r"
+	case profileServerError:
+		return detail(fmt.Sprintf("the environment failed on the analysis (%d)", f.Status)) + " — press r to ask again"
 	case profileNotCompleted:
-		return "the analysis was still running after about a minute — press r to ask again"
-	case profileNoRecording:
-		return f.Message
-	case profileBadRequest:
-		return "the environment rejected the analysis (400): " + f.Message
+		return "the analysis was still running when dtui stopped asking for its result — press r to ask again"
+	case profileMalformed:
+		return detail("the environment's answer is not an analysis result (this API is experimental and may have changed)")
 	}
 	return f.Message
+}
+
+// profileWindowCheck refuses a window no analysis can cover before anything
+// is asked for: one that has not happened yet, or an empty one. The
+// environment would answer the first with an empty result, which would then
+// be cached as if the process had been idle.
+func profileWindowCheck(tf catalog.Timeframe, now time.Time) error {
+	if !tf.Absolute() {
+		return nil
+	}
+	switch {
+	case !tf.From.Before(now):
+		return &profileFailure{Reason: profileFutureStart}
+	case tf.To.IsZero():
+		return nil
+	case !tf.To.After(tf.From):
+		return &profileFailure{Reason: profileEmptyWindow}
+	case tf.To.After(now):
+		return &profileFailure{Reason: profileFutureEnd}
+	}
+	return nil
 }
 
 // profileCacheTTL is how long an analysis of a moving window ("last 2h") is
@@ -326,15 +376,19 @@ func profileSources(p profiler, fixture string) (hotspots, allocations tui.Sourc
 }
 
 // profileTarget is the process a profiling scope analyses and the id the
-// environment is asked about for it, or the refusal that says why there is
-// none. It sends no request.
-func profileTarget(p profiler, scope catalog.Scope) (entity catalog.Entity, subject string, err error) {
+// environment is asked about for it, or the refusal that says why nothing is
+// analysed: no process, not a process, or a window that cannot be. It sends
+// no request.
+func profileTarget(p profiler, scope catalog.Scope, now time.Time) (entity catalog.Entity, subject string, err error) {
 	if scope.Entity == nil || scope.Entity.ID == "" {
 		return catalog.Entity{}, "", &profileFailure{Reason: profileNoProcess}
 	}
 	subject, ok := p.Subject(scope.Entity.ID)
 	if !ok {
 		return catalog.Entity{}, "", &profileFailure{Reason: profileNotAProcess, Entity: scope.Entity.ID}
+	}
+	if err := profileWindowCheck(scope.Timeframe, now); err != nil {
+		return catalog.Entity{}, "", err
 	}
 	return *scope.Entity, subject, nil
 }
@@ -382,7 +436,7 @@ func stampProcess(rec map[string]any, e catalog.Entity) map[string]any {
 // a function (Scope.Arg).
 func hotspotsSource(p profiler, runs *profileRuns, fixture string) tui.Source {
 	return func(ctx context.Context, scope catalog.Scope, _ string) ([]map[string]any, error) {
-		entity, subject, err := profileTarget(p, scope)
+		entity, subject, err := profileTarget(p, scope, runs.now())
 		if err != nil {
 			return nil, err
 		}
@@ -455,7 +509,7 @@ func hotspotsSource(p profiler, runs *profileRuns, fixture string) tui.Source {
 // and call path.
 func allocationsSource(p profiler, runs *profileRuns, fixture string) tui.Source {
 	return func(ctx context.Context, scope catalog.Scope, _ string) ([]map[string]any, error) {
-		entity, subject, err := profileTarget(p, scope)
+		entity, subject, err := profileTarget(p, scope, runs.now())
 		if err != nil {
 			return nil, err
 		}

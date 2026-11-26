@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -71,26 +72,32 @@ func (p dtctlProfiler) Allocations(ctx context.Context, q profileQuery) (allocat
 	return dtctlAllocations{analysis}, nil
 }
 
-// profilingFailure turns the failures dtctl classifies into dtui's reasons.
-// Anything else, a cancelled call included, passes through as it is.
+// profilingFailure turns the failures of an analysis into dtui's reasons.
+// Anything that is not one (a failed connection, a cancelled call) passes
+// through as it is.
 func profilingFailure(err error, entity string) error {
-	if errors.Is(err, codelevelanalysis.ErrNotCompleted) {
-		return &profileFailure{Reason: profileNotCompleted, Entity: entity}
+	if errors.Is(err, profiling.ErrMalformedResult) {
+		return &profileFailure{Reason: profileMalformed, Entity: entity,
+			Message: strings.TrimPrefix(err.Error(), profiling.ErrMalformedResult.Error()+": ")}
 	}
 	f, ok := profiling.ClassifyError(err)
 	if !ok {
 		return err
 	}
-	reason := map[profiling.FailureReason]profileReason{
-		profiling.FailureBadRequest: profileBadRequest,
-		profiling.FailureForbidden:  profileForbidden,
-		profiling.FailureNotFound:   profileNotFound,
-		profiling.FailureThrottled:  profileThrottled,
+	reason, ok := map[profiling.FailureReason]profileReason{
+		profiling.FailureInvalidInput: profileInvalid,
+		profiling.FailureBadRequest:   profileBadRequest,
+		profiling.FailureForbidden:    profileForbidden,
+		profiling.FailureNotFound:     profileNotFound,
+		profiling.FailureTaskExpired:  profileTaskExpired,
+		profiling.FailureThrottled:    profileThrottled,
+		profiling.FailureServer:       profileServerError,
+		profiling.FailureTimeout:      profileNotCompleted,
 	}[f.Reason]
-	if reason == "" {
-		return err
+	if !ok {
+		return err // a reason dtctl added since: its own text is the best there is
 	}
-	return &profileFailure{Reason: reason, Entity: entity, Message: f.Message}
+	return &profileFailure{Reason: reason, Entity: entity, Status: f.StatusCode, Message: f.Message}
 }
 
 // profilingEmpty maps dtctl's reason for an empty view onto the catalog's.
@@ -122,7 +129,7 @@ func (h dtctlHotspots) Functions(state string) ([]functionRow, int, string, erro
 }
 
 func (h dtctlHotspots) Focus(state, function string) ([]focusRow, string, error) {
-	view, err := h.a.Focus(false, profiling.State(state), function)
+	view, err := h.a.FocusExact(false, profiling.State(state), function)
 	var noMatch *profiling.NoMatchError
 	if errors.As(err, &noMatch) {
 		// The function exists (the user entered it from a row); it just has
@@ -131,11 +138,6 @@ func (h dtctlHotspots) Focus(state, function string) ([]focusRow, string, error)
 	}
 	if err != nil {
 		return nil, "", err
-	}
-	if view.Function != "" && view.Function != function {
-		// dtctl also accepts a substring of exactly one frame. dtui only ever
-		// asks for a whole label, so another frame is not the one meant.
-		return nil, catalog.ProfEmptyState, nil
 	}
 	var rows []focusRow
 	for _, r := range view.Rows(0) {
@@ -154,8 +156,8 @@ func (a dtctlAllocations) Paths() ([]allocationRow, int64, int64, string) {
 		frames := strings.Split(r.Stack, ";")
 		rows[i] = allocationRow{
 			Site: frames[0], Callers: frames[1:],
-			AllocBytes: int64(r.AllocBytes), SurvivedBytes: int64(r.SurvivedBytes),
-			AllocCount: int64(r.AllocCount), SurvivedCount: int64(r.SurvivedCount),
+			AllocBytes: r.AllocBytes, SurvivedBytes: r.SurvivedBytes,
+			AllocCount: r.AllocCount, SurvivedCount: r.SurvivedCount,
 		}
 	}
 	return rows, view.AllocatedBytes, view.SurvivedBytes, profilingEmpty(view.Empty)
@@ -163,12 +165,12 @@ func (a dtctlAllocations) Paths() ([]allocationRow, int64, int64, string) {
 
 // --- progress of an analysis in flight ---------------------------------------
 
-// analysisProgress counts what the environment answered while one analysis
-// ran. dtctl's handler retries a throttled request and polls for the result
+// analysisProgress follows what the environment answers while one analysis
+// runs. dtctl's handler retries a throttled request and polls for the result
 // without saying so, and a view that only shows a spinner for a minute reads
 // as hung, so the transport watches the responses go by.
 type analysisProgress struct {
-	throttled, polls atomic.Int32
+	accepted atomic.Bool
 }
 
 type analysisProgressKey struct{}
@@ -200,22 +202,35 @@ func (o analysisObserver) RoundTrip(req *http.Request) (*http.Response, error) {
 	return resp, err
 }
 
-// note words one response of an analysis in flight ("" = nothing to say).
+// CloseIdleConnections passes http.Client.CloseIdleConnections on to the
+// transport beneath, as the session client's own wrapper does.
+func (o analysisObserver) CloseIdleConnections() {
+	if c, ok := o.next.(interface{ CloseIdleConnections() }); ok {
+		c.CloseIdleConnections()
+	}
+}
+
+// note words one response of an analysis in flight ("" = nothing to say). It
+// says what the environment answered, not what happens next: the observer
+// sits beneath the client's own retries and the SDK's, and cannot tell
+// whether this request is sent again, or whether it started the analysis or
+// asked for its result.
 func (p *analysisProgress) note(status int, retryAfter string) string {
 	switch status {
 	case http.StatusTooManyRequests:
-		n := p.throttled.Add(1)
-		note := fmt.Sprintf("throttled (429, %d× so far): the environment runs only a few analyses at once — trying again", n)
-		if retryAfter != "" {
-			note += ", it asks to wait " + retryAfter + "s"
+		note := "the environment answered 429: it is throttling profiling requests"
+		// Retry-After is delay-seconds or an HTTP date (RFC 9110 10.2.3).
+		if secs, err := strconv.Atoi(retryAfter); err == nil && secs >= 0 {
+			note += fmt.Sprintf(" and asks to wait %ds", secs)
+		} else if at, err := http.ParseTime(retryAfter); err == nil {
+			note += " and asks to wait until " + at.UTC().Format("15:04:05 UTC")
 		}
 		return note
 	case http.StatusAccepted:
-		n := p.polls.Add(1)
-		if n == 1 {
+		if p.accepted.CompareAndSwap(false, true) {
 			return "the environment accepted the analysis — waiting for its result"
 		}
-		return fmt.Sprintf("the analysis is still running on the server (asked %d×, every 1.5s)", n-1)
+		return "the analysis is still running on the server"
 	}
 	return ""
 }

@@ -6,7 +6,7 @@
 
 
                           analysing the hotspots of shop-backend, which can take minutes — 41s
-    throttled (429, 2× so far): the environment runs only a few analyses at once — trying again, it asks to wait 10s
+                 the environment answered 429: it is throttling profiling requests and asks to wait 10s
 
 
 

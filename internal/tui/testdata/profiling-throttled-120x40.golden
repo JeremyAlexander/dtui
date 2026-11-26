@@ -2,8 +2,8 @@
  allocations (shop-backend) ───────────────────────────────────────────────────────────────────────────────────────────
  0 rows
 
-✗ the environment is running as many profiling analyses as it allows (429) and kept refusing this one — wait for another
-to finish, then press r
+✗ the environment is throttling profiling requests (429) and kept refusing this one — wait a moment, then press r
+
 
 
 
