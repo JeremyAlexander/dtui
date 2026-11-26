@@ -71,7 +71,13 @@ func (e SpanEvent) Exception() (SpanException, bool) {
 			Str(e.Fields, "exception.stack_trace"), Str(e.Fields, "exception.stacktrace")),
 		ID:         Str(e.Fields, "exception.id"),
 		CausedByID: Str(e.Fields, "exception.caused_by_id"),
-		CauseRoot:  FormatValue(e.Fields["exception.is_caused_by_root"]) == "true",
+	}
+	// The flag is a boolean, or a string attribute that spells one.
+	switch root := e.Fields["exception.is_caused_by_root"].(type) {
+	case bool:
+		ex.CauseRoot = root
+	case string:
+		ex.CauseRoot = root == "true"
 	}
 	if file := Str(e.Fields, "exception.file.full"); file != "" {
 		ex.Location = file

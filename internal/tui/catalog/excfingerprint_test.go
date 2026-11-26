@@ -72,7 +72,6 @@ func TestFingerprintExceptionsLadder(t *testing.T) {
 			"frames":     {Type: typ, Message: "Cart 7 is locked", StackTrace: runtimeStack},
 			"message":    {Type: typ, Message: "Cart 7 is locked"},
 			"type":       {Type: typ},
-			"empty":      {},
 		} {
 			key := mustFingerprint(t, ex).Key
 			if other, dup := keys[key]; dup {
@@ -621,6 +620,58 @@ func TestFingerprintKeysCarryTheClassifier(t *testing.T) {
 	}
 }
 
+// An event that says nothing about an exception (no type, no message, no
+// stack) is not one to key on: it would give every such span one key, and
+// as the last event hide the real one before it.
+func TestFingerprintSkipsEventsThatSayNothing(t *testing.T) {
+	real := SpanException{Type: "java.lang.IllegalStateException", Message: "Cart 7 is locked",
+		StackTrace: "java.lang.IllegalStateException: Cart 7 is locked\n\tat com.example.shop.Cart.add(Cart.java:42)\n"}
+	want := mustFingerprint(t, real)
+	for name, excs := range map[string][]SpanException{
+		"an empty event after it":         {real, {}},
+		"an event of white space after":   {real, {Type: " ", Message: "\n", StackTrace: "\t"}},
+		"an empty event flagged as root":  {real, {CauseRoot: true}},
+		"an empty event before and after": {{}, real, {}},
+	} {
+		if got, ok := FingerprintExceptions(excs, nil); !ok || got.Key != want.Key || got.Type != want.Type {
+			t.Errorf("%s: key %s (%s) %v, want %s", name, got.Key, got.Type, ok, want.Key)
+		}
+	}
+	for name, excs := range map[string][]SpanException{
+		"one empty event":   {{}},
+		"only empty events": {{}, {CauseRoot: true}, {Type: "  "}},
+		"only a location":   {{Location: "Cart.java:42"}},
+	} {
+		if got, ok := FingerprintExceptions(excs, nil); ok {
+			t.Errorf("%s: got the key %s on rung %s", name, got.Key, got.Rung)
+		}
+	}
+	// One of the three is enough.
+	for _, ex := range []SpanException{{Type: "A"}, {Message: "locked"}, {StackTrace: "no frames in here"}} {
+		if _, ok := FingerprintExceptions([]SpanException{ex, {}}, nil); !ok {
+			t.Errorf("%+v has no key", ex)
+		}
+	}
+}
+
+// The root flag is a boolean, or the word a string attribute spells it
+// with. Anything else is not the flag.
+func TestSpanExceptionRootFlag(t *testing.T) {
+	for _, tc := range []struct {
+		value any
+		want  bool
+	}{
+		{true, true}, {"true", true}, {false, false}, {"false", false}, {nil, false}, {"", false},
+		{[]any{true}, false}, {[]any{"true"}, false}, {map[string]any{"true": true}, false}, {1.0, false}, {"TRUE", false},
+	} {
+		excs := SpanExceptions(map[string]any{"span.events": []any{
+			map[string]any{"span_event.name": "exception", "exception.type": "A", "exception.is_caused_by_root": tc.value}}})
+		if len(excs) != 1 || excs[0].CauseRoot != tc.want {
+			t.Errorf("exception.is_caused_by_root = %#v: %+v, want root %v", tc.value, excs, tc.want)
+		}
+	}
+}
+
 func TestRootException(t *testing.T) {
 	cases := []struct {
 		name string
@@ -667,8 +718,8 @@ func TestRootException(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := rootException(tc.excs).Type; got != tc.want {
-				t.Errorf("root = %s, want %s", got, tc.want)
+			if got, ok := rootException(tc.excs); !ok || got.Type != tc.want {
+				t.Errorf("root = %s, want %s", got.Type, tc.want)
 			}
 		})
 	}

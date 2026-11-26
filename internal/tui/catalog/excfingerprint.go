@@ -89,20 +89,21 @@ type ExceptionFingerprint struct {
 }
 
 // FingerprintExceptions computes the grouping key for the exception events
-// of one span (false when there are none). The event is the root of the
-// cause chain, the last one where no chain is marked (rootException).
+// of one span. The event is the root of the cause chain, the last one where
+// no chain is marked (rootException); false when no event says anything
+// about an exception.
 // classify decides which frames are application code; nil means the built-in
 // rules, the only ones whose keys are the same for everybody (see
 // FrameClassifier).
 func FingerprintExceptions(excs []SpanException, classify FrameClassifier) (ExceptionFingerprint, bool) {
-	if len(excs) == 0 {
+	root, ok := rootException(excs)
+	if !ok {
 		return ExceptionFingerprint{}, false
 	}
 	inApp, classifier := builtinInApp, ""
 	if classify != nil {
 		inApp, classifier = classify.InApp, customClassifierField+classify.ID()
 	}
-	root := rootException(excs)
 	fp := ExceptionFingerprint{
 		Rung:      RungType,
 		EventType: strings.TrimSpace(root.Type),
@@ -197,9 +198,10 @@ func appendKeyField(b []byte, field string) []byte {
 	return append(b, field...)
 }
 
-// rootException picks the event a span's fingerprint is computed from. The
-// later event wins every tie, as the last one does where nothing marks a
-// chain:
+// rootException picks the event a span's fingerprint is computed from, of
+// those that say something about an exception (saysNothing); false when
+// none does. The later event wins every tie, as the last one does where
+// nothing marks a chain:
 //
 //  1. the last event flagged exception.is_caused_by_root;
 //  2. else the last event that caused another (its exception.id is some
@@ -212,10 +214,10 @@ func appendKeyField(b []byte, field string) []byte {
 // that links its events without flagging one. It is a pass over the events,
 // not a walk along the links, so a cycle or an id used twice cannot make it
 // loop: a cycle has no event without a cause and falls through to step 3.
-func rootException(excs []SpanException) SpanException {
+func rootException(excs []SpanException) (SpanException, bool) {
 	for i := len(excs) - 1; i >= 0; i-- {
-		if excs[i].CauseRoot {
-			return excs[i]
+		if excs[i].CauseRoot && !saysNothing(excs[i]) {
+			return excs[i], true
 		}
 	}
 	ids := map[string]bool{}
@@ -226,9 +228,23 @@ func rootException(excs []SpanException) SpanException {
 	}
 	delete(ids, "") // an event without an id is nobody's cause
 	for i := len(excs) - 1; i >= 0; i-- {
-		if ex := excs[i]; ex.ID != "" && causes[ex.ID] && !ids[ex.CausedByID] {
-			return ex
+		if ex := excs[i]; ex.ID != "" && causes[ex.ID] && !ids[ex.CausedByID] && !saysNothing(ex) {
+			return ex, true
 		}
 	}
-	return excs[len(excs)-1]
+	for i := len(excs) - 1; i >= 0; i-- {
+		if !saysNothing(excs[i]) {
+			return excs[i], true
+		}
+	}
+	return SpanException{}, false
+}
+
+// saysNothing reports whether an event has no type, no message and no stack
+// trace. A key for it would be the same for every such event of every
+// service, and as the last event of a span it would stand in for the real
+// one before it.
+func saysNothing(ex SpanException) bool {
+	return strings.TrimSpace(ex.Type) == "" && strings.TrimSpace(ex.Message) == "" &&
+		strings.TrimSpace(ex.StackTrace) == ""
 }
