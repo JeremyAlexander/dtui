@@ -31,8 +31,8 @@ e4510216bc423701	var deployRoots
 b6b5966aec6bbe85	var dotnetClosureRe
 605707ba2a294bee	var dotnetDelegateRe
 8f3a32c330a9b708	var dotnetFrameRe
-da14345ad14d6e36	var dotnetInnerRe
-46a4a44b1e055a07	var dotnetMainRe
+2d8432b67d26e1e7	var dotnetInnerRe
+d5a6d4ca15c96042	var dotnetMainRe
 6fcd57cef7b2c913	var dotnetMonoParamsRe
 df771b28c2809e59	var dotnetPassThrough
 b52bf883845e3239	var dotnetTypeArgsRe

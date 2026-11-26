@@ -3,6 +3,8 @@ package exckey
 import (
 	"regexp"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 // .NET traces: "at Ns.Type.Method(String arg) in File.cs:line 1" frames. An
@@ -24,10 +26,10 @@ var (
 	// arrow may stand in a message too ("moved Open ---> Pending"), so the
 	// type is qualified and a colon or the end of the line follows it.
 	dotnetInnerRe = regexp.MustCompile(
-		"---> (?:\\(Inner Exception #\\d+\\) )?((?:[\\w+`]+\\.)+[\\w+`]+)(?:\\[[^\\]]*\\])?(?::|$)")
+		"---> (?:\\(Inner Exception #\\d+\\) )?((?:[\\p{L}\\p{N}_+`]+\\.)+[\\p{L}\\p{N}_+`]+)(?:\\[[^\\]]*\\])?(?::|$)")
 	// The method of top-level statements ("<Main>$"); see dotnetLambdaMark
 	// for the generated names that nest.
-	dotnetMainRe = regexp.MustCompile(`<(\w+)>\$`)
+	dotnetMainRe = regexp.MustCompile(`<([\p{L}\p{N}_]+)>\$`)
 	// The closure class a lambda is compiled into ("<>c.",
 	// "<>c__DisplayClass5_0`1."), which stands before the lambda's name.
 	dotnetClosureRe = regexp.MustCompile("<>c(?:__DisplayClass\\d+_\\d+)?(?:`\\d+)?\\.")
@@ -75,7 +77,8 @@ const (
 // them ("d__12`1"). A local function keeps the method it is declared in,
 // since two methods may each have one of the same name. The names nest
 // ("<<Run>b__0>d"), so the method inside the brackets may be one already
-// unwrapped.
+// unwrapped. A method's name is letters and numbers of any script, as the
+// frame's is (dotnetFrameRe).
 const (
 	dotnetLambdaMark = "b__"
 	dotnetLocalMark  = "g__"
@@ -166,9 +169,9 @@ func dotnetUnwrap(name string) string {
 	out := make([]byte, 0, len(name))
 	var opens []open
 	unwrapped := false
-	for i := 0; i < len(name); i++ {
-		c := name[i]
-		top := len(opens) - 1
+	for i, size := 0, 0; i < len(name); i += size {
+		c, top := name[i], len(opens)-1
+		size = 1
 		switch {
 		case c == '<':
 			opens = append(opens, open{at: len(out), method: true})
@@ -181,17 +184,22 @@ func dotnetUnwrap(name string) string {
 				if local != "" {
 					out = append(append(out, '.'), local...)
 				}
-				i += n
+				size += n
 				continue
 			}
 			// The brackets stay, and are part of no method's name.
 			if top >= 0 {
 				opens[top].method = false
 			}
-		case top >= 0 && c != '.' && !isWordByte(c):
+		case c >= utf8.RuneSelf:
+			var r rune
+			if r, size = utf8.DecodeRuneInString(name[i:]); top >= 0 && !isNameRune(r) {
+				opens[top].method = false
+			}
+		case top >= 0 && c != '.' && !isNameRune(rune(c)):
 			opens[top].method = false
 		}
-		out = append(out, c)
+		out = append(out, name[i:i+size]...)
 	}
 	if !unwrapped {
 		return name
@@ -217,8 +225,12 @@ func dotnetGeneratedSuffix(s string) (local string, n int) {
 	case strings.HasPrefix(s, dotnetLocalMark):
 		rest := s[len(dotnetLocalMark):]
 		end := 0
-		for end < len(rest) && isWordByte(rest[end]) {
-			end++
+		for end < len(rest) {
+			r, size := utf8.DecodeRuneInString(rest[end:])
+			if !isNameRune(r) {
+				break
+			}
+			end += size
 		}
 		if end == 0 || end == len(rest) || rest[end] != dotnetLocalEnd {
 			break
@@ -268,6 +280,12 @@ func dotnetArityLen(s string) int {
 		}
 	}
 	return 0
+}
+
+// isNameRune reports whether r can stand in a name: a letter or a number
+// of any script, or "_".
+func isNameRune(r rune) bool {
+	return r == '_' || unicode.IsLetter(r) || unicode.IsNumber(r)
 }
 
 // countDigits is how many ASCII digits s starts with.

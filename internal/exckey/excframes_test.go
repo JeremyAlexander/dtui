@@ -1434,6 +1434,9 @@ func TestDotNetInnerExceptionTypes(t *testing.T) {
 		{"a nested and a generic type", "Example.Shop.CheckoutException: failed\n ---> Example.Shop.Cart+LockedException`1[System.String]: locked\n" +
 			"   at Example.Shop.Cart.Add(String sku)\n   --- End of inner exception stack trace ---\n   at Example.Shop.Checkout.Run()",
 			frames(StackDotNet, "Example.Shop.Cart", "Add"), "Example.Shop.Cart+LockedException`1"},
+		{"a type in another script", "Boutique.CommandeException: échec\n ---> Boutique.Panier.ÉchecException: verrouillé\n" +
+			"   at Boutique.Panier.Ajouter(String sku)\n   --- End of inner exception stack trace ---\n   at Boutique.Commande.Lancer()",
+			frames(StackDotNet, "Boutique.Panier", "Ajouter"), "Boutique.Panier.ÉchecException"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1479,10 +1482,18 @@ func TestDotNetGeneratedNames(t *testing.T) {
 		{"at Example.Shop.Cart.<Add>d__12.Dispose()", "Example.Shop.Cart.<Add>d__12", "Dispose"},
 		{"at Example.Shop.Cart.<Add>d__12.MoveNextStep()", "Example.Shop.Cart.<Add>d__12", "MoveNextStep"},
 		{"at Example.Shop.Cart.Add>b__0()", "Example.Shop.Cart", "Add>b__0"},
+		{"at Example.Shop.Cart.<Step2>g__Check3|1_0()", "Example.Shop.Cart.Step2", "Check3"},
 		// A method that implements an interface explicitly is named with it.
 		{"at Example.Shop.Cart.<Example.Shop.ICart.Add>b__3_0()", "Example.Shop.Cart.Example.Shop.ICart", "Add"},
 		// The ordinals end where the next name starts.
 		{"at Example.Shop.Cart.<Run>g__Check|1_0<Add>b__2()", "Example.Shop.Cart.Run", "CheckAdd"},
+		// A name in any script: an ordinal behind it goes like any other.
+		{"at Boutique.Panier.<Réserver>d__12.MoveNext()", "Boutique.Panier", "Réserver"},
+		{"at Boutique.Panier.<Réserver>d__13.MoveNext()", "Boutique.Panier", "Réserver"},
+		{"at Boutique.Panier.<>c.<Réserver>b__5_0(Article a)", "Boutique.Panier", "Réserver"},
+		{"at Boutique.Panier.<Réserver>g__Vérifie|5_1(Int32 n)", "Boutique.Panier.Réserver", "Vérifie"},
+		{"at Boutique.Programme.<Démarrer>$(String[] args)", "Boutique.Programme", "Démarrer"},
+		{"at Магазин.Корзина.<<Добавить>b__0>d.MoveNext()", "Магазин.Корзина", "Добавить"},
 	}
 	for _, tc := range cases {
 		f, ok := dotnetFrame(tc.line)
