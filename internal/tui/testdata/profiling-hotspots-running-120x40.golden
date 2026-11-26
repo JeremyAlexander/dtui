@@ -2,8 +2,8 @@
  hotspots (shop-backend) ──────────────────────────────────────────────────────────────────────────────────────────────
  300 rows · 38s
   running    lock    net_io    disk_io    wait    allocations
- FIXTURE java-webapp (a recording, not this environment) · last 2h (10:00–12:00 UTC)
- 77,631 running samples (stacks seen, not time) · top 300 of 309 functions by self samples · all threads, leaf: total
+ last 2h (10:00–12:00 UTC) · 77,631 running samples (stacks seen, not time) · top 300 of 309 functions by self samples
+ all threads, leaf: total
  SELF%     SELF  SELF ▇    TOTAL%    TOTAL  TOTAL ▇   PATHS  FUNCTION
 ▌ 17.2   13,321  █▍          24.8   19,223  ██           85  c.fasterxml.jackson.core.json.UTF8JsonGenerator.writeString
    7.6    5,902  ▋            7.6    5,902  ▋            85  c.f.j.c.json.UTF8JsonGenerator._outputEscapedMultiByteChar

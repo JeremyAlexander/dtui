@@ -1,23 +1,16 @@
 package main
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
-	"os"
-	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
 	"sync/atomic"
-	"time"
 
 	"github.com/Dynatrace/dtctl/pkg/resources/profiling"
-	"github.com/Dynatrace/dtctl/sdk/api/codelevelanalysis"
 	"github.com/Dynatrace/dtctl/sdk/session"
 	"github.com/dynatrace-oss/dtui/internal/tui"
 	"github.com/dynatrace-oss/dtui/internal/tui/catalog"
@@ -252,154 +245,8 @@ func (p *analysisProgress) note(status int, retryAfter string) string {
 	return ""
 }
 
-// --- recorded analyses (prototype only) ---------------------------------------
-
-// profilingFixtureEnv names a recorded analysis to serve instead of the
-// environment's: a file as `dtctl exec profiling … --raw -o json` prints it,
-// or a directory holding hotspots.json and allocations.json. It exists so the
-// profiling views can be looked at without the IAM permission an analysis
-// needs. PROTOTYPE ONLY: delete this block, profilingSourcesFor's branch on it
-// and the fixture tests before the views ship. Nothing sets the variable but a
-// developer's shell, and every view it feeds says FIXTURE in its caption.
-const profilingFixtureEnv = "DTUI_PROFILING_FIXTURE"
-
-// profilingFixtureDelayEnv makes a recorded analysis take that long (a Go
-// duration, "8s"), to look at the loading state.
-const profilingFixtureDelayEnv = "DTUI_PROFILING_FIXTURE_DELAY"
-
-// profilingSourceFor builds the source of the profiling view: over the
-// environment c talks to, or over a recorded analysis when the developer
-// switch names one.
+// profilingSourceFor builds the source of the profiling view over the
+// environment c talks to.
 func profilingSourceFor(c *session.Client) tui.Source {
-	path := os.Getenv(profilingFixtureEnv)
-	if path == "" {
-		return profileSource(newDtctlProfiler(c), newProfileRuns(), "")
-	}
-	delay, _ := time.ParseDuration(os.Getenv(profilingFixtureDelayEnv))
-	p, err := newFixtureProfiler(path, delay)
-	if err != nil {
-		return func(context.Context, catalog.Scope, string) ([]map[string]any, error) {
-			return nil, fmt.Errorf("%s: %w", profilingFixtureEnv, err)
-		}
-	}
-	return profileSource(p, newProfileRuns(), filepath.Base(path))
-}
-
-// recordedAnalysis is one analysis as `--raw -o json` prints it.
-type recordedAnalysis struct {
-	Status string          `json:"status"`
-	Kind   string          `json:"kind"`
-	Result json.RawMessage `json:"result"`
-}
-
-// fixtureProfiler answers from recorded analyses. It runs them through the
-// same dtctl handler as a live one — a replaying transport stands in for the
-// environment — so a recording is read by exactly the code a live result is.
-type fixtureProfiler struct {
-	dtctlProfiler
-	recorded map[codelevelanalysis.Kind]recordedAnalysis
-	name     string
-}
-
-func newFixtureProfiler(path string, delay time.Duration) (*fixtureProfiler, error) {
-	files := []string{path}
-	if info, err := os.Stat(path); err != nil {
-		return nil, err
-	} else if info.IsDir() {
-		files = nil
-		for _, name := range []string{"hotspots.json", "allocations.json"} {
-			if _, err := os.Stat(filepath.Join(path, name)); err == nil {
-				files = append(files, filepath.Join(path, name))
-			}
-		}
-	}
-	p := &fixtureProfiler{recorded: map[codelevelanalysis.Kind]recordedAnalysis{}, name: filepath.Base(path)}
-	for _, file := range files {
-		data, err := os.ReadFile(file)
-		if err != nil {
-			return nil, err
-		}
-		var rec recordedAnalysis
-		if err := json.Unmarshal(data, &rec); err != nil {
-			return nil, fmt.Errorf("%s: %w", file, err)
-		}
-		kind := codelevelanalysis.Kind(rec.Kind)
-		if kind != codelevelanalysis.KindHotspots && kind != codelevelanalysis.KindAllocations {
-			return nil, fmt.Errorf("%s: kind %q is neither %s nor %s — record with `dtctl exec profiling … --raw -o json`",
-				file, rec.Kind, codelevelanalysis.KindHotspots, codelevelanalysis.KindAllocations)
-		}
-		p.recorded[kind] = rec
-	}
-	if len(p.recorded) == 0 {
-		return nil, fmt.Errorf("%s holds no hotspots.json or allocations.json", path)
-	}
-	c, err := session.NewClient("https://fixture.invalid", "fixture")
-	if err != nil {
-		return nil, err
-	}
-	c.HTTP().SetTransport(replayTransport{recorded: p.recorded, delay: delay}).SetRetryCount(0)
-	p.dtctlProfiler = dtctlProfiler{h: profiling.NewHandler(c)}
-	return p, nil
-}
-
-func (p *fixtureProfiler) missing(kind codelevelanalysis.Kind, view string) error {
-	if _, ok := p.recorded[kind]; ok {
-		return nil
-	}
-	return &profileFailure{Reason: profileNoRecording,
-		Message: fmt.Sprintf("the fixture %s holds no %s analysis — %s names a recording of the other kind", p.name, view, profilingFixtureEnv)}
-}
-
-func (p *fixtureProfiler) Hotspots(ctx context.Context, q profileQuery) (hotspotReading, error) {
-	if err := p.missing(codelevelanalysis.KindHotspots, "hotspots"); err != nil {
-		return nil, err
-	}
-	return p.dtctlProfiler.Hotspots(ctx, q)
-}
-
-func (p *fixtureProfiler) Allocations(ctx context.Context, q profileQuery) (allocationReading, error) {
-	if err := p.missing(codelevelanalysis.KindAllocations, "allocations"); err != nil {
-		return nil, err
-	}
-	return p.dtctlProfiler.Allocations(ctx, q)
-}
-
-// replayTransport answers the handler's requests from recorded analyses,
-// whatever entity and window they ask about: a completed one with its result,
-// a no-data one the way the API reports it (accepted, then an empty poll).
-type replayTransport struct {
-	recorded map[codelevelanalysis.Kind]recordedAnalysis
-	delay    time.Duration
-}
-
-func (t replayTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	respond := func(status int, body []byte) *http.Response {
-		return &http.Response{
-			StatusCode: status, Status: http.StatusText(status), Request: req,
-			Header: http.Header{"Content-Type": []string{"application/json"}},
-			Body:   io.NopCloser(bytes.NewReader(body)),
-		}
-	}
-	var kind codelevelanalysis.Kind
-	switch {
-	case strings.Contains(req.URL.Path, "/methodhotspots/"):
-		kind = codelevelanalysis.KindHotspots
-	case strings.Contains(req.URL.Path, "/memoryallocation/"):
-		kind = codelevelanalysis.KindAllocations
-	case strings.HasSuffix(req.URL.Path, "/result"):
-		return respond(http.StatusNoContent, nil), nil
-	}
-	rec, ok := t.recorded[kind]
-	if !ok {
-		return respond(http.StatusNotFound, []byte(`{"error":{"code":404,"message":"no recording"}}`)), nil
-	}
-	select {
-	case <-req.Context().Done():
-		return nil, req.Context().Err()
-	case <-time.After(t.delay):
-	}
-	if rec.Status == "no-data" || len(rec.Result) == 0 || string(rec.Result) == "null" {
-		return respond(http.StatusAccepted, []byte(`{"token":"fixture"}`)), nil
-	}
-	return respond(http.StatusOK, rec.Result), nil
+	return profileSource(newDtctlProfiler(c), newProfileRuns())
 }

@@ -1,6 +1,6 @@
 {"view":"hotspots","entity":{"id":"PROCESS-000000000000A001","name":"shop-backend","type":"PROCESS"},"timeframe":"2h","lens":"running","arg":"com.fasterxml.jackson.core.json.UTF8JsonGenerator.writeString",
 "records":[
-{"__summary":true,"callees":1,"callers":85,"fixture":"java-webapp","from":"2026-07-15T10:00:00Z","samples":19223,"to":"2026-07-15T12:00:00Z"},
+{"__summary":true,"callees":1,"callers":85,"from":"2026-07-15T10:00:00Z","samples":19223,"to":"2026-07-15T12:00:00Z"},
 {"__process.id":"PROCESS-000000000000A001","__process.name":"shop-backend","function":"com.fasterxml.jackson.core.json.UTF8JsonGenerator.writeString","relation":"total","samples":19223,"share":100},
 {"__process.id":"PROCESS-000000000000A001","__process.name":"shop-backend","function":"com.fasterxml.jackson.core.json.UTF8JsonGenerator.writeString","relation":"self","samples":13321,"share":69.3},
 {"__process.id":"PROCESS-000000000000A001","__process.name":"shop-backend","function":"com.example.shop.catalog.dto.ProductDto.getAttributes","relation":"caller","samples":3049,"share":15.9},

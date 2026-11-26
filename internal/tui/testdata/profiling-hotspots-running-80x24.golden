@@ -2,7 +2,6 @@
  hotspots (shop-backend) ──────────────────────────────────────────────────────
  300 rows · 38s
   running    lock    net_io    disk_io    wait    allocations
- FIXTURE java-webapp (a recording, not this environment)
  last 2h (10:00–12:00 UTC) · 77,631 running samples (stacks seen, not time)
  top 300 of 309 functions by self samples · all threads, leaf: total
  SELF%     SELF  SELF ▇    TOTAL%    TOTAL  TOTAL ▇   PATHS  FUNCTION
@@ -19,6 +18,7 @@
    2.3    1,769  ▏           40.3   31,314  ███▎          1  …r.serializeAsField
    2.2    1,730  ▏            3.4    2,670  ▎             1  DiscountRules.apply
    2.0    1,543  ▏            2.0    1,543  ▏            30  NioSocketImpl.read
+   1.8    1,410  ▏            6.8    5,280  ▌             1  ProductMapper.toDto
  ▸ com.fasterxml.jackson.core.json.UTF8JsonGenerator.writeString
  tab lens  enter callers/callees  / filter  J/K sort  : views  t timeframe  S s…
  ≡ dtctl exec profiling hotspots PROCESS-000000000000A001 --view functions --st…

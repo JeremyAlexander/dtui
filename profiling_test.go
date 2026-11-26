@@ -97,21 +97,43 @@ func profilerOver(t *testing.T, env http.RoundTripper) dtctlProfiler {
 	return dtctlProfiler{h: profiling.NewHandler(c)}
 }
 
-func fixtureProfilerAt(t *testing.T, path string) *fixtureProfiler {
+// recordedProfiler is the dtctl-backed profiler over the recording: each
+// analysis is answered with the result recorded for its kind, whatever
+// process and window it asks about, so a recording is read by exactly the
+// code a live result is.
+func recordedProfiler(t *testing.T) dtctlProfiler {
 	t.Helper()
-	p, err := newFixtureProfiler(path, 0)
-	if err != nil {
-		t.Fatal(err)
+	result := func(file string) string {
+		data, err := os.ReadFile(filepath.Join(profilingFixture, file))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var rec struct {
+			Result json.RawMessage `json:"result"`
+		}
+		if err := json.Unmarshal(data, &rec); err != nil || len(rec.Result) == 0 {
+			t.Fatalf("%s is not an analysis as `dtctl exec profiling … --raw -o json` prints it: %v", file, err)
+		}
+		return string(rec.Result)
 	}
-	return p
+	hotspots, allocations := result("hotspots.json"), result("allocations.json")
+	return profilerOver(t, roundTrip(func(r *http.Request) (*http.Response, error) {
+		switch {
+		case strings.Contains(r.URL.Path, "/methodhotspots/"):
+			return answering(200, nil, hotspots)(r)
+		case strings.Contains(r.URL.Path, "/memoryallocation/"):
+			return answering(200, nil, allocations)(r)
+		}
+		return answering(404, nil, `{"error":{"code":404,"message":"no recording"}}`)(r)
+	}))
 }
 
 // sourcesAt builds the view's source with the analysis clock pinned, as its
 // two readings: the thread states, and the allocations lens.
-func sourcesAt(p profiler, fixture string) (hotspots, allocations tui.Source) {
+func sourcesAt(p profiler) (hotspots, allocations tui.Source) {
 	runs := newProfileRuns()
 	runs.now = func() time.Time { return scenarioNow }
-	src := profileSource(p, runs, fixture)
+	src := profileSource(p, runs)
 	return src, func(ctx context.Context, scope catalog.Scope, query string) ([]map[string]any, error) {
 		scope.Lens = len(catalog.HotspotLenses) - 1
 		return src(ctx, scope, query)
@@ -146,7 +168,7 @@ func TestProfilingScenarios(t *testing.T) {
 		b, _ := json.Marshal(map[string]any{"error": map[string]any{"code": code, "message": msg}})
 		return string(b)
 	}
-	fixture := fixtureProfilerAt(t, profilingFixture)
+	fixture := recordedProfiler(t)
 	const hot = "com.fasterxml.jackson.core.json.UTF8JsonGenerator.writeString"
 
 	cases := []struct {
@@ -177,11 +199,7 @@ func TestProfilingScenarios(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			sc := tc.sc
-			name := ""
-			if tc.p == profiler(fixture) {
-				name = filepath.Base(profilingFixture)
-			}
-			src, _ := sourcesAt(tc.p, name)
+			src, _ := sourcesAt(tc.p)
 			scope := catalog.Scope{Entity: sc.Entity.entity(), Timeframe: timeframe(t, sc.Timeframe), Arg: sc.Arg, Lens: lensIndex(t, sc.Lens)}
 			records, err := src(context.Background(), scope, "")
 			if err != nil {
@@ -237,7 +255,7 @@ func assertScenario(t *testing.T, name string, sc profilingScenario) {
 // The fixture's shape is the story the views are meant to tell; a regenerated
 // recording that loses it would still render.
 func TestProfilingFixtureTellsItsStory(t *testing.T) {
-	hotspots, allocations := sourcesAt(fixtureProfilerAt(t, profilingFixture), "java-webapp")
+	hotspots, allocations := sourcesAt(recordedProfiler(t))
 	read := func(src tui.Source, lens string, arg string) (map[string]any, []map[string]any) {
 		t.Helper()
 		scope := catalog.Scope{Entity: shopProcess, Timeframe: timeframe(t, "2h"), Arg: arg}
@@ -267,9 +285,6 @@ func TestProfilingFixtureTellsItsStory(t *testing.T) {
 	}
 	if len(rows) != catalog.ProfileRowCap {
 		t.Errorf("rows = %d, want the cap %d", len(rows), catalog.ProfileRowCap)
-	}
-	if summary[catalog.ProfSumFixture] != "java-webapp" {
-		t.Errorf("summary does not name the fixture: %v", summary)
 	}
 	_, rows = read(hotspots, "lock", "")
 	if got := top(rows, catalog.ProfFunction); got != "java.util.concurrent.locks.LockSupport.parkNanos" {
@@ -318,62 +333,13 @@ func TestProfilingFixtureTellsItsStory(t *testing.T) {
 	}
 }
 
-// A fixture is one file or a directory, and a view it has no recording for
-// says so instead of asking the environment.
-func TestProfilingFixtureOfOneKind(t *testing.T) {
-	p := fixtureProfilerAt(t, filepath.Join(profilingFixture, "allocations.json"))
-	hotspots, allocations := sourcesAt(p, "allocations.json")
-	scope := catalog.Scope{Entity: shopProcess, Timeframe: timeframe(t, "2h")}
-	if _, err := allocations(context.Background(), scope, ""); err != nil {
-		t.Fatalf("allocations from a single file: %v", err)
-	}
-	_, err := hotspots(context.Background(), scope, "")
-	var f *profileFailure
-	if !errors.As(err, &f) || f.Reason != profileNoRecording {
-		t.Fatalf("hotspots without a recording: %v", err)
-	}
-
-	bad := filepath.Join(t.TempDir(), "rows.json")
-	if err := os.WriteFile(bad, []byte(`[{"self":1}]`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := newFixtureProfiler(bad, 0); err == nil {
-		t.Error("a file that is not a raw analysis must be refused")
-	}
-}
-
-// The developer switch is the only way to a fixture, and a broken one fails
-// the views rather than falling back to the environment.
-func TestProfilingSourcesHonourTheFixtureSwitch(t *testing.T) {
-	c, err := session.NewClient("https://env.example.invalid", "token")
-	if err != nil {
-		t.Fatal(err)
-	}
-	scope := catalog.Scope{Entity: shopProcess, Timeframe: timeframe(t, "2h")}
-
-	t.Setenv(profilingFixtureEnv, profilingFixture)
-	hotspots := profilingSourceFor(c)
-	records, err := hotspots(context.Background(), scope, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if summary, _ := catalog.SplitSummary(records); summary[catalog.ProfSumFixture] != "java-webapp" {
-		t.Errorf("fixture rows are not labelled: %v", summary)
-	}
-
-	t.Setenv(profilingFixtureEnv, filepath.Join(t.TempDir(), "missing"))
-	if _, err := profilingSourceFor(c)(context.Background(), scope, ""); err == nil || !strings.Contains(err.Error(), profilingFixtureEnv) {
-		t.Errorf("a missing fixture must fail naming the switch, got %v", err)
-	}
-}
-
 func TestProfilingFailuresAreClassified(t *testing.T) {
 	scope := catalog.Scope{Entity: shopProcess, Timeframe: timeframe(t, "2h")}
 	for status, want := range map[int]profileReason{
 		400: profileBadRequest, 403: profileForbidden, 404: profileNotFound, 429: profileThrottled,
 	} {
 		env := answering(status, http.Header{"Retry-After": []string{"0"}}, `{"error":{"code":0,"message":"refused"}}`)
-		hotspots, _ := sourcesAt(profilerOver(t, env), "")
+		hotspots, _ := sourcesAt(profilerOver(t, env))
 		_, err := hotspots(context.Background(), scope, "")
 		var f *profileFailure
 		if !errors.As(err, &f) || f.Reason != want {
@@ -388,7 +354,7 @@ func TestProfilingFailuresAreClassified(t *testing.T) {
 		}
 	}
 	// A status that says nothing about an analysis is shown as the API put it.
-	hotspots, _ := sourcesAt(profilerOver(t, answering(401, nil, `{"error":{"code":401,"message":"token expired"}}`)), "")
+	hotspots, _ := sourcesAt(profilerOver(t, answering(401, nil, `{"error":{"code":401,"message":"token expired"}}`)))
 	_, err := hotspots(context.Background(), scope, "")
 	var f *profileFailure
 	if err == nil || errors.As(err, &f) || !strings.Contains(err.Error(), "API error (401): token expired") {
@@ -403,7 +369,7 @@ func TestProfilingRefusesWithoutAProcess(t *testing.T) {
 		sent++
 		return nil, errors.New("no request expected")
 	})
-	hotspots, allocations := sourcesAt(profilerOver(t, env), "")
+	hotspots, allocations := sourcesAt(profilerOver(t, env))
 	for _, tc := range []struct {
 		entity *catalog.Entity
 		want   profileReason
@@ -432,7 +398,7 @@ func TestProfilingAsksForAtMostTwoHours(t *testing.T) {
 		asked = append(asked, r.URL.Query().Get("from")+"-"+r.URL.Query().Get("to"))
 		return answering(200, nil, `{"dataNodes":[]}`)(r)
 	})
-	hotspots, _ := sourcesAt(profilerOver(t, env), "")
+	hotspots, _ := sourcesAt(profilerOver(t, env))
 	for _, label := range []string{"30m", "2h", "24h", "7d"} {
 		records, err := hotspots(context.Background(), catalog.Scope{Entity: shopProcess, Timeframe: timeframe(t, label)}, "")
 		if err != nil {
@@ -499,7 +465,7 @@ func TestProfilingSharesAndCancelsOneAnalysis(t *testing.T) {
 	runs := newProfileRuns()
 	runs.now = func() time.Time { return scenarioNow }
 	runs.grace = 150 * time.Millisecond
-	hotspots := hotspotsSource(p, runs, "")
+	hotspots := hotspotsSource(p, runs)
 	call := func(ctx context.Context, lens string) chan error {
 		done := make(chan error, 1)
 		scope := catalog.Scope{Entity: shopProcess, Timeframe: timeframe(t, "2h"), Lens: lensIndex(t, lens)}
@@ -658,7 +624,7 @@ func TestProfilingGraceRestartsWhenAWatcherRejoins(t *testing.T) {
 	runs := newProfileRuns()
 	runs.now = func() time.Time { return scenarioNow }
 	runs.after = timers.after
-	hotspots := hotspotsSource(p, runs, "")
+	hotspots := hotspotsSource(p, runs)
 	scope := catalog.Scope{Entity: shopProcess, Timeframe: timeframe(t, "2h")}
 	watch := func() (leave func()) {
 		t.Helper()
@@ -731,7 +697,7 @@ func TestProfilingGraceRestartsWhenAWatcherRejoins(t *testing.T) {
 func TestProfilingStartsNothingForACancelledCall(t *testing.T) {
 	p := &recordingProfiler{}
 	runs := newProfileRuns()
-	hotspots := hotspotsSource(p, runs, "")
+	hotspots := hotspotsSource(p, runs)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	_, err := hotspots(ctx, catalog.Scope{Entity: shopProcess, Timeframe: timeframe(t, "2h")}, "")
@@ -770,7 +736,7 @@ func TestProfilingCacheAgesFromCompletion(t *testing.T) {
 		now = now.Add(d)
 		clock.Unlock()
 	}
-	hotspots := hotspotsSource(p, runs, "")
+	hotspots := hotspotsSource(p, runs)
 	scope := catalog.Scope{Entity: shopProcess, Timeframe: timeframe(t, "2h")}
 	read := func() map[string]any {
 		t.Helper()
@@ -862,7 +828,7 @@ func TestProfilingSharesAnAnalysisPerRequest(t *testing.T) {
 		}, 2},
 	} {
 		p := &recordingProfiler{}
-		hotspots, _ := sourcesAt(p, "")
+		hotspots, _ := sourcesAt(p)
 		for _, scope := range tc.scopes {
 			if _, err := hotspots(context.Background(), scope, ""); err != nil {
 				t.Fatalf("%s: %v", tc.name, err)
@@ -885,7 +851,7 @@ func TestProfilingKeepsAtMostFourAnalyses(t *testing.T) {
 	p := &blockingProfiler{release: make(chan struct{}), finished: make(chan error, 12)}
 	runs := newProfileRuns()
 	runs.now = func() time.Time { return scenarioNow }
-	hotspots := hotspotsSource(p, runs, "")
+	hotspots := hotspotsSource(p, runs)
 	var wg sync.WaitGroup
 	for i := range 12 {
 		wg.Add(1)
@@ -907,7 +873,7 @@ func TestProfilingKeepsAtMostFourAnalyses(t *testing.T) {
 
 	failing := &recordingProfiler{err: errors.New("boom")}
 	runs = newProfileRuns()
-	hotspots = hotspotsSource(failing, runs, "")
+	hotspots = hotspotsSource(failing, runs)
 	for i := range 4 {
 		if _, err := hotspots(context.Background(), catalog.Scope{Entity: process(i), Timeframe: timeframe(t, "2h")}, ""); err == nil {
 			t.Fatal("the analysis must fail")
@@ -948,7 +914,7 @@ func TestProfilingFailureWording(t *testing.T) {
 			"the environment's answer is not an analysis result (this API is experimental and may have changed): the result of a completed analysis is an array, not an object"},
 	} {
 		env := answering(tc.status, http.Header{"Retry-After": []string{"0"}}, tc.body)
-		hotspots, _ := sourcesAt(profilerOver(t, env), "")
+		hotspots, _ := sourcesAt(profilerOver(t, env))
 		_, err := hotspots(context.Background(), scope, "")
 		var f *profileFailure
 		if !errors.As(err, &f) || f.Reason != tc.reason {
@@ -1012,7 +978,7 @@ const focusTree = `{"dataRootNodeId":"1","dataNodes":[
 // a thread state it has no samples in, the view is empty and says so: it is
 // neither an error nor quietly another function whose name contains it.
 func TestProfilingFocusIsExact(t *testing.T) {
-	hotspots, _ := sourcesAt(profilerOver(t, answering(200, nil, focusTree)), "")
+	hotspots, _ := sourcesAt(profilerOver(t, answering(200, nil, focusTree)))
 	focus := func(lens, fn string) (map[string]any, []map[string]any) {
 		t.Helper()
 		records, err := hotspots(context.Background(),
@@ -1047,7 +1013,7 @@ func TestProfilingRefusesAWindowInTheFuture(t *testing.T) {
 		sent++
 		return answering(200, nil, `{"dataNodes":[]}`)(r)
 	})
-	hotspots, allocations := sourcesAt(profilerOver(t, env), "")
+	hotspots, allocations := sourcesAt(profilerOver(t, env))
 	for _, tc := range []struct {
 		name string
 		tf   catalog.Timeframe
@@ -1163,7 +1129,7 @@ func TestProfilingFocusCapsEachDirection(t *testing.T) {
 	}
 	tree := fmt.Sprintf(`{"dataRootNodeId":"1","dataNodes":[{"id":"1","classPath":"com.example","className":"Main","methodName":"main","samples":{},"childIds":[%s]},%s]}`,
 		strings.Join(top, ","), strings.Join(nodes, ","))
-	hotspots, _ := sourcesAt(profilerOver(t, answering(200, nil, tree)), "")
+	hotspots, _ := sourcesAt(profilerOver(t, answering(200, nil, tree)))
 	records, err := hotspots(context.Background(),
 		catalog.Scope{Entity: shopProcess, Timeframe: timeframe(t, "2h"), Arg: "com.example.Hub.run"}, "")
 	if err != nil {
@@ -1189,7 +1155,7 @@ func TestProfilingFocusCapsEachDirection(t *testing.T) {
 // nothing: the analysis is of the process, and the view says so.
 func TestProfilingFocusHasNoAllocationsReading(t *testing.T) {
 	p := &recordingProfiler{}
-	_, allocations := sourcesAt(p, "")
+	_, allocations := sourcesAt(p)
 	records, err := allocations(context.Background(),
 		catalog.Scope{Entity: shopProcess, Timeframe: timeframe(t, "2h"), Arg: "com.example.X.run"}, "")
 	if err != nil {
@@ -1305,7 +1271,7 @@ func TestProfilingEchoReproducesTheRequest(t *testing.T) {
 			{"allocations", "", 300},
 		} {
 			p := &recordingProfiler{}
-			src, _ := sourcesAt(p, "")
+			src, _ := sourcesAt(p)
 			scope := catalog.Scope{Entity: shopProcess, Timeframe: tc.tf, Lens: lensIndex(t, view.lens), Arg: view.arg}
 			if _, err := src(context.Background(), scope, ""); err != nil {
 				t.Fatalf("%s %s: %v", tc.name, view.lens, err)
@@ -1367,5 +1333,28 @@ func TestProfilingEchoReproducesTheRequest(t *testing.T) {
 	service := catalog.Scope{Timeframe: timeframe(t, "2h"), Entity: &catalog.Entity{ID: "SERVICE-000000000000B001", Type: "SERVICE"}}
 	if got := echoArgs(t, spec.Echo(service, ""))[4]; got != "<PROCESS-id>" {
 		t.Errorf("a service scope echoes %s, want the placeholder", got)
+	}
+}
+
+// The product has one way to an analysis, the environment. A recording is
+// read by tests only: no switch in the binary serves one in its place.
+func TestNoRecordedAnalysisInTheProduct(t *testing.T) {
+	files, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, file := range files {
+		if strings.HasSuffix(file, "_test.go") {
+			continue
+		}
+		src, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, word := range []string{"PROFILING_FIXTURE", "fixture"} {
+			if strings.Contains(string(src), word) {
+				t.Errorf("%s mentions %q", file, word)
+			}
+		}
 	}
 }

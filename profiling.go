@@ -97,7 +97,6 @@ const (
 	profileServerError  profileReason = "server_error"  // 5xx
 	profileNotCompleted profileReason = "not_completed" // still running after the last poll
 	profileMalformed    profileReason = "malformed"     // the answer is not an analysis result
-	profileNoRecording  profileReason = "no_recording"  // the fixture holds no analysis of this kind
 )
 
 // profileFailure is a failure the views word themselves, so that what the
@@ -369,10 +368,9 @@ func (run *profileRun) finished() bool {
 
 // profileSource builds the source of the profiling view over one profiler:
 // the allocations analysis for its allocations lens, the hotspots analysis
-// for every other. fixture names the recorded analysis it serves ("" =
-// live); it goes into every summary so the view can say so.
-func profileSource(p profiler, runs *profileRuns, fixture string) tui.Source {
-	hotspots, allocations := hotspotsSource(p, runs, fixture), allocationsSource(p, runs, fixture)
+// for every other.
+func profileSource(p profiler, runs *profileRuns) tui.Source {
+	hotspots, allocations := hotspotsSource(p, runs), allocationsSource(p, runs)
 	return func(ctx context.Context, scope catalog.Scope, query string) ([]map[string]any, error) {
 		switch {
 		case !catalog.ProfileAllocations(scope):
@@ -421,7 +419,7 @@ func profileKey(kind, subject string, tf catalog.Timeframe) string {
 }
 
 // profileSummary starts the record a profiling source leads its result with.
-func profileSummary(w catalog.ProfileWindow, fixture string) map[string]any {
+func profileSummary(w catalog.ProfileWindow) map[string]any {
 	summary := map[string]any{
 		catalog.SummaryKey:  true,
 		catalog.ProfSumFrom: w.From.UTC().Format(time.RFC3339),
@@ -429,9 +427,6 @@ func profileSummary(w catalog.ProfileWindow, fixture string) map[string]any {
 	}
 	if w.Clamped {
 		summary[catalog.ProfSumClamped] = true
-	}
-	if fixture != "" {
-		summary[catalog.ProfSumFixture] = fixture
 	}
 	return summary
 }
@@ -448,7 +443,7 @@ func stampProcess(rec map[string]any, e catalog.Entity) map[string]any {
 // hotspotsSource serves the hotspots view: the functions table of the lens'
 // thread state, or one function's callers and callees when the scope carries
 // a function (Scope.Arg).
-func hotspotsSource(p profiler, runs *profileRuns, fixture string) tui.Source {
+func hotspotsSource(p profiler, runs *profileRuns) tui.Source {
 	return func(ctx context.Context, scope catalog.Scope, _ string) ([]map[string]any, error) {
 		entity, subject, err := profileTarget(p, scope, runs.now())
 		if err != nil {
@@ -465,7 +460,7 @@ func hotspotsSource(p profiler, runs *profileRuns, fixture string) tui.Source {
 		if !ok || reading == nil {
 			return nil, errors.New("the hotspots analysis returned nothing to read")
 		}
-		summary := profileSummary(window, fixture)
+		summary := profileSummary(window)
 		state := catalog.HotspotState(scope)
 
 		if scope.Arg != "" {
@@ -534,7 +529,7 @@ func hotspotsSource(p profiler, runs *profileRuns, fixture string) tui.Source {
 
 // allocationsSource serves the allocations lens: one row per allocation site
 // and call path.
-func allocationsSource(p profiler, runs *profileRuns, fixture string) tui.Source {
+func allocationsSource(p profiler, runs *profileRuns) tui.Source {
 	return func(ctx context.Context, scope catalog.Scope, _ string) ([]map[string]any, error) {
 		entity, subject, err := profileTarget(p, scope, runs.now())
 		if err != nil {
@@ -552,7 +547,7 @@ func allocationsSource(p profiler, runs *profileRuns, fixture string) tui.Source
 			return nil, errors.New("the allocations analysis returned nothing to read")
 		}
 		rows, allocBytes, survivedBytes, empty := reading.Paths()
-		summary := profileSummary(window, fixture)
+		summary := profileSummary(window)
 		summary[catalog.ProfSumAlloc] = float64(allocBytes)
 		summary[catalog.ProfSumSurvived] = float64(survivedBytes)
 		summary[catalog.ProfSumRows] = float64(len(rows))

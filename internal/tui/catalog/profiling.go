@@ -74,7 +74,6 @@ const (
 	ProfSumCallers  = "callers" // focus: callers before ProfileFocusCap
 	ProfSumCallees  = "callees" // focus: callees before ProfileFocusCap
 	ProfSumEmpty    = "empty"   // one of the ProfEmpty* reasons
-	ProfSumFixture  = "fixture" // set when the rows come from a recorded analysis
 	ProfSumAlloc    = "allocBytes"
 	ProfSumSurvived = "survivedBytes"
 )
@@ -271,13 +270,6 @@ func profileEmpty(s Scope, summary map[string]any) string {
 	return ""
 }
 
-func profileFixture(summary map[string]any) []string {
-	if name := Str(summary, ProfSumFixture); name != "" {
-		return []string{"FIXTURE " + name + " (a recording, not this environment)"}
-	}
-	return nil
-}
-
 var hotspotsSpec = &Spec{
 	Name:    "hotspots",
 	Aliases: []string{"hot", "cpu", "profile"},
@@ -345,8 +337,7 @@ var hotspotsSpec = &Spec{
 		if summary == nil || Str(summary, ProfSumEmpty) == ProfEmptyFocus {
 			return nil
 		}
-		segs := profileFixture(summary)
-		segs = append(segs, profileWindowLabel(s, summary))
+		segs := []string{profileWindowLabel(s, summary)}
 		if ProfileAllocations(s) {
 			alloc, _ := FloatValue(summary[ProfSumAlloc])
 			survived, _ := FloatValue(summary[ProfSumSurvived])

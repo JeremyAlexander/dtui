@@ -2,9 +2,9 @@
  hotspots (shop-backend) › hotspots (UTF8JsonGenerator.writeString) (shop-backe…
  28 rows · 38s
   running    lock    net_io    disk_io    wait    allocations
- FIXTURE java-webapp (a recording, not this environment)
  last 2h (10:00–12:00 UTC)
- 19,223 running samples with the function on the stack · top 25 of 85 callers ·…
+ 19,223 running samples with the function on the stack · top 25 of 85 callers
+ all threads, leaf: total
  RELATION  SHARE%  SHARE ▇    SAMPLES  FUNCTION
 ▌total      100.0  ████████    19,223  c.f.j.c.j.UTF8JsonGenerator.writeString
  self        69.3  █████▌      13,321  c.f.j.c.j.UTF8JsonGenerator.writeString

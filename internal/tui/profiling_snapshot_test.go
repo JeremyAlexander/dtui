@@ -152,7 +152,7 @@ func TestSnapshotProfilingLoading(t *testing.T) {
 func TestProfilingCaptionStatesTheAnalysedWindow(t *testing.T) {
 	pinSnapshotClock(t)
 	out := screen(renderProfiling(t, "hotspots-lock"))
-	for _, want := range []string{"last 2h of the selected 24h (10:00–12:00 UTC)", "leaf: total", "11,353 lock samples", "FIXTURE java-webapp"} {
+	for _, want := range []string{"last 2h of the selected 24h (10:00–12:00 UTC)", "leaf: total", "11,353 lock samples"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("caption lacks %q:\n%s", want, out)
 		}

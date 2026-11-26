@@ -2,8 +2,7 @@
  hotspots·lock (shop-backend) ─────────────────────────────────────────────────────────────────────────────────────────
  46 rows · 38s
   running    lock    net_io    disk_io    wait    allocations
- FIXTURE java-webapp (a recording, not this environment) · last 2h of the selected 24h (10:00–12:00 UTC)
- 11,353 lock samples (stacks seen, not time) · all threads, leaf: total
+ last 2h of the selected 24h (10:00–12:00 UTC) · 11,353 lock samples (stacks seen, not time) · all threads, leaf: total
  SELF%     SELF  SELF ▇    TOTAL%    TOTAL  TOTAL ▇   PATHS  FUNCTION
 ▌ 77.7    8,818  ██████▎     77.7    8,818  ██████▎       8  java.util.concurrent.locks.LockSupport.parkNanos
   19.9    2,260  █▋          19.9    2,260  █▋            1  com.example.shop.checkout.OrderNumberGenerator.next
@@ -35,6 +34,7 @@
    0.0        0              33.0    3,750  ██▋           1  com.example.shop.checkout.CheckoutController.placeOrder
    0.0        0              33.0    3,750  ██▋           1  com.example.shop.checkout.OrderService.placeOrder
    0.0        0              16.2    1,840  █▎            1  com.example.shop.catalog.CatalogController.listProducts
+   0.0        0              16.2    1,840  █▎            1  com.example.shop.catalog.CatalogService.findProducts
  ▸ java.util.concurrent.locks.LockSupport.parkNanos
  tab lens  enter callers/callees  / filter  J/K sort  : views  t timeframe  S segments  r refresh  ? help  q quit
  ✓ lens: lock — samples waiting for a lock or monitor
