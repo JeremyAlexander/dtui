@@ -20,7 +20,8 @@ import (
 const ExceptionKeyVersion = "e1"
 
 // FingerprintFrames is how many frames, counted from the throw site, go
-// into a key. Deeper frames are the callers, and one bug has many.
+// into a key besides the throw site itself. Deeper frames are the callers,
+// and one bug has many.
 const FingerprintFrames = 5
 
 // fingerprintKeyLen is the number of hex characters kept from the hash.
@@ -31,9 +32,10 @@ const fingerprintKeyLen = 12
 type FingerprintRung int
 
 const (
-	// RungAppFrames: type + the top in-app frames.
+	// RungAppFrames: type + the throw site + the top in-app frames.
 	RungAppFrames FingerprintRung = iota + 1
-	// RungFrames: type + the top frames, none of them in-app.
+	// RungFrames: type + the throw site + the top frames; no in-app frame
+	// counts.
 	RungFrames
 	// RungMessage: type + the parameterised message; no frames parsed.
 	RungMessage
@@ -72,7 +74,8 @@ type ExceptionFingerprint struct {
 	// Message is the event's message, parameterised (ParameterizeMessage).
 	// It is set on every rung and hashed only on RungMessage.
 	Message string
-	// Frames are the frames that went into the key; nil below RungFrames.
+	// Frames are the frames that went into the key, the throw site first;
+	// nil below RungFrames.
 	Frames []StackFrame
 }
 
@@ -103,23 +106,12 @@ func FingerprintExceptions(excs []SpanException, classify FrameClassifier) (Exce
 	if rootType != "" && len(all) > 0 {
 		fp.Type = rootType
 	}
-	var app []StackFrame
-	for _, f := range all {
-		if inApp(f) {
-			app = append(app, f)
-		}
-	}
-	// Dropping the framework frames between two calls of one function
-	// leaves a repeat behind; it is the same recursion.
-	app = collapseFrames(app)
-
 	var evidence []string
-	switch {
-	case len(app) > 0:
-		fp.Rung, fp.Frames = RungAppFrames, app[:min(len(app), FingerprintFrames)]
-	case len(all) > 0:
-		fp.Rung, fp.Frames = RungFrames, all[:min(len(all), FingerprintFrames)]
-	case fp.Message != "":
+	if app := topFrames(all, inApp); len(app) > 0 {
+		fp.Rung, fp.Frames = RungAppFrames, app
+	} else if len(all) > 0 {
+		fp.Rung, fp.Frames = RungFrames, topFrames(all, func(StackFrame) bool { return true })
+	} else if fp.Message != "" {
 		fp.Rung, evidence = RungMessage, []string{fp.Message}
 	}
 	for _, f := range fp.Frames {
@@ -133,6 +125,36 @@ func FingerprintExceptions(excs []SpanException, classify FrameClassifier) (Exce
 // a FrameClassifier; the field is empty for the built-in rules, so that even
 // a classifier without an ID has keys of its own.
 const customClassifierField = "custom:"
+
+// topFrames picks the frames of a key from a root cause's frames: the throw
+// site, then the frames below it that count and are not pass-through, until
+// FingerprintFrames such frames are in (the throw site included where it is
+// one). The throw site is part of every key whether it counts or not: what
+// is thrown where tells two bugs apart even where the same application
+// frames lead to both. nil when no frame counts.
+func topFrames(all []StackFrame, counts func(StackFrame) bool) []StackFrame {
+	if len(all) == 0 {
+		return nil
+	}
+	top := []StackFrame{all[0]}
+	counted := counts(all[0])
+	left := FingerprintFrames
+	if counted && !isPassThrough(all[0]) {
+		left--
+	}
+	for _, f := range all[1:] {
+		// Dropping the frames between two calls of one function leaves a
+		// repeat behind; it is the same recursion.
+		if left > 0 && counts(f) && !isPassThrough(f) && top[len(top)-1] != f {
+			top, counted = append(top, f), true
+			left--
+		}
+	}
+	if !counted {
+		return nil
+	}
+	return top
+}
 
 // fingerprintKey hashes the canonical form of a fingerprint: the rung's
 // number, the classifier field, the type and the evidence fields in order (a

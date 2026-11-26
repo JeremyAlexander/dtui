@@ -38,6 +38,10 @@ var dotnetVendorPrefixes = []string{
 	"System.", "Microsoft.", "Newtonsoft.", "Grpc.", "OpenTelemetry.", "Dynatrace.",
 }
 
+// dotnetPassThrough: middleware, by the convention ASP.NET finds it by, and
+// delegate calls.
+var dotnetPassThrough = []string{"Invoke", "InvokeAsync"}
+
 const dotnetInnerEnd = "--- End of inner exception stack trace"
 
 func dotnetFrame(line string) (StackFrame, bool) {

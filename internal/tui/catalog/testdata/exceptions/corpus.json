@@ -120,6 +120,54 @@
     ]
   },
   {
+    "name": "java: sendError from the default servlet, under two filters",
+    "group": "java-filters-static",
+    "rung": "frames",
+    "events": [
+      {
+        "type": "javax.servlet.http.HttpServletResponse.sendError",
+        "message": "HTTP 404 sendError called",
+        "stack": "java-filters-static-a.txt"
+      }
+    ]
+  },
+  {
+    "name": "java: the same under another container build",
+    "group": "java-filters-static",
+    "rung": "frames",
+    "events": [
+      {
+        "type": "javax.servlet.http.HttpServletResponse.sendError",
+        "message": "HTTP 404 sendError called",
+        "stack": "java-filters-static-b.txt"
+      }
+    ]
+  },
+  {
+    "name": "java: sendError from a resource handler, under the same filters",
+    "group": "java-filters-resource",
+    "rung": "frames",
+    "events": [
+      {
+        "type": "javax.servlet.http.HttpServletResponse.sendError",
+        "message": "HTTP 404 sendError called",
+        "stack": "java-filters-resource.txt"
+      }
+    ]
+  },
+  {
+    "name": "java: sendError from a controller, under the same filters",
+    "group": "java-filters-controller",
+    "rung": "app frames",
+    "events": [
+      {
+        "type": "javax.servlet.http.HttpServletResponse.sendError",
+        "message": "HTTP 404 sendError called",
+        "stack": "java-filters-controller.txt"
+      }
+    ]
+  },
+  {
     "name": "go: baseline",
     "group": "go-cart-add",
     "rung": "app frames",

@@ -316,12 +316,33 @@ main.main.func1()
 created by main.main in goroutine 1
 	/src/shop/main.go:11 +0x4a`,
 			frames(StackGo,
-				"", "panic",
 				"github.com/acme/shop/cart", "Service.AddItem",
 				"github.com/acme/shop/cart", "Total",
 				"net/http", "HandlerFunc.ServeHTTP",
 				"main", "main.func1",
 				"main", "main")},
+		{"the throw site is below the panic and what ran while panicking", `goroutine 51 [running]:
+net/http.(*conn).serve.func1()
+	/usr/local/go/src/net/http/server.go:1898 +0xbe
+panic({0x9a3c80?, 0xe3b1d0?})
+	/usr/local/go/src/runtime/panic.go:770 +0x132
+runtime.panicmem(...)
+	/usr/local/go/src/runtime/panic.go:261
+runtime.sigpanic()
+	/usr/local/go/src/runtime/signal_unix.go:881 +0x378
+shop/internal/cart.(*Service).AddItem(0xc000010000)
+	/src/shop/internal/cart/service.go:42 +0x1d
+main.main()
+	/src/shop/main.go:12 +0x25`,
+			frames(StackGo, "shop/internal/cart", "Service.AddItem", "main", "main")},
+		{"an explicit panic", "runtime.gopanic({0x1, 0x2})\nmain.run(0x1)\nmain.main()",
+			frames(StackGo, "main", "run", "main", "main")},
+		{"a later panic is the one that counts", "main.cleanup()\npanic({0x1, 0x2})\nmain.run(0x1)\npanic({0x3, 0x4})\nmain.main()",
+			frames(StackGo, "main", "run", "", "panic", "main", "main")},
+		{"a trace that ends in the panic keeps its frames", "main.cleanup()\npanic({0x1, 0x2})\nruntime.sigpanic()",
+			frames(StackGo, "main", "cleanup", "", "panic", "runtime", "sigpanic")},
+		{"a function named like the runtime's is the application's", "shop/panic.panic(0x1)\nmain.panicmem(0x1)",
+			frames(StackGo, "shop/panic", "panic", "main", "panicmem")},
 		{"only the first goroutine counts", `goroutine 7 [running]:
 main.worker(0x1)
 	/src/shop/main.go:30 +0x1d

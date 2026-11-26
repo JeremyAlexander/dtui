@@ -42,6 +42,13 @@ const (
 // jsNoFile are the locations of code that has no file.
 var jsNoFile = []string{FrameAnonymous, "native", "index"}
 
+// jsPassThrough: the continuation a middleware chain hands on, and the
+// helpers a compiler emits into the application's own files for async
+// functions and generators.
+var jsPassThrough = []string{
+	"next", "_next", "step", "fulfilled", "rejected", "__awaiter", "asyncGeneratorStep", "new Promise",
+}
+
 func jsFrame(line string) (StackFrame, bool) {
 	function, loc := "", ""
 	if m := jsCallRe.FindStringSubmatch(line); m != nil {

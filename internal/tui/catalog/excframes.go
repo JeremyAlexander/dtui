@@ -62,17 +62,21 @@ type stackNotation struct {
 	// inApp reports whether a frame is application code rather than the
 	// runtime's or a framework's.
 	inApp func(f StackFrame) bool
+	// passThrough are the functions that only hand a call on: a link of a
+	// filter or middleware chain, a reflective call, async plumbing. Such a
+	// frame is on the stack of every request, whatever fails below it.
+	passThrough []string
 }
 
 // stackNotations is indexed by StackSyntax. A trace is read in the first
 // notation, in this order, that recognises one of its lines, so the order
 // runs from the strictest notation to the loosest.
 var stackNotations = [...]stackNotation{
-	StackJava:   {frame: javaFrame, rootCause: javaRootCause, inApp: javaInApp},
-	StackDotNet: {frame: dotnetFrame, rootCause: dotnetRootCause, inApp: dotnetInApp},
-	StackJS:     {frame: jsFrame, rootCause: jsRootCause, inApp: jsInApp},
-	StackPython: {frame: pythonFrame, rootCause: pythonRootCause, inApp: pythonInApp},
-	StackGo:     {frame: goFrame, rootCause: goRootCause, inApp: goInApp},
+	StackJava:   {frame: javaFrame, rootCause: javaRootCause, inApp: javaInApp, passThrough: javaPassThrough},
+	StackDotNet: {frame: dotnetFrame, rootCause: dotnetRootCause, inApp: dotnetInApp, passThrough: dotnetPassThrough},
+	StackJS:     {frame: jsFrame, rootCause: jsRootCause, inApp: jsInApp, passThrough: jsPassThrough},
+	StackPython: {frame: pythonFrame, rootCause: pythonRootCause, inApp: pythonInApp, passThrough: pythonPassThrough},
+	StackGo:     {frame: goFrame, rootCause: goRootCause, inApp: goInApp, passThrough: goPassThrough},
 }
 
 // ParseStackFrames extracts the normalised frames of a stack trace, throw
@@ -232,6 +236,22 @@ func builtinInApp(f StackFrame) bool {
 		return false
 	}
 	return stackNotations[f.Syntax].inApp(f)
+}
+
+// isPassThrough reports whether a frame only hands the call on. The function
+// is compared without the type it is a method of ("Auth.ServeHTTP"), unless
+// the notation lists it with one ("Generator.next").
+func isPassThrough(f StackFrame) bool {
+	if f.Syntax < 0 || int(f.Syntax) >= len(stackNotations) {
+		return false
+	}
+	method := f.Function[strings.LastIndexByte(f.Function, '.')+1:]
+	for _, name := range stackNotations[f.Syntax].passThrough {
+		if name == f.Function || name == method {
+			return true
+		}
+	}
+	return false
 }
 
 func hasAnyPrefix(s string, prefixes []string) bool {

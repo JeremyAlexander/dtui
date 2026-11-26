@@ -13,6 +13,10 @@ e1:333a05087d31	java: root cause linked by id, wrapper last
 e1:b69f706a0884	java: runtime frames only
 e1:b69f706a0884	java: runtime frames only, another JDK build
 e1:778303eeb2ce	java: same type, another top in-app frame
+e1:ced629c4ecc1	java: sendError from a controller, under the same filters
+e1:659adbb1b972	java: sendError from a resource handler, under the same filters
+e1:9b9e9062b219	java: sendError from the default servlet, under two filters
+e1:9b9e9062b219	java: the same under another container build
 e1:fbfc39713625	java: the wrapper alone
 e1:0f6361b9f805	message: an unknown stack notation
 e1:0797a9e5ed04	message: another type, same message
@@ -21,9 +25,9 @@ e1:fcb400accbc7	message: other ids
 e1:d488fbab93f9	node: async frames
 e1:d488fbab93f9	node: baseline
 e1:d488fbab93f9	node: deployed under another root
-e1:e58eef629f0d	python: baseline
-e1:e58eef629f0d	python: deployed into a release directory
-e1:e58eef629f0d	python: other line numbers and interpreter
-e1:0aab71a0d7e7	python: same function name in another file
+e1:012201a68864	python: baseline
+e1:012201a68864	python: deployed into a release directory
+e1:012201a68864	python: other line numbers and interpreter
+e1:ab20807b6ead	python: same function name in another file
 e1:ce7e09661781	type: no message, no stack
 e1:ce7e09661781	type: without a chain the last event counts

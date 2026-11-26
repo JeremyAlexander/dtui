@@ -28,6 +28,10 @@ var pythonPackageDirs = []string{"site-packages/", "dist-packages/"}
 
 const pythonStdlibDir = "lib/python/"
 
+// pythonPassThrough: WSGI and ASGI middleware, view dispatch, and the
+// closures decorators wrap a function in.
+var pythonPassThrough = []string{"__call__", "dispatch", "wrapper", "wrapped", "inner"}
+
 const (
 	pythonTraceback = "Traceback (most recent call last)"
 	// pythonGutter is what an exception group puts before each line.

@@ -48,6 +48,10 @@ var javaVendorPrefixes = []string{
 	"com.dynatrace.",
 }
 
+// javaPassThrough: servlet filters, interceptors, and reflective and proxied
+// calls.
+var javaPassThrough = []string{"doFilter", "doFilterInternal", "intercept", "invoke", "proceed"}
+
 func javaFrame(line string) (StackFrame, bool) {
 	m := javaFrameRe.FindStringSubmatch(line)
 	if m == nil {

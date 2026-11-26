@@ -189,10 +189,21 @@ func TestFingerprintUsesTopFiveFrames(t *testing.T) {
 	if key("com.acme.A.a") != key("com.acme.A.a", "java.lang.Thread.run") {
 		t.Error("a runtime frame below must not change an in-app key")
 	}
-	// Five runtime frames on top do not push the in-app frame out.
+	// Five runtime frames on top do not push the in-app frame out, and the
+	// topmost of them, the throw site, is part of the key.
 	deep := []string{"java.util.A.a", "java.util.B.b", "java.util.C.c", "java.util.D.d", "java.util.E.e", "com.acme.A.a"}
-	if key(deep...) != key("com.acme.A.a") {
-		t.Error("an in-app frame below five runtime frames must still key the exception")
+	fp = mustFingerprint(t, SpanException{Type: "T", StackTrace: javaStack(deep...)})
+	if want := frames(StackJava, "java.util.A", "a", "com.acme.A", "a"); fp.Rung != RungAppFrames || !reflect.DeepEqual(fp.Frames, want) {
+		t.Errorf("rung %v frames %+v, want the throw site and the in-app frame", fp.Rung, fp.Frames)
+	}
+	if key(deep...) != key("java.util.A.a", "com.acme.A.a") {
+		t.Error("runtime frames between the throw site and the in-app frame must not change the key")
+	}
+	// The throw site comes on top of the five in-app frames, not instead of
+	// one of them.
+	fp = mustFingerprint(t, SpanException{Type: "T", StackTrace: javaStack(append([]string{"java.util.A.a"}, base...)...)})
+	if len(fp.Frames) != FingerprintFrames+1 || fp.Frames[0].Module != "java.util.A" || fp.Frames[5].Function != "e" {
+		t.Errorf("frames = %+v, want the throw site and the top %d in-app frames", fp.Frames, FingerprintFrames)
 	}
 	// The same holds on the all-frames rung: top five, in order.
 	runtime := []string{"java.util.A.a", "java.util.B.b", "java.util.C.c", "java.util.D.d", "java.util.E.e", "java.util.F.f"}
@@ -379,6 +390,111 @@ func stackOf(frames []StackFrame) string {
 	return b.String()
 }
 
+// The throw site is in every key that has frames: two exceptions thrown from
+// different places are different issues even where the application frames
+// under them are the same.
+func TestFingerprintIncludesTheThrowSite(t *testing.T) {
+	under := []string{"com.example.shop.web.ErrorPages.render", "com.example.shop.web.AuthFilter.doFilter"}
+	sendError := mustFingerprint(t, SpanException{Type: "T",
+		StackTrace: javaStack(append([]string{"org.apache.catalina.connector.ResponseFacade.sendError"}, under...)...)})
+	redirect := mustFingerprint(t, SpanException{Type: "T",
+		StackTrace: javaStack(append([]string{"org.apache.catalina.connector.Response.sendRedirect"}, under...)...)})
+	if sendError.Key == redirect.Key {
+		t.Errorf("two throw sites share key %s: %+v", sendError.Key, sendError.Frames)
+	}
+	want := frames(StackJava, "org.apache.catalina.connector.ResponseFacade", "sendError", "com.example.shop.web.ErrorPages", "render")
+	if sendError.Rung != RungAppFrames || !reflect.DeepEqual(sendError.Frames, want) {
+		t.Errorf("rung %v frames %+v", sendError.Rung, sendError.Frames)
+	}
+	// An in-app throw site is not listed twice.
+	own := mustFingerprint(t, SpanException{Type: "T", StackTrace: javaStack(under...)})
+	if want := frames(StackJava, "com.example.shop.web.ErrorPages", "render"); !reflect.DeepEqual(own.Frames, want) {
+		t.Errorf("frames %+v", own.Frames)
+	}
+	// A pass-through frame that throws is the throw site all the same.
+	filter := mustFingerprint(t, SpanException{Type: "T",
+		StackTrace: javaStack("com.example.shop.web.AuthFilter.doFilter", "com.example.shop.web.Api.get")})
+	want = frames(StackJava, "com.example.shop.web.AuthFilter", "doFilter", "com.example.shop.web.Api", "get")
+	if filter.Rung != RungAppFrames || !reflect.DeepEqual(filter.Frames, want) {
+		t.Errorf("rung %v frames %+v", filter.Rung, filter.Frames)
+	}
+}
+
+// Frames that only hand a call on (a filter or middleware chain, reflection,
+// async plumbing) say nothing about the bug, so they do not count toward the
+// top frames, in-app or not.
+func TestFingerprintSkipsPassThroughFrames(t *testing.T) {
+	cases := []struct {
+		name, stack string
+		rung        FingerprintRung
+		want        []StackFrame
+	}{
+		{"java: application filters around a controller", javaStack(
+			"com.example.shop.cart.CartService.addItem",
+			"com.example.shop.cart.CartController.post",
+			"com.example.shop.web.TracingFilter.doFilter",
+			"com.example.shop.web.AuthFilter.doFilterInternal",
+			"com.example.shop.web.RetryInterceptor.intercept",
+			"com.example.shop.web.AuditProxy.invoke",
+			"com.example.shop.web.Aspect.proceed",
+			"com.example.shop.Main.main"), RungAppFrames,
+			frames(StackJava, "com.example.shop.cart.CartService", "addItem",
+				"com.example.shop.cart.CartController", "post", "com.example.shop.Main", "main")},
+		{"java: only filters are the application's", javaStack(
+			"org.apache.catalina.connector.ResponseFacade.sendError",
+			"org.apache.catalina.servlets.DefaultServlet.doGet",
+			"org.apache.catalina.core.ApplicationFilterChain.doFilter",
+			"com.example.shop.web.TracingFilter.doFilter",
+			"org.apache.catalina.core.ApplicationFilterChain.doFilter",
+			"com.example.shop.web.AuthFilter.doFilter",
+			"java.lang.reflect.Method.invoke",
+			"java.lang.Thread.run"), RungFrames,
+			frames(StackJava, "org.apache.catalina.connector.ResponseFacade", "sendError",
+				"org.apache.catalina.servlets.DefaultServlet", "doGet", "java.lang.Thread", "run")},
+		{"dotnet: middleware", `   at Example.Shop.CartService.AddItem(String sku)
+   at Example.Shop.TracingMiddleware.InvokeAsync(HttpContext context)
+   at Example.Shop.AuthMiddleware.Invoke(HttpContext context)
+   at Example.Shop.Program.Main(String[] args)`, RungAppFrames,
+			frames(StackDotNet, "Example.Shop.CartService", "AddItem", "Example.Shop.Program", "Main")},
+		{"javascript: middleware and compiled async plumbing", `    at CartService.addItem (/app/src/cart/service.js:42:17)
+    at /app/src/cart/service.js:30:71
+    at step (/app/src/cart/service.js:33:23)
+    at Object.next (/app/src/cart/service.js:14:53)
+    at fulfilled (/app/src/cart/service.js:5:58)
+    at __awaiter (/app/src/cart/service.js:4:12)
+    at next (/app/src/web/chain.js:9:5)
+    at CartController.post (/app/src/cart/controller.js:17:5)`, RungAppFrames,
+			frames(StackJS, "src/cart/service.js", "CartService.addItem", "src/cart/service.js", "<anonymous>",
+				"src/cart/controller.js", "CartController.post")},
+		{"python: middleware and decorators", `Traceback (most recent call last):
+  File "/app/shop/web.py", line 9, in __call__
+    return self.app(environ, start_response)
+  File "/app/shop/views.py", line 12, in dispatch
+    return handler(request)
+  File "/app/shop/auth.py", line 30, in wrapper
+    return view(request)
+  File "/app/shop/views.py", line 40, in post
+    cart.add_item(sku)
+  File "/app/shop/cart.py", line 42, in add_item
+    raise ValueError("locked")`, RungAppFrames,
+			frames(StackPython, "shop/cart.py", "add_item", "shop/views.py", "post")},
+		{"go: handlers that wrap handlers", `shop/internal/cart.(*Service).AddItem(0xc000010000)
+shop/internal/api.(*Handler).Post(0xc000020000)
+shop/internal/web.(*Auth).ServeHTTP(0xc000020000)
+shop/internal/web.Tracing.ServeHTTP(0xc000020000)
+main.main()`, RungAppFrames,
+			frames(StackGo, "shop/internal/cart", "Service.AddItem", "shop/internal/api", "Handler.Post", "main", "main")},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fp := mustFingerprint(t, SpanException{Type: "T", StackTrace: tc.stack})
+			if fp.Rung != tc.rung || !reflect.DeepEqual(fp.Frames, tc.want) {
+				t.Errorf("rung %v frames %+v\nwant %v %+v", fp.Rung, fp.Frames, tc.rung, tc.want)
+			}
+		})
+	}
+}
+
 // onlyModule treats one module as the application.
 type onlyModule string
 
@@ -388,7 +504,7 @@ func (m onlyModule) ID() string              { return "only:" + string(m) }
 func TestFingerprintUsesTheGivenClassifier(t *testing.T) {
 	ex := SpanException{Type: "T", StackTrace: cartStack}
 	fp, _ := FingerprintExceptions([]SpanException{ex}, onlyModule("org.springframework.web.Dispatcher"))
-	want := frames(StackJava, "org.springframework.web.Dispatcher", "dispatch")
+	want := frames(StackJava, "com.acme.shop.CartService", "addItem", "org.springframework.web.Dispatcher", "dispatch")
 	if fp.Rung != RungAppFrames || !reflect.DeepEqual(fp.Frames, want) {
 		t.Errorf("rung %v frames %+v", fp.Rung, fp.Frames)
 	}

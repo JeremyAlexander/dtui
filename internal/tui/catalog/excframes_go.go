@@ -35,6 +35,9 @@ var (
 	// The file line under a frame, and what in its path shows a dependency.
 	goFileRe       = regexp.MustCompile(`^(\S+\.go):\d+(?: \+0x[0-9a-f]+)?$`)
 	goDependencyRe = regexp.MustCompile(`@v\d|/pkg/mod/|(?:^|/)vendor/`)
+	// The runtime's entry points of a panic. "panic" itself is printed
+	// without a package.
+	goPanicRe = regexp.MustCompile(`^(?:gopanic|goPanic\w+|panic\w*|sigpanic\w*|fatalpanic|throw)$`)
 	// A method's receiver is written "(*Type)" or "(Type)".
 	goReceiver = strings.NewReplacer("(*", "", "(", "", ")", "")
 )
@@ -54,6 +57,9 @@ var goStdlib = []string{
 var goVendorPrefixes = []string{
 	"golang.org/", "google.golang.org/", "go.opentelemetry.io/", "go.uber.org/", "gopkg.in/",
 }
+
+// goPassThrough: a handler that wraps the next handler.
+var goPassThrough = []string{"ServeHTTP"}
 
 // goVendorDir is the directory a module keeps its dependencies' packages in.
 const goVendorDir = "vendor/"
@@ -99,8 +105,35 @@ func goFrame(line string) (StackFrame, bool) {
 }
 
 // goRootCause returns the frames of the first goroutine, the one that
-// panicked.
+// panicked, from the throw site down.
 func goRootCause(lines []string) ([]StackFrame, string) {
+	return goThrowSite(goFirstGoroutine(lines)), ""
+}
+
+// goThrowSite drops the frames above the throw site: the deferred calls that
+// ran while panicking, which are printed first, and the runtime's entry into
+// the panic. A trace that ends there is kept whole.
+func goThrowSite(frames []StackFrame) []StackFrame {
+	for i := range frames {
+		if !isGoPanic(frames[i]) {
+			continue
+		}
+		for i < len(frames) && isGoPanic(frames[i]) {
+			i++
+		}
+		if i < len(frames) {
+			return frames[i:]
+		}
+		break
+	}
+	return frames
+}
+
+func isGoPanic(f StackFrame) bool {
+	return f.Module == "" && f.Function == "panic" || f.Module == "runtime" && goPanicRe.MatchString(f.Function)
+}
+
+func goFirstGoroutine(lines []string) []StackFrame {
 	var out []StackFrame
 	goroutines := 0
 	framed := false // the line before was a frame; this one may be its file
@@ -112,7 +145,7 @@ func goRootCause(lines []string) ([]StackFrame, string) {
 			out = append(out, f)
 		case goGoroutineRe.MatchString(line):
 			if goroutines++; goroutines > 1 {
-				return out, ""
+				return out
 			}
 		case framed:
 			if m := goFileRe.FindStringSubmatch(line); m != nil && goDependencyRe.MatchString(m[1]) {
@@ -121,7 +154,7 @@ func goRootCause(lines []string) ([]StackFrame, string) {
 		}
 		framed = ok
 	}
-	return out, ""
+	return out
 }
 
 func goInApp(f StackFrame) bool {
