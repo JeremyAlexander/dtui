@@ -91,6 +91,8 @@ func (s Service) Total() int { return 0 }
 func Total() int { return 0 }
 
 func Map[K comparable](k K) {}
+
+func (s Service) Sum() int { return 0 }
 `,
 	"api/internal/cart/service_test.go": "package cart\n\nfunc Total() int { return 1 }\n",
 	"api/internal/order/service.go":     "package order\n\ntype Service struct{}\n\nfunc (s *Service) AddItem() {}\n",
@@ -145,9 +147,14 @@ func TestResolve(t *testing.T) {
 		// Go.
 		{"github.com/acme/shop/api/internal/cart.(*Service).AddItem", []Match{{"api/internal/cart/service.go", 5, Declaration}}},
 		{"github.com/acme/shop/api/internal/cart.Service.Total", []Match{{"api/internal/cart/service.go", 7, Declaration}}},
-		{"github.com/acme/shop/api/internal/cart.Total", []Match{{"api/internal/cart/service.go", 7, FirstOfSeveral}}},
+		// A function is not the method of the same name, nor the other way round.
+		{"github.com/acme/shop/api/internal/cart.Total", []Match{{"api/internal/cart/service.go", 9, Declaration}}},
 		{"github.com/acme/shop/api/internal/cart.Map[go.shape.string]", []Match{{"api/internal/cart/service.go", 11, Declaration}}},
-		{"github.com/acme/shop/api/internal/cart.Total.func1", []Match{{"api/internal/cart/service.go", 7, FirstOfSeveral}}},
+		{"github.com/acme/shop/api/internal/cart.Total.func1", []Match{{"api/internal/cart/service.go", 9, Declaration}}},
+		{"github.com/acme/shop/api/internal/cart.Sum", nil},
+		{"github.com/acme/shop/api/internal/cart.Service.Sum", []Match{{"api/internal/cart/service.go", 13, Declaration}}},
+		{"cart.Sum", nil},
+		{"cart.Total", []Match{{"api/internal/cart/service.go", 9, Declaration}}},
 		{"github.com/acme/shop/api/internal/order.(*Service).AddItem", []Match{{"api/internal/order/service.go", 5, Declaration}}},
 		{"github.com/acme/shop/api/internal/cart.(*Service).Missing", nil},
 		{"main.main", []Match{{"api/cmd/api/main.go", 3, Declaration}}},

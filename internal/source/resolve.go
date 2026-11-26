@@ -391,7 +391,10 @@ func declaration(ext string, f Frame) *regexp.Regexp {
 	var pattern string
 	switch ext {
 	case ".go":
-		pattern = `^func\s+(?:\([^)]*\)\s*)?` + s + `\s*[(\[]`
+		// A frame without a type is a function: a method of the same name
+		// is another frame's. (main.main is spelled with its package where
+		// a type would be, and is a function too.)
+		pattern = `^func\s+` + s + `\s*[(\[]`
 		if f.Type != "" && f.Notation == Go {
 			pattern = `^func\s+\(\s*\w*\s*\*?` + regexp.QuoteMeta(f.Type) + `(?:\[[^\]]*\])?\s*\)\s*` + s + `\s*[(\[]`
 		}
