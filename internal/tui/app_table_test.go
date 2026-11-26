@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/x/ansi"
+
 	"github.com/dynatrace-oss/dtui/internal/tui/catalog"
 )
 
@@ -164,5 +166,69 @@ func TestAPIViewMissingSourceErrors(t *testing.T) {
 	dm, ok := msg.(dataMsg)
 	if !ok || dm.err == nil || !strings.Contains(dm.err.Error(), "not wired") {
 		t.Fatalf("missing source must surface an error, got %#v", msg)
+	}
+}
+
+// A result is rows from its first record on. A summary record is something a
+// source sends only to a view whose spec reads one (Caption, Empty, Footnote),
+// so a field that happens to be called __summary costs no other view a row.
+func TestResultKeepsARowWithASummaryField(t *testing.T) {
+	for _, marker := range []any{true, false, "weekly"} {
+		a := testApp(t, "logs")
+		seedRows(t, a, []map[string]any{
+			{"content": "first", catalog.SummaryKey: marker},
+			{"content": "second"},
+		})
+		tv := a.top().(*tableView)
+		if len(tv.all) != 2 || len(tv.rows) != 2 || tv.summary != nil {
+			t.Errorf("logs, __summary=%v: %d fetched, %d shown, summary %v; want 2, 2, none", marker, len(tv.all), len(tv.rows), tv.summary)
+		}
+
+		// An API view that reads no summary keeps the record too.
+		a = testApp(t, "slos")
+		seedRows(t, a, []map[string]any{
+			{"name": "checkout availability", catalog.SummaryKey: marker},
+			{"name": "search latency"},
+		})
+		tv = a.top().(*tableView)
+		if len(tv.all) != 2 || tv.summary != nil {
+			t.Errorf("slos, __summary=%v: %d fetched, summary %v; want 2, none", marker, len(tv.all), tv.summary)
+		}
+	}
+
+	// The query escape hatch derives its columns from the first record.
+	a := testApp(t, "home")
+	_, cmd := a.Update(queryMsg{dql: "data record(__summary = true, n = 1), record(n = 2)"})
+	deliver(a, cmd)
+	qv := a.top().(*queryView)
+	qv.results.Update(dataMsg{owner: qv.results, seq: qv.results.seq, records: []map[string]any{
+		{catalog.SummaryKey: true, "n": 1.0}, {"n": 2.0},
+	}})
+	if len(qv.results.rows) != 2 {
+		t.Errorf(":query showed %d of 2 records", len(qv.results.rows))
+	}
+}
+
+// Only the marker a source sets makes a leading record the summary.
+func TestSummaryIsReadOnlyWhereASpecAsksForIt(t *testing.T) {
+	spec := &catalog.Spec{Name: "t", API: "t", Columns: []catalog.Column{{Title: "A", Field: "a"}},
+		Caption: func(_ catalog.Scope, summary map[string]any) []string {
+			return []string{"total " + catalog.Str(summary, "total")}
+		}}
+	v := newTableView(&dataSource{previewOff: true}, spec, catalog.Scope{})
+	answer := func(records ...map[string]any) {
+		v.seq++
+		v.Update(dataMsg{owner: v, seq: v.seq, records: records})
+	}
+	answer(map[string]any{catalog.SummaryKey: true, "total": "7"}, map[string]any{"a": "x"})
+	if len(v.all) != 1 || catalog.Str(v.summary, "total") != "7" {
+		t.Fatalf("a marked record is the summary: %d rows, summary %v", len(v.all), v.summary)
+	}
+	if out := ansi.Strip(v.View(60, 10)); !strings.Contains(out, " total 7\n") {
+		t.Errorf("the caption reads the summary:\n%s", out)
+	}
+	answer(map[string]any{catalog.SummaryKey: "no", "a": "x"}, map[string]any{"a": "y"})
+	if len(v.all) != 2 || v.summary != nil {
+		t.Errorf("a field of that name is not the marker: %d rows, summary %v", len(v.all), v.summary)
 	}
 }

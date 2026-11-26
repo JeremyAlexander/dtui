@@ -719,7 +719,10 @@ func (v *tableView) Update(msg tea.Msg) tea.Cmd {
 		v.err = msg.err
 		v.summary = nil
 		if msg.err == nil {
-			v.summary, v.all = catalog.SplitSummary(msg.records)
+			v.all = msg.records
+			if v.spec.ReadsSummary() {
+				v.summary, v.all = catalog.SplitSummary(msg.records)
+			}
 			if v.spec.Decode != nil {
 				v.all = v.spec.Decode(v.all)
 			}

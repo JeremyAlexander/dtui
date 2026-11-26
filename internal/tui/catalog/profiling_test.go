@@ -128,8 +128,18 @@ func TestSplitSummary(t *testing.T) {
 	if summary["samples"] != 3.0 || len(rows) != 2 {
 		t.Errorf("summary %v, %d rows", summary, len(rows))
 	}
-	summary, rows = SplitSummary([]map[string]any{{"a": 1}})
-	if summary != nil || len(rows) != 1 {
-		t.Errorf("records without a summary must pass through: %v, %d rows", summary, len(rows))
+	for _, first := range []map[string]any{{"a": 1}, {SummaryKey: false}, {SummaryKey: "true"}, {SummaryKey: nil}} {
+		summary, rows = SplitSummary([]map[string]any{first, {"a": 2}})
+		if summary != nil || len(rows) != 2 {
+			t.Errorf("first record %v is a row: got summary %v, %d rows", first, summary, len(rows))
+		}
+	}
+	if summary, rows = SplitSummary(nil); summary != nil || rows != nil {
+		t.Errorf("no records: %v, %v", summary, rows)
+	}
+	for _, s := range All() {
+		if want := s.Name == "hotspots" || s.Name == "allocations"; s.ReadsSummary() != want {
+			t.Errorf("%s: ReadsSummary = %v, want %v", s.Name, s.ReadsSummary(), want)
+		}
 	}
 }

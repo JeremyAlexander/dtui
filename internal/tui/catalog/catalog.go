@@ -504,17 +504,23 @@ func ScanMetricDims(records []map[string]any, exclude map[string]bool, declaredK
 
 // SummaryKey marks the one record an API source may lead its result with to
 // describe the result as a whole (the analysed window, totals, why it is
-// empty). The table lifts it out before the rows are shown and hands it to
-// the spec's Caption, Empty and Footnote.
+// empty): the record carries SummaryKey: true. The table lifts it out before
+// the rows are shown and hands it to the spec's Caption, Empty and Footnote;
+// it does so only for a spec that reads one (ReadsSummary), so a record of any
+// other view is a row whatever its fields are called.
 const SummaryKey = "__summary"
+
+// ReadsSummary reports whether the view's source may lead its result with a
+// summary record: an API view with a seam that takes one.
+func (s *Spec) ReadsSummary() bool {
+	return s.API != "" && (s.Caption != nil || s.Empty != nil || s.Footnote != nil)
+}
 
 // SplitSummary separates a source result into its summary record (nil when
 // the source sent none) and its rows.
 func SplitSummary(records []map[string]any) (summary map[string]any, rows []map[string]any) {
-	if len(records) > 0 {
-		if _, ok := records[0][SummaryKey]; ok {
-			return records[0], records[1:]
-		}
+	if len(records) > 0 && records[0][SummaryKey] == true {
+		return records[0], records[1:]
 	}
 	return nil, records
 }
