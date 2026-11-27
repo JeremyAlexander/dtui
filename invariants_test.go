@@ -575,6 +575,8 @@ func TestDtctlPathChecksReadOnlyLiveLines(t *testing.T) {
 		{"makefile", ldflagProblems("makefile", "DTCTL_VERSION_PKG = "+versionPkg+"\n"+flags("$(DTCTL_VERSION_PKG)")), ""},
 		{"makefile simple assignment", ldflagProblems("makefile", "DTCTL_VERSION_PKG := "+versionPkg+"\n"+flags("$(DTCTL_VERSION_PKG)")), ""},
 		{"makefile stale variable", ldflagProblems("makefile", "DTCTL_VERSION_PKG = "+old+"/pkg/version\n"+flags("$(DTCTL_VERSION_PKG)")), "makefile stamps " + old},
+		{"makefile flags without Version", ldflagProblems("makefile", "DTCTL_VERSION_PKG = "+versionPkg+"\n-X main.version=1 -X $(DTCTL_VERSION_PKG).Commit=2 -X $(DTCTL_VERSION_PKG).Date=3\n"), "does not stamp " + versionPkg + ".Version"},
+		{"makefile stale literal flag", ldflagProblems("makefile", "DTCTL_VERSION_PKG = "+versionPkg+"\n"+flags("$(DTCTL_VERSION_PKG)")+"-X "+old+"/pkg/version.Version=1\n"), "makefile stamps " + old},
 		{"makefile commented-out variable", ldflagProblems("makefile", "# DTCTL_VERSION_PKG = "+versionPkg+"\n"+flags("$(DTCTL_VERSION_PKG)")), "DTCTL_VERSION_PKG not found"},
 		{"goreleaser", ldflagProblems(".goreleaser.yaml", flags(versionPkg)), ""},
 		{"goreleaser flag for a dtui package", ldflagProblems(".goreleaser.yaml", flags(versionPkg)+"-X "+modulePath+"/internal/tui.Build=1\n"), ""},
