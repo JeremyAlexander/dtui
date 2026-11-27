@@ -16,6 +16,13 @@ var (
 	// more words. The closing parenthesis may be cut off.
 	jsCallRe = regexp.MustCompile(
 		`^at (?:async )?((?:new |(?:[\p{L}\p{N}_$.<>#]+\.)?[gs]et )?[\p{L}\p{N}_$.<>#]+(?: \[as [^\]]+\])?) \((.*?)\)?$`)
+	// "at name (location)" where the name is any text: V8 prints a
+	// function by its display name, which for a method with a string or a
+	// symbol for its key, or a bound function, is no identifier ("at
+	// cart-added (…)", "at [evt] (…)", "at bound add (…)"). Read only in a
+	// trace already known to be JavaScript's, and only before a location
+	// with a line and a column or one of V8's words.
+	jsDisplayRe = regexp.MustCompile(`^at (?:async )?(.+) \(([^\d\s].*:\d+:\d+|<anonymous>|native)\)$`)
 	// "at location": no function name.
 	jsBareRe = regexp.MustCompile(`^at (?:async )?(\S+)$`)
 	// A location is a file with its line, or one of V8's words for code
@@ -77,10 +84,17 @@ func jsFrameParts(line string) (function, loc string, named, ok bool) {
 	return function, loc, named, true
 }
 
+// jsFrame reads more than jsOwns counts: a frame whose function has a
+// display name (jsDisplayRe) is one, but does not show what notation a
+// trace is in, since prose reads the same.
 func jsFrame(line string) (StackFrame, bool) {
 	function, loc, _, ok := jsFrameParts(line)
 	if !ok {
-		return StackFrame{}, false
+		m := jsDisplayRe.FindStringSubmatch(line)
+		if m == nil {
+			return StackFrame{}, false
+		}
+		function, loc = m[1], m[2]
 	}
 	return StackFrame{Module: jsModule(loc), Function: jsFunction(function), Syntax: StackJS}, true
 }
@@ -109,7 +123,7 @@ func jsFunction(name string) string {
 //   - Code without a file keeps V8's word for it, and "index N" (an element
 //     of Promise.all) loses its number.
 //   - A dependency is addressed from its innermost node_modules directory,
-//     wherever that is installed.
+//     wherever that is installed, without the query of a URL.
 //   - Node's own code is "node:<name>"; before Node had that scheme it
 //     printed a bare file ("events.js") or one under "internal/".
 //   - Anything else is the application's and goes through sourceModule,
@@ -122,6 +136,8 @@ func jsModule(loc string) string {
 	case loc == FrameAnonymous, loc == "native", strings.HasPrefix(loc, jsRuntimeScheme):
 		return loc
 	}
+	// What a URL says behind its path names no module.
+	loc, _, _ = strings.Cut(loc, "?")
 	if i := lastDirectory(loc, jsDependencyDir); i >= 0 {
 		return loc[i:]
 	}

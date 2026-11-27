@@ -2047,6 +2047,79 @@ func TestJavaScriptAccessors(t *testing.T) {
 	}
 }
 
+// V8 prints a function by its display name, which is any text: a method
+// with a string or a symbol for its key, a bound function. Once a trace is
+// known to be JavaScript's, a frame is whatever stands before a location
+// with a line and a column. The traces are Node 24's.
+func TestJavaScriptDisplayNames(t *testing.T) {
+	trace := func(top string) string {
+		return "Error: sku 7 is locked\n    at " + top + "\n    at dispatch (/srv/app/shop.js:8:41)\n" +
+			"    at Object.<anonymous> (/srv/app/shop.js:11:9)\n    at Module._compile (node:internal/modules/cjs/loader:1760:14)\n"
+	}
+	keys := map[string]string{}
+	for top, function := range map[string]string{
+		"cart-added (/srv/app/shop.js:2:26)":         "cart-added",
+		"user:created (/srv/app/shop.js:3:28)":       "user:created",
+		"my handler (/srv/app/shop.js:4:26)":         "my handler",
+		"[evt] (/srv/app/shop.js:5:33)":              "[evt]",
+		"Object.plain (/srv/app/shop.js:6:19)":       "Object.plain",
+		"bound addItem (/srv/app/shop.js:9:42)":      "bound addItem",
+		"async my handler (/srv/app/shop.js:4:26)":   "my handler",
+		"(the) end [as last] (/srv/app/shop.js:4:2)": "(the) end",
+	} {
+		fp := mustFingerprint(t, Event{Type: "Error", StackTrace: trace(top)})
+		want := frames(StackJS, "app/shop.js", function, "app/shop.js", "dispatch", "app/shop.js", FrameAnonymous)
+		if !reflect.DeepEqual(fp.Frames, want) {
+			t.Errorf("%s: frames %+v, want %+v", top, fp.Frames, want)
+		}
+		if other, dup := keys[fp.Key]; dup && function != "my handler" {
+			t.Errorf("%s and %s share the key %s", top, other, fp.Key)
+		}
+		keys[fp.Key] = top
+	}
+	// Prose stays prose, above the frames of a trace and alone. A location
+	// has a line and a column, or is one of V8's words.
+	want := frames(StackJS, "app/shop.js", "dispatch", "app/shop.js", FrameAnonymous, "node:internal/modules/cjs/loader", "Module._compile")
+	for _, prose := range []string{
+		"at least 3 items (max 5)", "at the checkout step (see cart 7)", "at 10:11:12 the cart (id 7:12) was locked",
+		"at checkout step (retry 2:1 failed)x", "at step two (cart:12)", "at checkout step (cart:2:1) again", "at my handler (10:11:12)",
+	} {
+		if got := ParseStackFrames(trace(prose)); !reflect.DeepEqual(got, want) {
+			t.Errorf("%q above the frames: %+v", prose, got)
+		}
+		if jsOwns(prose) {
+			t.Errorf("%q marks a trace as JavaScript's", prose)
+		}
+	}
+	for _, line := range []string{"at cart-added (/srv/app/shop.js:2:26)", "at my handler (/srv/app/shop.js:4:26)"} {
+		if jsOwns(line) {
+			t.Errorf("%q marks a trace as JavaScript's: only a plain name does", line)
+		}
+	}
+	if got := ParseStackFrames("at my handler (native)\nat my handler (<anonymous>)\n" + trace("x (/srv/app/a.js:1:1)")); len(got) != 6 {
+		t.Errorf("V8's words for code without a file: %+v", got)
+	}
+}
+
+// A dependency is the same module whatever a URL says behind it: a query
+// that busts a cache is not part of its name, and names no directory.
+func TestJavaScriptModuleQueries(t *testing.T) {
+	for loc, want := range map[string]string{
+		"https://shop.example.invalid/node_modules/lib/index.js?v=100:1:2": "node_modules/lib/index.js",
+		"https://shop.example.invalid/node_modules/lib/index.js?v=101:1:2": "node_modules/lib/index.js",
+		"http://localhost:5173/src/a.js?t=/node_modules/x:1:2":             "src/a.js",
+		"http://localhost:5173/src/a.js?t=1700000000:1:2":                  "src/a.js",
+		"/srv/app/node_modules/lib/index.js:1:2":                           "node_modules/lib/index.js",
+	} {
+		if got := jsModule(loc); got != want {
+			t.Errorf("jsModule(%q) = %q, want %q", loc, got, want)
+		}
+	}
+	if !jsInApp(StackFrame{Module: jsModule("http://localhost:5173/src/a.js?t=/node_modules/x:1:2"), Syntax: StackJS}) {
+		t.Error("a query made a dependency of the application's file")
+	}
+}
+
 func TestRootCauseBoundaries(t *testing.T) {
 	cases := []struct {
 		name, stack string

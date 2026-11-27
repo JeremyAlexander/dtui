@@ -71,6 +71,7 @@ a90dbbba5da170e6	var javaScalaMethodRe
 389c77fa0c6503b8	var jsBareRe
 7c54456ec3d078b6	var jsCallRe
 9abed484b7e9f3ce	var jsContentHashRe
+3934c0b759fc6ef4	var jsDisplayRe
 bd7d3f925d8cb4e7	var jsIndexRe
 f4a32ed2e82b6eff	var jsLinesRe
 bd9679cbcb4e4662	var jsLocationRe
