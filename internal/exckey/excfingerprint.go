@@ -58,7 +58,9 @@ const (
 	// RungFrames: type + the throw site + the top frames; no in-app frame
 	// counts.
 	RungFrames
-	// RungMessage: type + the parameterised message; no frames parsed.
+	// RungMessage: type + the parameterised message. No frame was read: the
+	// event has no stack, one no reader can use, or a Go trace that is not
+	// a panic's.
 	RungMessage
 	// RungType: the type alone.
 	RungType
@@ -97,6 +99,11 @@ type ExceptionFingerprint struct {
 	Message string
 	// Frames are the frames that went into the key, the throw site first;
 	// nil below RungFrames.
+	//
+	// The strings of Frames, Type, EventType and Message may share their
+	// memory with the text of the event they were read from, and keep it
+	// alive. A caller that holds a fingerprint longer than its events
+	// clones them (strings.Clone).
 	Frames []StackFrame
 }
 
