@@ -3,6 +3,7 @@ package exckey
 import (
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 )
 
@@ -20,6 +21,34 @@ func TestParameterizeMessageReplacesEachKind(t *testing.T) {
 		{"two single quoted values", "'a' and 'b'", "<q> and <q>"},
 		{"unbalanced quote stays", `expected " here`, `expected " here`},
 
+		{"a double quote inside single quotes", `unexpected char '"' near "foo"`, "unexpected char <q> near <q>"},
+		{"the same with another value", `unexpected char '"' near "bar"`, "unexpected char <q> near <q>"},
+		{"a double quote inside back quotes", "unexpected char `\"` near \"foo\"", "unexpected char <q> near <q>"},
+		{"a single quote inside double quotes", `unexpected "'" near 'foo'`, "unexpected <q> near <q>"},
+		{"a back quote inside double quotes", "unexpected \"`\" near `foo`", "unexpected <q> near <q>"},
+		{"quotes of one kind inside another", `got 'a "b" c' and "d 'e' f"`, "got <q> and <q>"},
+		{"an apostrophe after a letter beyond ASCII", "caf\u00e9's order and users' limit", "caf\u00e9's order and users' limit"},
+		{"the same in ASCII", "cafe's order and users' limit", "cafe's order and users' limit"},
+		{"an apostrophe after a closing bracket", "user (ann)'s cart exceeded users' limit", "user (ann)'s cart exceeded users' limit"},
+		{"an apostrophe after a digit beyond ASCII", "\u0663's and users' limit", "\u0663's and users' limit"},
+		{"a quoted value before a letter beyond ASCII is none", "'a'\u00e9 'b' c", "<q> c"},
+		{"a quoted value after an opening bracket", "name ('ann') taken", "name (<q>) taken"},
+		{"a doubled single quote", "WHERE name = 'O''Brien'", "WHERE name = <q>"},
+		{"no doubled quote", "WHERE name = 'Smith'", "WHERE name = <q>"},
+		{"a doubled double quote", `column "a ""b"" c" bad`, "column <q> bad"},
+		{"a doubled back quote", "table `a``b` bad", "table <q> bad"},
+		{"doubled quotes around a value", "column ''sku'' is unknown", "column <q> is unknown"},
+		{"doubled quotes around another value", "column ''name'' is unknown", "column <q> is unknown"},
+		{"a doubled quote ends an unclosed value", `got "a"" b`, "got <q> b"},
+		{"two empty values", "'' and ''", "<q> and <q>"},
+		{"an apostrophe inside a quoted value", "said 'don't do it' twice", "said <q> twice"},
+		{"an escaped quote before a space", `name 'a\' b' taken`, "name <q> taken"},
+		{"an apostrophe after an underscore", "x_'s and users' limit", "x_'s and users' limit"},
+		{"an unclosed single quote is text", "expected ' here", "expected ' here"},
+		{"an unclosed quote before a closed one of another kind", `got " and 'a'`, `got " and <q>`},
+		{"an unclosed quote after a closed one", `got "a" and "b`, `got <q> and "b`},
+		{"a backslash ends an unclosed value", `got "a\`, `got "a\`},
+		{"a backslash in back quotes is text", "got `a\\` b`", "got <q> b`"},
 		{"url", "GET https://shop.example.invalid/cart/42?x=1 failed", "GET <url> failed"},
 		{"url with another scheme", "dial jdbc:postgresql://db.example.invalid:5432/shop", "dial jdbc:<url>"},
 
@@ -207,6 +236,55 @@ func TestParameterizeMessageReplacesEachKind(t *testing.T) {
 	}
 }
 
+// Quoted values inside one another are replaced by the pass that meets the
+// outermost, so nesting costs no passes of all the rules.
+func TestParameterizeMessageSettlesNestedQuotesAtOnce(t *testing.T) {
+	onion := "HTTP 404 ---- _ / :// " + strings.Repeat("'a:", 38) + "''" + strings.Repeat("a':", 38)
+	long := strings.Repeat("'a:", 41) + `"` + strings.Repeat("x", 3840) + `"` + strings.Repeat("a':", 41)
+	kinds := strings.Repeat("\"'`", 40) + "x" + strings.Repeat("`'\"", 40)
+	same := strings.Repeat(`"`, 252)
+	for name, msg := range map[string]string{"the onion of 252 bytes": onion, "a long one": long, "three kinds in turns": kinds, "one kind": same} {
+		got, passes := parameterize(msg)
+		if passes > 3 {
+			t.Errorf("%s: %d passes, want at most three", name, passes)
+		}
+		if again := ParameterizeMessage(got); again != got || got != ParameterizeMessage(msg) {
+			t.Errorf("%s: %q is not settled: %q", name, got, again)
+		}
+	}
+	if len(onion) != 252 {
+		t.Errorf("the onion is %d bytes", len(onion))
+	}
+	if got := ParameterizeMessage("\"a 'b `c` d' e\""); got != "<q>" {
+		t.Errorf("three kinds inside one another: %q", got)
+	}
+	// A quote that cannot open a value is passed by once however many
+	// follow: the scan does not start over at each.
+	unclosed := `"` + strings.Repeat(`\"`, exceptionMessageInput/2-1)
+	if got := ParameterizeMessage(unclosed); got != unclosed[:ExceptionMessageMax] {
+		t.Errorf("unclosed quotes: %q", got)
+	}
+	// Measured against the same text with a letter for each quote, which
+	// no rule has work with either.
+	plain := strings.ReplaceAll(unclosed, `"`, "x")
+	cost := func(msg string) time.Duration {
+		best := time.Duration(0)
+		for i := range 5 {
+			start := time.Now()
+			for range 100 {
+				ParameterizeMessage(msg)
+			}
+			if took := time.Since(start); i == 0 || took < best {
+				best = took
+			}
+		}
+		return best
+	}
+	if base, took := cost(plain), cost(unclosed); took > 3*base {
+		t.Errorf("unclosed quotes took %v, the same text without them %v", took, base)
+	}
+}
+
 // The rule order is part of the fingerprint: reordering changes keys.
 func TestParameterizeMessageRuleOrder(t *testing.T) {
 	want := []string{"sqlstate", "quoted", "url", "uuid", "mac", "ip", "date", "path", "hex", "id", "number"}
@@ -354,7 +432,7 @@ func TestParameterizeMessageIsIdempotent(t *testing.T) {
 			t.Errorf("not idempotent for %q:\n  once  %q\n  twice %q", in, once, twice)
 		}
 	}
-	// A quote pair that only forms once the inner pair is replaced.
+	// A value whose quotes are doubled.
 	if got := ParameterizeMessage(`''a''`); got != msgQuoted {
 		t.Errorf("nested quotes = %q, want %q", got, msgQuoted)
 	}

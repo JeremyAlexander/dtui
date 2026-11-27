@@ -61,14 +61,7 @@ const (
 )
 
 var (
-	// A quoted value runs to the next quote of its kind, whatever its
-	// length; a backslash takes the character after it along (\").
-	msgDoubleQuotedRe = regexp.MustCompile(`"(?:[^"\\]|\\.)*"`)
-	// \B on both sides keeps an apostrophe inside a word ("can't") from
-	// opening or closing a quoted value.
-	msgSingleQuotedRe = regexp.MustCompile(`\B'(?:[^'\\]|\\.)*'\B`)
-	msgBackQuotedRe   = regexp.MustCompile("`[^`]*`")
-	msgURLRe          = regexp.MustCompile(`\b[A-Za-z][A-Za-z0-9+.-]*://[^\s<>"']+`)
+	msgURLRe = regexp.MustCompile(`\b[A-Za-z][A-Za-z0-9+.-]*://[^\s<>"']+`)
 	// A UUID, also behind the prefix of an id ("order_<uuid>"), which is
 	// kept.
 	msgUUIDRe = regexp.MustCompile(
@@ -202,8 +195,8 @@ type messageRule struct {
 }
 
 // messageRules run in this order, and the order is part of the result: a
-// quoted SQLSTATE loses its quotes before quoted values go, which go next
-// because they may hold anything, URLs before the
+// quoted SQLSTATE loses its quotes before quoted values go (replaceQuoted),
+// which go next because they may hold anything, URLs before the
 // paths and numbers inside them, UUIDs before the hex runs and numbers they
 // are made of, MAC addresses before the IPs and dates their octets read as
 // (eight octets are an IPv6 address, three a clock time), IPs before dates (three groups of an IPv6 address read as a
@@ -212,11 +205,7 @@ type messageRule struct {
 // long it is, so hex needs a letter. Changing the order changes fingerprints.
 var messageRules = []messageRule{
 	{"sqlstate", func(s string) bool { return strings.ContainsAny(s, "\"'") && len(s) > msgCodeDigits }, unquoteStates},
-	{"quoted", func(s string) bool { return strings.ContainsAny(s, "\"'`") }, func(s string) string {
-		s = msgDoubleQuotedRe.ReplaceAllString(s, msgQuoted)
-		s = msgSingleQuotedRe.ReplaceAllString(s, msgQuoted)
-		return msgBackQuotedRe.ReplaceAllString(s, msgQuoted)
-	}},
+	{"quoted", func(s string) bool { return strings.ContainsAny(s, msgQuotes) }, replaceQuoted},
 	{"url", func(s string) bool { return strings.Contains(s, "://") },
 		func(s string) string { return msgURLRe.ReplaceAllString(s, msgURL) }},
 	{"uuid", func(s string) bool { return strings.Count(s, "-") >= 4 },
@@ -293,6 +282,95 @@ func replaceFilePath(m string) string {
 	return lead + msgPath
 }
 
+const (
+	// msgQuotes are the characters that open and close a quoted value, each
+	// its own kind.
+	msgQuotes = "\"'`"
+	// msgApostrophe is the one of them that also stands inside words.
+	msgApostrophe = '\''
+	// msgEscapingQuotes are the kinds in which a backslash takes the
+	// character after it along (\").
+	msgEscapingQuotes = "\"'"
+	// msgClosers are what, besides a letter, a digit or an underscore, an
+	// apostrophe follows ("(ann)'s"): no value starts behind them.
+	msgClosers = ")]}"
+)
+
+// replaceQuoted replaces every quoted value, in one scan from the left: the
+// quote that comes first opens a value, which runs to the next quote of its
+// kind, whatever its length and whatever quotes of another kind it holds
+// ("unexpected '\"' near …"). Inside it a doubled quote is part of the value
+// ('O”Brien'), and so is a backslash with the character after it, except
+// in back quotes. A quote without a closing one is text, and so is every
+// later quote of its kind.
+//
+// One scan settles values inside one another, which took a pass of all the
+// rules for each level while each kind had an expression of its own.
+//
+// An apostrophe also stands inside words. It opens a value only where no
+// letter, digit or closing bracket stands before it ("can't", "users'",
+// "(ann)'s"), and closes one only where no letter or digit follows ("'don't
+// do it'"), in any script.
+func replaceQuoted(s string) string {
+	var b strings.Builder
+	var unclosed [len(msgQuotes)]bool
+	last := 0
+	for i := 0; i < len(s); i++ {
+		kind := strings.IndexByte(msgQuotes, s[i])
+		if kind < 0 || unclosed[kind] || s[i] == msgApostrophe && !opensQuoted(s[:i]) {
+			continue
+		}
+		end := quotedEnd(s, i)
+		if end < 0 {
+			unclosed[kind] = true
+			continue
+		}
+		b.WriteString(s[last:i])
+		b.WriteString(msgQuoted)
+		i, last = end, end+1
+	}
+	if last == 0 {
+		return s
+	}
+	b.WriteString(s[last:])
+	return b.String()
+}
+
+// opensQuoted reports whether an apostrophe behind before can open a value.
+func opensQuoted(before string) bool {
+	r, _ := utf8.DecodeLastRuneInString(before)
+	return before == "" || !isNameRune(r) && !strings.ContainsRune(msgClosers, r)
+}
+
+// quotedEnd is where the value that opens at s[open] closes, or -1. A value
+// that does not close behind a doubled quote ends with it: the quotes
+// around a value were doubled, not one inside it ("column ”sku” is
+// unknown").
+func quotedEnd(s string, open int) int {
+	quote := s[open]
+	escapes := strings.IndexByte(msgEscapingQuotes, quote) >= 0
+	doubled := -1
+	for i := open + 1; i < len(s); i++ {
+		switch c := s[i]; {
+		case c == '\\' && escapes:
+			i++
+		case c != quote:
+		case i+1 < len(s) && s[i+1] == quote:
+			i++
+			doubled = i
+		case quote == msgApostrophe && i+1 < len(s) && startsWithNameRune(s[i+1:]):
+		default:
+			return i
+		}
+	}
+	return doubled
+}
+
+func startsWithNameRune(s string) bool {
+	r, _ := utf8.DecodeRuneInString(s)
+	return isNameRune(r)
+}
+
 // unquoteStates drops the quotes around a SQLSTATE behind its wording, where
 // that is ASCII (see msgNumberRe).
 func unquoteStates(s string) string {
@@ -358,6 +436,12 @@ func replaceNumbers(s string) string {
 // <n>), collapses whitespace and bounds the result to ExceptionMessageMax
 // bytes. It is idempotent: parameterising its own output changes nothing.
 func ParameterizeMessage(msg string) string {
+	s, _ := parameterize(msg)
+	return s
+}
+
+// parameterize is ParameterizeMessage, and says how many passes it took.
+func parameterize(msg string) (string, int) {
 	// The cap is on the bytes that arrived, so nothing past it is looked
 	// at; a rune it goes through is invalid and dropped with the rest.
 	s := strings.ToValidUTF8(msg[:min(len(msg), exceptionMessageInput)], "")
@@ -374,14 +458,16 @@ func ParameterizeMessage(msg string) string {
 	// changing pass removes literal text, which bounds the passes; the cap
 	// only guards that argument. The pass that confirms the fixed point
 	// finds little left for the rules to apply to.
-	for range exceptionMessageInput {
+	passes := 0
+	for passes < exceptionMessageInput {
 		next := parameterizeOnce(s)
+		passes++
 		if next == s {
 			break
 		}
 		s = next
 	}
-	return s
+	return s, passes
 }
 
 // parameterizeOnce is one pass: whitespace, every rule in order, the cut.

@@ -23,6 +23,7 @@ d4727ff604b5e9d7	const javaUnknownSource, javaNotInFile
 9a4a8c14fe76725b	const jsRuntimeScheme, jsDependencyDir
 ccb956b113a3e111	const msgNumberLeads, msgCodeDigits, msgEscape
 32ce4153ff8a92ee	const msgQuoted, msgURL, msgUUID, msgDate, msgMAC, msgIP, msgPath, msgHex, msgID, msgNumber
+ae53d13605172001	const msgQuotes, msgApostrophe, msgEscapingQuotes, msgClosers
 b29bd30168fc254b	const msgWinPathWord, msgWinPathWords
 4337c2001b4d77fc	const pythonFramePrefix, pythonGutter, pythonIndent
 14ebf31c1d78cb21	const pythonStdlibDir
@@ -83,11 +84,9 @@ bd9679cbcb4e4662	var jsLocationRe
 c975766ad5d68511	var jsPassThrough
 7ac73525b6f267e1	var jsRuntimeFileRe
 2665c76d0111cdc6	var jsSourceFileRe
-a7526f0e1f81fb93	var messageRules
-55199c0a5afe8500	var msgBackQuotedRe
+657ee187e67cb811	var messageRules
 c46144748cfdf72a	var msgControlRe
 4a2a15eef729e09b	var msgDateRe
-f14d4659e0454d20	var msgDoubleQuotedRe
 0998c78bb0c07cec	var msgFileNameRe
 2e9eaf0e20f3d7ae	var msgHexAtRe
 b9a004cbcac48ca4	var msgHexLitRe
@@ -101,7 +100,6 @@ cfedae2fc6af9127	var msgNumberText
 1bf19649abaca1fc	var msgPlaceholders
 36207411439c96ce	var msgPrefixedIDRe
 e54fe08c91dbe103	var msgQuotedStateRe
-530fa174fda670a0	var msgSingleQuotedRe
 b5dc00612ce32c5f	var msgURLRe
 95fa6350781d692b	var msgUUIDRe
 60b07b14f9f00dac	var msgUnitText
