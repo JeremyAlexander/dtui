@@ -995,3 +995,28 @@ func TestOnlyRAsksForAFreshRead(t *testing.T) {
 		t.Errorf("slos open and r read fresh: %s, want %s", got, want)
 	}
 }
+
+// Workspace primary tags are fields of Grail records. An API-backed view has
+// none of them, so it gets no tag columns: on the profiling view three empty
+// ones took the room of the function name.
+func TestAPIViewsGetNoPrimaryTagColumns(t *testing.T) {
+	titles := func(v *tableView) string {
+		var out []string
+		for _, c := range v.columns() {
+			out = append(out, c.Title)
+		}
+		return strings.Join(out, "|")
+	}
+	a, tv, _, _ := profilingCalls(t)
+	plain := titles(tv)
+	a.ds.primaryTags = []string{"team", "env", "stage"}
+	if got := titles(tv); got != plain {
+		t.Errorf("hotspots with three primary tags has the columns\n %s, want\n %s", got, plain)
+	}
+	// A view over Grail records still shows them.
+	logs := testApp(t, "logs")
+	logs.ds.primaryTags = []string{"team"}
+	if got := titles(logs.top().(*tableView)); !strings.Contains(got, "TEAM") {
+		t.Errorf("logs with a primary tag has the columns %s, want TEAM among them", got)
+	}
+}

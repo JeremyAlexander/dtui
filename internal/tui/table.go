@@ -184,9 +184,11 @@ func (v *tableView) baseColumns() []catalog.Column {
 // primaryTagColumns builds one catalog.Column per active primary_tags.* key.
 // Field is set to the raw "primary_tags.<key>" path; Title is the uppercased
 // key name. No Enrich — these are flat fields already present in the record.
+// They are fields of Grail records, so an API-backed view, whose rows are its
+// source's own, gets none: the columns could only be empty.
 func (v *tableView) primaryTagColumns() []catalog.Column {
 	keys := v.ds.primaryTags
-	if len(keys) == 0 {
+	if len(keys) == 0 || v.spec.API != "" {
 		return nil
 	}
 	cols := make([]catalog.Column, 0, len(keys))
