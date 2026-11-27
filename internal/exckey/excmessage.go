@@ -20,6 +20,7 @@ const (
 	msgURL    = "<url>"
 	msgUUID   = "<uuid>"
 	msgDate   = "<date>"
+	msgMAC    = "<mac>"
 	msgIP     = "<ip>"
 	msgPath   = "<path>"
 	msgHex    = "<hex>"
@@ -36,7 +37,7 @@ const (
 )
 
 // msgPlaceholders are all of them, for the cut.
-var msgPlaceholders = []string{msgQuoted, msgURL, msgUUID, msgDate, msgIP, msgPath, msgHex, msgID, msgNumber}
+var msgPlaceholders = []string{msgQuoted, msgURL, msgUUID, msgMAC, msgDate, msgIP, msgPath, msgHex, msgID, msgNumber}
 
 const (
 	// exceptionMessageInput caps how much of a raw message is read at all.
@@ -51,6 +52,9 @@ const (
 	// msgIPv6WordColons is how many colons make an address of a bare
 	// candidate without a digit.
 	msgIPv6WordColons = 3
+	// msgMACSeparators stand between the octets of the shortest MAC
+	// address.
+	msgMACSeparators = 5
 	// msgPlaceholderMax is the longest placeholder; a cut never leaves a
 	// shorter, unclosed one behind.
 	msgPlaceholderMax = len(msgUUID)
@@ -69,6 +73,11 @@ var (
 	// kept.
 	msgUUIDRe = regexp.MustCompile(
 		`(\b|_)[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}\b`)
+	// A MAC address: six octets, or the eight of an EUI-64, with colons or
+	// with hyphens. Eight octets with colons are also an IPv6 address in
+	// full, which is not written with two digits a group.
+	msgMACRe = regexp.MustCompile(
+		`\b[0-9A-Fa-f]{2}(?:(?::[0-9A-Fa-f]{2}){5}(?:(?::[0-9A-Fa-f]{2}){2})?|(?:-[0-9A-Fa-f]{2}){5}(?:(?:-[0-9A-Fa-f]{2}){2})?)\b`)
 	msgIPv4Re = regexp.MustCompile(`\b(?:\d{1,3}\.){3}\d{1,3}(?::\d{1,5})?\b`)
 	// IPv6 candidates; netip decides which ones are addresses.
 	msgIPv6BracketRe = regexp.MustCompile(`\[([0-9A-Fa-f:.]+)\](?::\d{1,5})?`)
@@ -95,9 +104,10 @@ var (
 	msgWinPathRe = regexp.MustCompile(
 		`\b[A-Za-z]:\\(?:` + msgWinPathWord + `(?: ` + msgWinPathWord + `){0,` + msgWinPathWords + `}\\)*(?:` + msgWinPathWord + `)?`)
 	msgHexLitRe = regexp.MustCompile(`\b0[xX][0-9A-Fa-f]+\b`)
-	// Object identity suffixes ("Cart@1b2c3d") and long hex runs.
+	// Object identity suffixes ("Cart@1b2c3d") and hex runs from seven
+	// characters, the short form of a commit id.
 	msgHexAtRe  = regexp.MustCompile(`@[0-9A-Fa-f]+\b`)
-	msgHexRunRe = regexp.MustCompile(`\b[0-9A-Fa-f]{8,}\b`)
+	msgHexRunRe = regexp.MustCompile(`\b[0-9A-Fa-f]{7,}\b`)
 	// An id behind a lower-case prefix ("user_12345", "cus_9s6XAbCdEf"); the
 	// prefix says what it identifies and is kept. An upper-case name with
 	// digits ("ERR_HTTP2_STREAM_ERROR", "E_42") is a constant, not an id.
@@ -162,7 +172,8 @@ type messageRule struct {
 // quoted SQLSTATE loses its quotes before quoted values go, which go next
 // because they may hold anything, URLs before the
 // paths and numbers inside them, UUIDs before the hex runs and numbers they
-// are made of, IPs before dates (three groups of an IPv6 address read as a
+// are made of, MAC addresses before the IPs and dates their octets read as
+// (eight octets are an IPv6 address, three a clock time), IPs before dates (three groups of an IPv6 address read as a
 // clock time) and before numbers, dates before the paths that hold one, and
 // paths before the ids in their segments. A digit run is a number however
 // long it is, so hex needs a letter. Changing the order changes fingerprints.
@@ -177,6 +188,10 @@ var messageRules = []messageRule{
 		func(s string) string { return msgURLRe.ReplaceAllString(s, msgURL) }},
 	{"uuid", func(s string) bool { return strings.Count(s, "-") >= 4 },
 		func(s string) string { return msgUUIDRe.ReplaceAllString(s, "${1}"+msgUUID) }},
+	{"mac", func(s string) bool {
+		return strings.Count(s, ":") >= msgMACSeparators || strings.Count(s, "-") >= msgMACSeparators
+	},
+		func(s string) string { return msgMACRe.ReplaceAllString(s, msgMAC) }},
 	// Each expression of the IP rule runs only on text that holds what it
 	// needs: most messages with colons or full stops hold no address.
 	{"ip", func(s string) bool { return strings.Count(s, ".") >= 3 || strings.Count(s, ":") >= 2 }, func(s string) string {
@@ -306,7 +321,7 @@ func replaceNumbers(s string) string {
 }
 
 // ParameterizeMessage replaces the variable parts of an exception message
-// with placeholders (<q>, <url>, <uuid>, <ip>, <date>, <path>, <hex>, <id>,
+// with placeholders (<q>, <url>, <uuid>, <mac>, <ip>, <date>, <path>, <hex>, <id>,
 // <n>), collapses whitespace and bounds the result to ExceptionMessageMax
 // bytes. It is idempotent: parameterising its own output changes nothing.
 func ParameterizeMessage(msg string) string {

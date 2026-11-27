@@ -76,6 +76,21 @@ func TestParameterizeMessageReplacesEachKind(t *testing.T) {
 		{"windows path with a space", `open C:\Program Files\Shop\cart.json failed`, "open <path> failed"},
 		{"two windows paths", `copy C:\data\a.json to D:\backup files\a.json`, "copy <path> to <path>"},
 
+		{"mac address", "mac 00:1A:2B:FF:4D:5E down", "mac <mac> down"},
+		{"mac address of letters", "mac AA:BB:CC:DD:EE:FF down", "mac <mac> down"},
+		{"mac address of digits", "mac 00:12:34:56:78:90 down", "mac <mac> down"},
+		{"mac address that starts like a time", "mac 00:12:34:56:78:9A down", "mac <mac> down"},
+		{"mac address with hyphens", "mac 00-1a-2b-ff-4d-5e down", "mac <mac> down"},
+		{"mac address of eight octets", "eui 00:12:34:56:78:9A:BC:DE down", "eui <mac> down"},
+		{"mac address of eight octets with hyphens", "eui 00-12-34-56-78-9a-bc-de down", "eui <mac> down"},
+		{"mac address ends a sentence", "no route to 00:1A:2B:FF:4D:5E.", "no route to <mac>."},
+		{"five octets are no mac address", "id 00:1A:2B:FF:4D down", "id <n>:<n>:<n>:FF:<n> down"},
+		{"mixed separators are no mac address", "id AA:BB-CC:DD-EE:FF down", "id AA:BB-CC:DD-EE:FF down"},
+		{"three letters are no octet", "id AA:BB:CC:DD:EE:FFF down", "id AA:BB:CC:DD:EE:FFF down"},
+		{"a short commit id", "commit 3f2b8c1 failed", "commit <hex> failed"},
+		{"a short commit id that starts with a letter", "commit f2b8c13 failed", "commit <hex> failed"},
+		{"six hex characters are a word", "commit f2b8c1 failed", "commit f2b8c1 failed"},
+		{"seven hex letters are a word", "the defaced page", "the defaced page"},
 		{"hex literal", "bad pointer 0x1F", "bad pointer <hex>"},
 		{"object identity", "Cart@1b2c3d is closed", "Cart@<hex> is closed"},
 		{"object identity of digits", "Cart@123456 is closed", "Cart@<hex> is closed"},
@@ -184,7 +199,7 @@ func TestParameterizeMessageReplacesEachKind(t *testing.T) {
 
 // The rule order is part of the fingerprint: reordering changes keys.
 func TestParameterizeMessageRuleOrder(t *testing.T) {
-	want := []string{"sqlstate", "quoted", "url", "uuid", "ip", "date", "path", "hex", "id", "number"}
+	want := []string{"sqlstate", "quoted", "url", "uuid", "mac", "ip", "date", "path", "hex", "id", "number"}
 	if len(messageRules) != len(want) {
 		t.Fatalf("rules = %d, want %d", len(messageRules), len(want))
 	}
