@@ -960,10 +960,11 @@ internal/tui/
   detail.go              # tabbed entity detail page driven by DetailSpec
   problem.go, vulnerability.go   # bespoke tabbed pages
   waterfall.go, timeline.go      # trace waterfall, RUM session timeline
-  flame/, flameview.go,          # flame graph of the hotspots analysis: the model
-  flamedraw.go, flamedetails.go, #   its screen, the selected frame's details and
-  flamesource.go                 #   the key that opens its source (internal/source)
-                                 #   (no terminal framework) and its screen (ADR-0023)
+  flame/, flameview.go,          # flame graph of the hotspots analysis (ADR-0023): the
+  flamedraw.go, flamedetails.go, #   model (flame/, no terminal framework), its screen
+                                 #   and the selected frame's details
+  flamesource.go                 # the key that opens a frame's source (ADR-0024),
+                                 #   over internal/source, which finds the file
   inspector.go, render.go        # record inspector + typed value rendering
   navigator.go           # smartscape navigator (overview / browser / walk)
   home.go, query.go, metrics.go, relations.go, segments.go, links.go

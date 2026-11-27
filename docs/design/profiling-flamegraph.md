@@ -66,8 +66,14 @@ every state (`TestFlameGraphFillsTheTerminalExactly`,
 column, so a terminal that counts one symbol wider than dtui does has room
 for it.
 
-The graph reads the analysis the table holds (`hotspot-stacks`), so opening it
-asks the environment for nothing. `r` asks as the table's `r` does; an answer
+The graph is a second reading of the analysis the table shows. Opening it
+asks the profiling source for that analysis's stacks (`hotspot-stacks`), which
+the source holds for a while after an analysis ran: one read, and no new
+analysis. When the source no longer holds it (it keeps a few, and four other
+analyses of the same process are enough to push one out), it runs a new one,
+of a later window: the caption names the graph's own window, and the status
+line says once that the graph and the functions are now of two analyses.
+`r` asks as the table's `r` does; an answer
 that is the analysis already shown changes nothing and says so. `t` is
 another window and so another analysis. One analysis carries every thread
 state: `[` and `]` cost nothing.
@@ -87,12 +93,12 @@ needed to see them. All of it is read off the tree in memory.
 | Line | What it says |
 |---|---|
 | name | the function as the stacks spell it, wrapped, never shortened |
-| numbers | self and total samples in the thread state drawn, share of all and of the zoomed frame, callees too narrow to draw |
+| numbers | self and total samples in the thread state drawn, share of all and, for a frame inside the zoom, of the zoomed frame, callees too narrow to draw |
 | `package` `type` `function` | the name taken apart (`file` and `function` for a script's frame); `part of` names the runtime a frame belongs to |
 | `self/total` | the frame's samples in every thread state, not only the one drawn |
 | `depth` | its level and the deepest level of the graph |
 | `paths` | how many call paths reach the function in the whole graph, and its total and self over all of them, each stack counted once: the number the functions table calls PATHS |
-| `callers` `callees` | the three heaviest of each over all those paths, with their share of the function's total, and how many more there are; a stack counts for one caller and one callee, as on the table's callers and callees page, so a function that calls itself is not counted twice |
+| `callers` `callees` | the three heaviest of each over all those paths, with their share of the function's total, and how many more there are; a stack counts for one caller and one callee, as on the table's callers and callees page, so a function that calls itself is not counted twice. The share of stacks the function starts is listed as "no caller", and in a full graph the share that went into frames not kept is listed after the callees |
 | `stack` | the callers from the outermost down to the frame, shortened and wrapped |
 
 On the root the details are the samples per thread state, the depth and the
@@ -113,14 +119,18 @@ a last line.
 
 `O` on a frame opens the file it was compiled from in the reader's editor:
 one key, when one file matches and the editor is known. The design, with what
-it must never do, is in ADR-0023; this is how it behaves.
+it must never do, is in
+[ADR-0024](../adr/0024-open-a-frames-source-locally.md); this is how it
+behaves.
 
 1. **The directory.** Files are looked up under the repository dtui was
    started in: the nearest directory at or above the working directory with a
-   `.git` entry. Nothing outside it is ever read or opened. Started anywhere
-   else (a home directory), dtui has no directory to look in and walks none:
-   the key says so and the footer does not offer it. The same holds for the
-   browser build.
+   `.git` entry. Nothing outside it is ever read or opened. Started outside
+   a repository, dtui has no directory to look in and walks none: the key
+   says so and the footer does not offer it. A repository that is the home
+   directory or the root of a volume is refused too, and the key says why:
+   a walk of either reads a person's files, not an application's. The same
+   holds for the browser build, which has no directory.
 2. **The index.** The directory is walked once per session, off the update
    loop, when the graph first opens. The walk skips symbolic links, hidden
    directories and `node_modules`, `vendor`, `target`, `build`, `dist`,
@@ -164,6 +174,11 @@ it must never do, is in ADR-0023; this is how it behaves.
    where the file is for when no editor took the link. Several (the same class in two modules)
    are offered in a short list: `enter` or a digit opens, `y` copies. None
    says so, and that the frame is a library's or another repository's.
+   One lookup is acted on at a time: `O` again ends the one under way, an
+   answer for a frame the cursor has left is not opened, and neither is one
+   that arrives under the help or another overlay; the status line says so.
+   What a match is not known to be (the only one, complete) is said before
+   it: files not read, matches not offered, a walk that stopped early.
    At most 400 files, 2 MB of each, are read for one frame, for at most
    2 seconds, looked at between the reads of one file too. Only a regular
    file is opened: one that has become a named pipe, a device or a
@@ -175,7 +190,7 @@ it must never do, is in ADR-0023; this is how it behaves.
    the first found and not known to be the only one.
 
 The footer shows `O open source` only on a frame that may have a file: not on
-the root, not on a runtime's frame, and, once the directory has been walked,
+the root, not on a remainder, not on a runtime's frame, and, once the directory has been walked,
 only where a file of the right name exists.
 
 ## Mouse
@@ -190,7 +205,7 @@ click selects a frame, double click zooms, the wheel scrolls levels.
 | Key | In the flame graph | flamelens |
 |---|---|---|
 | `↑` `k` | the caller | same |
-| `↓` `j` | the widest callee on screen, the leftmost of equals | same |
+| `↓` `j` | the heaviest callee on screen (by samples, not by cells), the leftmost of equals | same |
 | `←` `→` | the previous / next frame on the level, whoever called it | same, also `h` `l` |
 | `h` `l` | not bound; a status line names the arrows | previous / next on the level |
 | `pgup` `pgdn`, `ctrl+b` `ctrl+f`, `space` | a screen of levels | `b` `f` |
@@ -203,17 +218,19 @@ click selects a frame, double click zooms, the wheel scrolls levels.
 | `#` | search for the selected function | same |
 | `n` `N` | next / previous match in reading order, around the ends with a note | same, without going around |
 | `[` `]` | the thread state before / after | none |
-| `tab` | the functions table | Flamegraph / Top |
+| `tab`, `shift+tab` | the functions table | `tab`: Flamegraph / Top |
 | `O` | open the selected frame's source in the editor | none |
 | `P` | the details of the selected frame on or off (the preview preference) | none |
 | `d` | give the details the room, or give it back | none |
-| `r` | refresh: the analysis is asked for again | reset the view |
+| `r` | refresh: the analysis is asked for again; one is reused for a while, after that a new one runs | reset the view |
 | `y` `c` `o` `t` `?` `q` | dtui's: copy the function, copy the command, open, timeframe, help, quit | `?` is a debug bar, `q` quits |
 
 Where the two differ, a dtui key keeps its meaning: `h` and `l` are drill
-letters, `f` is facets and `b` is fleet on every table, and `r` is refresh
-everywhere. A flamelens habit must not start an analysis that runs for a
-minute, so there is no reset key; `esc` undoes the search and the zoom. `O`
+letters, `f` is facets, `b` is the fleet on the views that have one, and `r`
+is refresh everywhere. So `r` does not reset the view as it does in
+flamelens: it asks for the analysis again, which can run for a minute once
+the one held is no longer reused. There is no single reset key; `esc` undoes
+the search, then the zoom, and then returns to the functions. `O`
 is the capital of `o`: `o` opens the selection in Dynatrace, `O` in the
 editor. `d` is "describe / details" on every table.
 
@@ -277,16 +294,26 @@ again in full colour about 1.5 ms
 `BenchmarkFlameGraphKey`, `BenchmarkFlameGraphZoom`).
 
 The tree keeps at most 1,000,000 frames (`flame.MaxFrames`), twice the
-profile above; at five thread states that is about 93 MB, where the same
-50,000 stacks with nearly every frame distinct (4.4 million frames) held
-403 MB without the bound. A stack that needs a frame the full tree has no
-room for ends in a remainder frame, `(frames not kept)`, under the deepest
-frame it reached: one per caller at most. So every sample is still counted,
-a kept frame's self and total are what they are in the whole tree, and no
-frame shows another's samples as its own (`TestBoundedTreeReconciles`). The
-caption says when a graph is full and how many stacks were folded; a
-remainder is not a function, so it is not searched, added up or opened, and
-the functions a full graph did not keep are missing from `paths`.
+profile above. A frame costs about 96 bytes at five thread states, so a full
+tree holds about 96 MB of frames and, since a remainder costs as much and
+there can be one under every frame, at most as much again; the names of the
+frames and the rows the tree was built from come on top while it is built.
+The same 50,000 stacks with nearly every frame distinct (4.4 million frames)
+held 403 MB without the bound.
+
+A stack that needs a frame the full tree has no room for ends in a remainder
+frame, `(frames not kept)`, under the deepest frame it reached: one per
+caller at most, drawn last among its siblings and in no function's colour.
+So every sample is still counted, a kept frame's self and total are what
+they are in the whole tree, and no frame shows another's samples as its own
+(`TestBoundedTreeReconciles`). The stacks are added heaviest first over all
+thread states, so what a full tree folds is the light tail in every state,
+not the heaviest waiting stacks (`TestFlameTreeKeepsTheHeaviestStacksOfEveryState`).
+The caption says first when a graph is full and how many stacks were folded.
+A remainder is not a function: it is not searched, added up, zoomed into,
+copied or opened, and its line says "folded" where a frame's says "self". A
+function of a full graph says that other call paths may be among the frames
+not kept, and how much of it went there.
 
 ## Parity with flamelens
 
@@ -311,13 +338,13 @@ inside dtui.
 | flamelens | Status | Note |
 |---|---|---|
 | Header naming both views, the active one marked | partial | the breadcrumb says `hotspots › flame·running`; there is no strip showing both readings |
-| The graph takes every remaining row | done | |
+| The graph takes every remaining row | partial | it shares them with the details of the selected frame: so it shows fewer levels than flamelens does at the same size; `P` turns the details off |
 | `Match` bar: pattern, samples, share of all and of the zoom | done | |
 | `Selected` bar: name, samples, share of all and of the zoom | done | the name in full on as many lines as it takes, with self, the callees not drawn, and the details |
 | `Search` input line | done | in the body, above the selected frame |
 | `Info` bar for a transient message | done | dtui's status line |
 | `Debug` bar with timings | missing | benchmarks instead |
-| Help line of keys, `n/N` only while searching | done | dtui's footer; it is cut at the terminal's width |
+| Help line of keys, `n/N` only while searching | done | dtui's footer; it drops whole hints to fit and is never cut |
 
 ### How a frame is drawn
 
@@ -334,15 +361,15 @@ inside dtui.
 | Selected frame on a near white background | done | black on white, and the same on a search hit |
 | Matched frames on a blue background | done | a quiet blue, so that the cursor is the loudest thing on screen |
 | Matched substring in red bold | missing | |
-| Other calls of the selected function highlighted while moving | done | in a quieter style than a search hit |
-| Callers of the zoomed frame dimmed | done | |
+| Other calls of the selected function highlighted while moving | partial | marked, in a quieter style than a search hit; `n` / `N` step through them only after `#` |
+| Callers of the zoomed frame dimmed | partial | by colour only: without colour they look like any frame |
 
 ### Navigation
 
 | flamelens | Status | Note |
 |---|---|---|
-| Starts on the root | done | |
-| Down: the widest visible callee | done | |
+| Starts on the root | partial | on the function the table handed over, when it handed one; on the root otherwise |
+| Down: the heaviest visible callee | done | by samples; equal ones go to the leftmost |
 | Up: the caller | done | |
 | Left / right along the level, across callers, no wrap | done | arrows only |
 | `h` / `l` for left / right | missing | drill letters in dtui |
@@ -359,7 +386,7 @@ inside dtui.
 | `enter` zooms; callers stay as full width lines | done | |
 | The root stays `all`; shares of all and of the zoom | done | |
 | One zoom at a time; `enter` on the root clears it | done | zooms stack, and `backspace` leaves one |
-| `esc` clears the zoom, selection on the frame that was zoomed | done | after the search, if there is one |
+| `esc` clears the zoom, selection on the frame that was zoomed | done | after the search, if there is one; with neither it returns to the functions |
 | `r` resets selection, scroll, zoom and search | partial | no single key: `esc` undoes the search and the zoom, `g` scrolls back |
 | The cursor can move onto the dimmed callers | done | |
 
@@ -398,7 +425,7 @@ inside dtui.
 | Very narrow terminals | done | below 40 columns or 6 body rows the table refuses to open the graph, and an open one says it needs more room |
 | `--sorted`, `--echo`, `--debug` | n/a | |
 
-63 rows: 46 done, 8 partial, 4 missing, 5 n/a.
+63 rows: 42 done, 12 partial, 4 missing, 5 n/a.
 
 ## Beyond flamelens, and not built
 
@@ -420,6 +447,7 @@ Not built:
 - one page with a `functions | flame` strip in place of a pushed view;
 - the mouse;
 - a line number that is the line sampled: the analysis carries none;
+- the graph in the session history: a restored trail ends at the functions;
 - a differential, a timeline, a bottom-up orientation, a sandwich view: out
   of scope by ADR-0023.
 

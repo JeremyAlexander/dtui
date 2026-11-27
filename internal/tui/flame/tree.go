@@ -32,9 +32,11 @@ const RootLabel = "all"
 const RestLabel = "(frames not kept)"
 
 // MaxFrames is the most frames a tree keeps, the remainders aside. A frame
-// costs about 90 bytes: the analysis of a process at the most stacks dtctl
-// returns stays far below this, and a tree that reaches it holds about
-// 90 MB instead of growing with whatever arrives.
+// costs about 96 bytes at five thread states, and a remainder as much: the
+// analysis of a process at the most stacks dtctl returns stays far below
+// this, and a tree that reaches it holds about 96 MB of frames and, with a
+// remainder under every one of them, at most as much again, instead of
+// growing with whatever arrives. The names of the frames come on top.
 const MaxFrames = 1_000_000
 
 // The labels a function cannot have: a function spelled the same is another

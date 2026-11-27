@@ -28,7 +28,7 @@ import (
 var flameHelp = []keyHint{
 	{"↑/k ↓/j", "caller / heaviest callee"},
 	{"← →", "previous / next frame on the level, whoever called it"},
-	{"enter", "zoom into the selected frame"},
+	{"enter", "zoom into the selected frame (on the root: leave every zoom)"},
 	{"backspace", "zoom out one step"},
 	{"esc", "clear the search, then the zoom, then return to the functions"},
 	{"O", "open the selected frame's source in the editor, at its declaration (DTUI_EDITOR names the editor)"},
@@ -37,7 +37,7 @@ var flameHelp = []keyHint{
 	{"#", "search for the selected function"},
 	{"n / N", "next / previous match"},
 	{"[ / ]", "thread state"},
-	{"g/G pgup/dn", "first / last level, a screen of levels (ctrl+b/ctrl+f, space)"},
+	{"g/G pgup/dn", "first / last level (home/end), a screen of levels (ctrl+b/ctrl+f, space)"},
 	{"y / c", "copy the selected function / the dtctl command for the stacks"},
 }
 
@@ -497,7 +497,7 @@ func (v *flameView) arrived(msg dataMsg) tea.Cmd {
 	if v.graph != nil && profileWindowOf(summary) == profileWindowOf(v.summary) {
 		// A refresh inside the time an analysis is reused for: nothing new
 		// to draw, and the reader's place in the graph is kept.
-		return status("this is still the analysis shown: one is reused for a while after it arrives (esc resets the view)")
+		return status("this is still the analysis shown: one is reused for a while after it arrives ")
 	}
 	// Building the tree is the one step whose cost grows with the analysis,
 	// so it runs off the update loop and comes back as a message.

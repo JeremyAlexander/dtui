@@ -76,7 +76,8 @@ type Options struct {
 	// SourceRefused says why a repository was found and SourceRoot is ""
 	// all the same (a home directory, a whole volume), for O to say.
 	SourceRefused string
-	// OpenURL opens a Dynatrace intent/app URL ('o' — open in the Dynatrace UI).
+	// OpenURL opens a Dynatrace intent/app URL ('o' — open in the Dynatrace UI)
+	// and, from the flame graph, a link in an editor's scheme ('O').
 	// nil falls back to launching the system browser (openBrowser); the wasm
 	// host sets it to a JS window.open, since a browser tab can't shell out.
 	// Constructed in the dtui main package (no JS/HTTP in this package).
