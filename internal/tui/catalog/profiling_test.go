@@ -459,3 +459,36 @@ func TestUnknownEmptyReasonIsNamed(t *testing.T) {
 		t.Errorf("a result that gives no reason reads %q, want the view's own wording", got)
 	}
 }
+
+// A total dtctl saturated at the largest int64 is 2^63 as a float64, which
+// no int64 holds. Converted as it is, it reads as the most negative number
+// on amd64; every count and byte figure of the view must read as the largest.
+func TestSaturatedFiguresStayPositive(t *testing.T) {
+	const huge = float64(math.MaxInt64) // rounds up to 2^63
+	const count, size = "9,223,372,036,854,775,807", "8.0 EiB"
+	twoHours, _ := ParseTimeframe("2h")
+	rec := map[string]any{"n": huge}
+	for name, got := range map[string]string{
+		"a count cell": countCell("n")(rec),
+		"a bytes cell": bytesCell("n")(rec),
+		"FormatCount":  FormatCount(huge),
+		"the samples of the functions caption": strings.Join(hotspotsSpec.Caption(Scope{Timeframe: twoHours},
+			map[string]any{ProfSumSamples: huge, ProfSumRows: huge}), " · "),
+		"the samples of the focus caption": strings.Join(hotspotsSpec.Caption(Scope{Timeframe: twoHours, Arg: "a.B.c"},
+			map[string]any{ProfSumSamples: huge, ProfSumCallers: huge, ProfSumCallees: huge}), " · "),
+		"the allocations caption": strings.Join(hotspotsSpec.Caption(Scope{Timeframe: twoHours, Lens: len(HotspotLenses) - 1},
+			map[string]any{ProfSumAlloc: huge, ProfSumSurvived: huge, ProfSumRows: huge}), " · "),
+	} {
+		if strings.Contains(got, "-") || !strings.Contains(got, count) && !strings.Contains(got, size) {
+			t.Errorf("%s reads %q, want %s or %s and no negative figure", name, got, count, size)
+		}
+	}
+	for f, want := range map[float64]int64{
+		huge: math.MaxInt64, math.Inf(1): math.MaxInt64, -huge * 2: math.MinInt64, math.Inf(-1): math.MinInt64,
+		math.NaN(): 0, 1e18: 1e18, -42.9: -42, 0: 0,
+	} {
+		if got := Int64(f); got != want {
+			t.Errorf("Int64(%v) = %d, want %d", f, got, want)
+		}
+	}
+}

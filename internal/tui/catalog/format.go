@@ -157,6 +157,22 @@ func FormatBytes(b int64) string {
 	return fmt.Sprintf("%.1f %ciB", float64(b)/float64(div), "KMGTPE"[exp])
 }
 
+// Int64 converts a number read from a record to an integer, clamped to what
+// an int64 holds. A plain conversion of a value out of range is not defined:
+// 2^63, which is what the largest int64 becomes as a float64, converts to the
+// most negative number on amd64. NaN is 0.
+func Int64(f float64) int64 {
+	switch {
+	case math.IsNaN(f):
+		return 0
+	case f >= math.MaxInt64:
+		return math.MaxInt64
+	case f <= math.MinInt64:
+		return math.MinInt64
+	}
+	return int64(f)
+}
+
 // FormatBytesStr renders a byte count held as a string field.
 func FormatBytesStr(s string) string {
 	n, err := strconv.ParseInt(s, 10, 64)

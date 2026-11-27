@@ -346,9 +346,9 @@ var hotspotsSpec = &Spec{
 			alloc, _ := FloatValue(summary[ProfSumAlloc])
 			survived, _ := FloatValue(summary[ProfSumSurvived])
 			segs = append(segs, fmt.Sprintf("%s allocated, %s survived* (pressure, not heap content)",
-				FormatBytes(int64(alloc)), FormatBytes(int64(survived))))
+				FormatBytes(Int64(alloc)), FormatBytes(Int64(survived))))
 			if rows, _ := FloatValue(summary[ProfSumRows]); rows > ProfileRowCap {
-				segs = append(segs, fmt.Sprintf("top %d of %s call paths by allocated bytes", ProfileRowCap, groupInt(int64(rows))))
+				segs = append(segs, fmt.Sprintf("top %d of %s call paths by allocated bytes", ProfileRowCap, FormatCount(rows)))
 			}
 			return segs
 		}
@@ -357,17 +357,17 @@ var hotspotsSpec = &Spec{
 		rows, _ := FloatValue(summary[ProfSumRows])
 		if s.Arg != "" {
 			segs = append(segs, fmt.Sprintf("%s %s samples with the function on the stack",
-				groupInt(int64(samples)), state))
+				FormatCount(samples), state))
 			for _, dir := range [][2]string{{ProfSumCallers, "callers"}, {ProfSumCallees, "callees"}} {
 				if n, _ := FloatValue(summary[dir[0]]); n > ProfileFocusCap {
-					segs = append(segs, fmt.Sprintf("top %d of %s %s", ProfileFocusCap, groupInt(int64(n)), dir[1]))
+					segs = append(segs, fmt.Sprintf("top %d of %s %s", ProfileFocusCap, FormatCount(n), dir[1]))
 				}
 			}
 		} else {
 			segs = append(segs, fmt.Sprintf("%s %s samples (stacks seen, not time)",
-				groupInt(int64(samples)), state))
+				FormatCount(samples), state))
 			if rows > ProfileRowCap {
-				segs = append(segs, fmt.Sprintf("top %d of %s functions by self samples", ProfileRowCap, groupInt(int64(rows))))
+				segs = append(segs, fmt.Sprintf("top %d of %s functions by self samples", ProfileRowCap, FormatCount(rows)))
 			}
 		}
 		segs = append(segs, "all threads, leaf: total")
@@ -458,7 +458,7 @@ func countCell(key string) func(map[string]any) string {
 		if !ok {
 			return ""
 		}
-		return groupInt(int64(f))
+		return FormatCount(f)
 	}
 }
 
@@ -468,7 +468,7 @@ func bytesCell(key string) func(map[string]any) string {
 		if !ok {
 			return ""
 		}
-		return FormatBytes(int64(f))
+		return FormatBytes(Int64(f))
 	}
 }
 
@@ -661,24 +661,6 @@ func shareBar(frac float64, width int) string {
 	b.WriteString(strings.Repeat("█", eighths/8))
 	if rest := eighths % 8; rest > 0 {
 		b.WriteRune([]rune("▏▎▍▌▋▊▉")[rest-1])
-	}
-	return b.String()
-}
-
-// groupInt renders an integer with thousands separators ("48,213").
-func groupInt(n int64) string {
-	s := strconv.FormatInt(n, 10)
-	neg := strings.HasPrefix(s, "-")
-	s = strings.TrimPrefix(s, "-")
-	var b strings.Builder
-	for i, r := range s {
-		if i > 0 && (len(s)-i)%3 == 0 {
-			b.WriteByte(',')
-		}
-		b.WriteRune(r)
-	}
-	if neg {
-		return "-" + b.String()
 	}
 	return b.String()
 }
