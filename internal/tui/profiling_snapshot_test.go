@@ -926,6 +926,13 @@ func TestHostileFunctionNameStaysInItsCell(t *testing.T) {
 	if echo := focus.Echo(); !strings.Contains(echo, hostile) {
 		t.Errorf("the copied command lost the name as it is: %q", echo)
 	}
+	// The confirmation of c repeats the command it copied, on the same
+	// line. The key itself is not pressed: it writes to the clipboard of the
+	// terminal the tests run in.
+	a.status = "copied: " + focus.Echo()
+	check("after copying the command")
+	a.status, a.statusErr = "failed: "+hostile, true
+	check("with an error in the status line")
 }
 
 // At the 80 column minimum the lines under and over the rows still say all

@@ -1370,10 +1370,12 @@ func (a *app) renderFooter() string {
 
 	var line2 string
 	switch {
+	// A status can repeat tenant text (the command just copied, an error):
+	// like the echo below it is one line of chrome.
 	case a.status != "" && a.statusErr:
-		line2 = " " + theme.Error.Render("✗ "+a.status)
+		line2 = " " + theme.Error.Render("✗ "+oneLine(a.status))
 	case a.status != "":
-		line2 = " " + theme.StatusOK.Render("✓ "+a.status)
+		line2 = " " + theme.StatusOK.Render("✓ "+oneLine(a.status))
 	case a.notice.text != "" && a.notice.warn:
 		line2 = " " + theme.Warn.Render("⚠ "+a.notice.text)
 	case a.notice.text != "":
