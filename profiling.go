@@ -223,6 +223,8 @@ type profileRuns struct {
 	grace time.Duration
 	// after runs f once d has passed; tests fire it by hand.
 	after func(d time.Duration, f func())
+	// report hands a note of a run to the view behind a waiting call.
+	report func(ctx context.Context, text string)
 
 	mu   sync.Mutex
 	runs map[string]*profileRun
@@ -241,6 +243,8 @@ type profileRun struct {
 	err     error
 	cancel  context.CancelFunc
 	waiters map[context.Context]struct{}
+	// note is what the analysis said last, for a call that joins it.
+	note string
 	// left counts the times the last waiter left, so that the grace timer
 	// of an earlier leave can tell it was overtaken.
 	left int
@@ -249,7 +253,8 @@ type profileRun struct {
 func newProfileRuns() *profileRuns {
 	return &profileRuns{
 		now: time.Now, grace: profileAbandonGrace, runs: map[string]*profileRun{},
-		after: func(d time.Duration, f func()) { time.AfterFunc(d, f) },
+		after:  func(d time.Duration, f func()) { time.AfterFunc(d, f) },
+		report: tui.ReportProgress,
 	}
 }
 
@@ -284,6 +289,10 @@ func (r *profileRuns) get(ctx context.Context, key string, tf catalog.Timeframe,
 		run = r.start(key, tf, fetch)
 	} else if run.finished() {
 		r.use(run)
+	} else if run.note != "" {
+		// The view behind this call has heard nothing yet, and the next
+		// response of the analysis can be a minute away.
+		r.report(ctx, run.note)
 	}
 	run.waiters[ctx] = struct{}{}
 	r.mu.Unlock()
@@ -338,8 +347,9 @@ func (r *profileRuns) start(key string, tf catalog.Timeframe,
 	runCtx = context.WithValue(runCtx, profileNoteKey{}, func(text string) {
 		r.mu.Lock()
 		defer r.mu.Unlock()
+		run.note = text
 		for waiter := range run.waiters {
-			tui.ReportProgress(waiter, text)
+			r.report(waiter, text)
 		}
 	})
 	r.runs[key] = run

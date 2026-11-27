@@ -1810,3 +1810,84 @@ func TestProfilingCatalogAgreesWithDtctl(t *testing.T) {
 		}
 	}
 }
+
+// A call that joins an analysis in flight is told at once what the analysis
+// said last. Every call of a view has a progress line of its own, so without
+// this a lens switch would blank the note until the next response, which can
+// be a minute away.
+func TestProfilingJoinerHearsTheLastNote(t *testing.T) {
+	runs := newProfileRuns()
+	runs.now = func() time.Time { return scenarioNow }
+	var mu sync.Mutex
+	heard := map[string][]string{}
+	type who struct{}
+	runs.report = func(ctx context.Context, text string) {
+		mu.Lock()
+		defer mu.Unlock()
+		name, _ := ctx.Value(who{}).(string)
+		heard[name] = append(heard[name], text)
+	}
+	said := func(name string) string {
+		mu.Lock()
+		defer mu.Unlock()
+		return strings.Join(heard[name], "|")
+	}
+	note, told, release := make(chan string), make(chan struct{}), make(chan struct{})
+	fetch := func(ctx context.Context, _ catalog.ProfileWindow) (any, error) {
+		for text := range note {
+			profileNote(ctx, text)
+			told <- struct{}{}
+		}
+		<-release
+		return "result", nil
+	}
+	var wg sync.WaitGroup
+	join := func(name string) context.CancelFunc {
+		ctx, cancel := context.WithCancel(context.WithValue(context.Background(), who{}, name))
+		before := waiters(runs)
+		wg.Go(func() { _, _, _ = runs.get(ctx, "k", timeframe(t, "2h"), fetch) })
+		for deadline := time.Now().Add(5 * time.Second); waiters(runs) != before+1; time.Sleep(time.Millisecond) {
+			if time.Now().After(deadline) {
+				t.Fatalf("%s did not join", name)
+			}
+		}
+		return cancel
+	}
+	defer join("first")()
+	if got := said("first"); got != "" {
+		t.Errorf("before any note the first call heard %q", got)
+	}
+	for _, text := range []string{"accepted", "still running"} {
+		note <- text
+		<-told
+	}
+	close(note)
+	defer join("second")()
+	if got := said("second"); got != "still running" {
+		t.Errorf("the joining call heard %q, want the last note and only it", got)
+	}
+	if got := said("first"); got != "accepted|still running" {
+		t.Errorf("the first call heard %q", got)
+	}
+	close(release)
+	wg.Wait()
+	// A finished analysis says nothing to the call that reads it.
+	ctx := context.WithValue(context.Background(), who{}, "third")
+	if got, _, err := runs.get(ctx, "k", timeframe(t, "2h"), fetch); got != "result" || err != nil {
+		t.Fatalf("the kept analysis reads %v, %v", got, err)
+	}
+	if got := said("third"); got != "" {
+		t.Errorf("a call for a finished analysis heard %q", got)
+	}
+}
+
+// waiters counts the calls waiting on the analyses of runs.
+func waiters(runs *profileRuns) int {
+	runs.mu.Lock()
+	defer runs.mu.Unlock()
+	n := 0
+	for _, run := range runs.runs {
+		n += len(run.waiters)
+	}
+	return n
+}
