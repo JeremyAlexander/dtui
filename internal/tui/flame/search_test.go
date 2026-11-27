@@ -83,6 +83,15 @@ func TestSearch(t *testing.T) {
 			"size:20x2 search:x next", ".++", "sel=main;a;x zoom=all top=2", "x", MatchShare{All: 4, Zoom: 4},
 		},
 		{
+			"first goes to the first match in reading order, wherever the selection is",
+			"search:^a$ next next first first", "+++++", "sel=main;a zoom=all top=0", "^a$", MatchShare{All: 13, Zoom: 13},
+		},
+		{"first without a search or a match on screen leaves the selection", "down first search:nothing first", "+-+-", "sel=main zoom=all top=0", "nothing", MatchShare{}},
+		{
+			"first scrolls its match into view",
+			"size:4x1 search:c|x|b first", ".++", "sel=main;b zoom=all top=2", "c|x|b", MatchShare{All: 11, Zoom: 11},
+		},
+		{
 			"a match narrower than a cell is passed over",
 			"size:4x10 search:c|b next next", ".+++", "sel=main;b zoom=all top=0", "c|b", MatchShare{All: 7, Zoom: 7},
 		},
@@ -179,5 +188,30 @@ func TestSearchMarks(t *testing.T) {
 	dotted := New(build(t, 1, "a.b 1", "axb 1"))
 	if !dotted.SearchLabel("a.b") || dotted.Matches(2) || !dotted.Matches(1) {
 		t.Error("a label with a dot matched as a pattern")
+	}
+}
+
+// A marker stands for frames narrower than a cell, and names the first of
+// them: a match among them is not a frame to step to, forwards, backwards
+// or first.
+func TestSearchPassesOverAMarker(t *testing.T) {
+	b := NewBuilder(1)
+	b.Add([]string{"p", "q"}, []int64{1})
+	b.Add([]string{"p"}, []int64{100})
+	g := New(b.Tree())
+	g.Resize(10, 5)
+	if row := g.Layout().Rows[2]; len(row) != 1 || row[0].Hidden != 1 || g.Tree().Label(row[0].Node) != "q" {
+		t.Fatalf("the fixture is to draw q as a marker: %+v", row)
+	}
+	if err := g.Search("q"); err != nil {
+		t.Fatal(err)
+	}
+	if g.FirstMatch() || g.Selected() != Root {
+		t.Errorf("first selected the marker's frame %d", g.Selected())
+	}
+	for _, forward := range []bool{true, false} {
+		if found, _ := g.NextMatch(forward); found || g.Selected() != Root {
+			t.Errorf("a step (forward %v) selected the marker's frame %d", forward, g.Selected())
+		}
 	}
 }

@@ -32,8 +32,8 @@ var tabHandlers = map[string]tabHandler{
 	"flame-graph": {
 		open: (*tableView).openFlame,
 		hint: func(v *tableView) string {
-			if catalog.ProfileAllocations(v.scope) {
-				return "" // the graph is of thread states; tab says so
+			if catalog.ProfileAllocations(v.scope) || v.err != nil {
+				return "" // the graph is of thread states that loaded; tab says so
 			}
 			return "flame graph"
 		},
@@ -281,3 +281,8 @@ func (v *tableView) entityOf(rec map[string]any) *catalog.Entity {
 	}
 	return v.spec.Entity(rec)
 }
+
+// FitHints has the footer drop the least needed hints of a table with a
+// second reading: the tab hint makes its line longer than a common terminal,
+// and what would otherwise be cut off its end is the help key.
+func (v *tableView) FitHints() bool { return v.spec.TabTarget != "" }

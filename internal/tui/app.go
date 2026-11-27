@@ -513,8 +513,12 @@ func (a *app) dispatch(msg tea.Msg) tea.Cmd {
 		return a.navigate(newMetricChartView(a.ds, msg.key, entity, a.tf), false)
 
 	case flameOpenMsg:
-		if a.top() == viewModel(msg.view) {
-			return nil // a second tab, read before the first one's graph was on top
+		// The graph goes on top of the table it belongs to and nothing else.
+		// A message read later finds another top: a second tab finds the
+		// graph, and one read after a context switch finds the new context's
+		// home, which the old context's graph must not cover.
+		if tv, ok := a.top().(*tableView); !ok || tv.flame != msg.view {
+			return nil
 		}
 		return tea.Batch(a.navigate(msg.view, false), a.ds.source.warm())
 
@@ -744,6 +748,9 @@ func (a *app) handleKey(msg tea.KeyMsg) tea.Cmd {
 			// every table and navigator pane follows it, nested ones
 			// included, and views pushed later inherit it.
 			a.ds.previewOff = !a.ds.previewOff
+			if fv, ok := top.(*flameView); ok {
+				return fv.previewToggled()
+			}
 			if a.ds.previewOff {
 				return status("preview pane off (P restores it)")
 			}
@@ -799,6 +806,10 @@ func (a *app) handleKey(msg tea.KeyMsg) tea.Cmd {
 			}
 			return tea.Batch(status(note), a.scheduleRefresh())
 		case "-":
+			if staleFlameTrail(a.prev) {
+				a.prev = nil
+				return status("the flame graph that was left is not of what the functions show now: tab opens it")
+			}
 			if a.prev != nil {
 				a.stack, a.prev = a.prev, a.stack
 				return tea.Batch(a.trailChanged(a.prev),
@@ -1304,7 +1315,7 @@ func (a *app) renderHeader() string {
 		// Dim on API-backed views — the one surface the scope doesn't reach —
 		// so the header never claims a filter that wasn't applied.
 		style := theme.Segment
-		if tv, ok := a.top().(*tableView); ok && tv.spec.API != "" {
+		if readsAnAnalysis(a.top()) {
 			style = theme.Dim
 		}
 		left = append(left, style.Render("◐ "+segmentSummary(a.segApplied)))

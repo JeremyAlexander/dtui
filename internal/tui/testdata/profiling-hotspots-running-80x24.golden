@@ -20,5 +20,5 @@
    2.0    1,543  ▏            2.0    1,543  ▏            30  NioSocketImpl.read
    1.8    1,410  ▏            6.8    5,280  ▌             1  ProductMapper.toDto
  ▸ com.fasterxml.jackson.core.json.UTF8JsonGenerator.writeString
- [ ] lens  tab flame graph  enter callers/callees  / filter  J/K sort  : views …
+ [ ] lens  tab flame graph  enter callers/callees  / filter  J/K sort  ? help
  ≡ dtctl exec profiling hotspots PROCESS-000000000000A001 --view functions --st…

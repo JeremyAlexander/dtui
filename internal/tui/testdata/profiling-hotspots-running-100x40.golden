@@ -36,5 +36,5 @@
    0.9      690  ▏            0.9      690  ▏             1  …ndlerMethodMapping.lookupHandlerMethod
    0.8      640  ▏            0.8      640  ▏             1  o.a.c.h.Http11InputBuffer.parseHeaders
  ▸ com.fasterxml.jackson.core.json.UTF8JsonGenerator.writeString
- [ ] lens  tab flame graph  enter callers/callees  / filter  J/K sort  : views  t timeframe  S segm…
+ [ ] lens  tab flame graph  enter callers/callees  / filter  J/K sort  : views  t timeframe  ? help
  ≡ dtctl exec profiling hotspots PROCESS-000000000000A001 --view functions --state running --show-w…

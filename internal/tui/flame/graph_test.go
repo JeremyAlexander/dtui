@@ -75,6 +75,8 @@ func run(t testing.TB, g *Graph, steps string) string {
 			answer(g.SearchSelected())
 		case "clear":
 			answer(g.ClearSearch())
+		case "first":
+			answer(g.FirstMatch())
 		case "next", "prev":
 			found, wrapped := g.NextMatch(name == "next")
 			switch {

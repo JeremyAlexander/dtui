@@ -61,6 +61,12 @@ type flameView struct {
 	// function it asked to be shown that no graph was there to search yet.
 	handed    flameHandOver
 	searchFor string
+	// awaited is the window of the functions' analysis while the graph
+	// waits for the stacks of that same analysis: stacks of another window
+	// are then a new analysis, which the reader is told.
+	awaited string
+	// kept is the search of a graph that was dropped, for the next one.
+	kept flameSearch
 
 	loading  bool // waiting for the stacks
 	building bool // the stacks are here, their tree is being built
@@ -88,6 +94,10 @@ type flameView struct {
 	lines flameLines
 }
 
+// flameSearch is a search without its graph: a pattern, or the function a
+// search by name was for.
+type flameSearch struct{ pattern, function string }
+
 // flameHandOver is what the functions table tells the graph each time tab
 // leaves it for the graph.
 type flameHandOver struct {
@@ -97,6 +107,19 @@ type flameHandOver struct {
 	window string
 	// function is the function of the table's selected row.
 	function string
+}
+
+// readsAnAnalysis reports whether a view's data comes from an API-backed
+// analysis, which segments do not reach: such a table, and the flame graph
+// of one. The header dims the segment pill there (ADR-0007).
+func readsAnAnalysis(v viewModel) bool {
+	switch v := v.(type) {
+	case *tableView:
+		return v.spec.API != ""
+	case *flameView:
+		return true
+	}
+	return false
 }
 
 // flameOpenMsg puts a table's flame graph on top of it.
@@ -117,6 +140,8 @@ type flameBuiltMsg struct {
 // same analysis, or says why there is none to switch to.
 func (v *tableView) openFlame() tea.Cmd {
 	switch {
+	case v.err != nil:
+		return status("the functions failed to load, and the flame graph is of the same analysis: r reads it again")
 	case catalog.ProfileAllocations(v.scope):
 		return status("the flame graph reads thread states: [ and ] switch to one")
 	case v.width < flameMinWidth || v.height < flameMinHeight:
@@ -160,11 +185,18 @@ func (v *flameView) take(hand flameHandOver) {
 		}
 		return s.Entity.ID
 	}
-	stale := hand.window != "" && v.summary != nil && hand.window != profileWindowOf(v.summary)
+	// The graph is stale when the functions show another analysis than at
+	// the last hand-over. Its own window is not asked: a graph the reader
+	// refreshed is newer than the functions and still the graph.
+	stale := hand.window != "" && last.window != "" && hand.window != last.window
+	v.awaited = hand.window
 	if entity(hand.scope) != entity(v.scope) || !sameTimeframe(hand.scope.Timeframe, v.scope.Timeframe) || stale {
-		lens := v.scope.Lens
+		lens, other := v.scope.Lens, entity(hand.scope) != entity(v.scope)
 		v.scope = catalog.Scope{Entity: hand.scope.Entity, Timeframe: hand.scope.Timeframe, Lens: lens}
 		v.drop()
+		if other {
+			v.kept = flameSearch{} // the search of another process's graph
+		}
 	}
 	if hand.scope.Lens != last.scope.Lens {
 		v.setLens(hand.scope.Lens)
@@ -181,7 +213,8 @@ func sameTimeframe(a, b catalog.Timeframe) bool {
 
 // drop forgets the analysis shown, and with it the call for one.
 func (v *flameView) drop() {
-	v.graph, v.summary, v.err = nil, nil, nil
+	v.forget()
+	v.err = nil
 	v.building = false
 	if v.cancel != nil {
 		v.cancel()
@@ -191,17 +224,66 @@ func (v *flameView) drop() {
 	v.seq++
 }
 
+// forget lets go of the graph: of the tree, and of what was added up for
+// its selected frame, which would otherwise hold the tree for as long as the
+// view lives. Its search is kept for the graph that comes next, since it is
+// a pattern and not a place.
+func (v *flameView) forget() {
+	if v.graph != nil {
+		v.kept = flameSearch{pattern: v.graph.Pattern(), function: v.graph.SearchedFunction()}
+	}
+	v.graph, v.summary, v.fn = nil, nil, flameFunction{}
+	// A search line is for a graph: without one the keys are the app's.
+	v.typing = false
+	v.input.Blur()
+}
+
+// staleFlameTrail reports whether a trail ends in a flame graph that the
+// functions under it would not open as it stands: they show allocations,
+// another thread state or another analysis than they handed over, or they
+// failed. - does not return to such a trail.
+func staleFlameTrail(trail []viewModel) bool {
+	if len(trail) < 2 {
+		return false
+	}
+	fv, ok := trail[len(trail)-1].(*flameView)
+	if !ok {
+		return false
+	}
+	tv, ok := trail[len(trail)-2].(*tableView)
+	if !ok || tv.flame != fv {
+		return true
+	}
+	window := profileWindowOf(tv.summary)
+	return tv.err != nil || catalog.ProfileAllocations(tv.scope) || tv.scope.Lens != fv.handed.scope.Lens ||
+		(window != "" && fv.handed.window != "" && window != fv.handed.window)
+}
+
+// previewToggled words what P did to the graph's details: they follow the
+// preview preference, and whether they are drawn depends on the room the
+// graph leaves, not on the width a table's pane needs.
+func (v *flameView) previewToggled() tea.Cmd {
+	if !v.ds.previewOn() {
+		return status("details off (P restores them)")
+	}
+	v.resize(v.width, v.height)
+	if v.drawable() && len(v.lines.details) == 0 {
+		return status("details on: there is no room for them on a screen this short")
+	}
+	return status("details on")
+}
+
 // applySearchFor searches for the function the table asked to be shown, once
-// there is a graph. For a function the graph does not have, nothing is
-// searched.
+// there is a graph, and moves the cursor to its first frame on screen: the
+// table asks only when its function changed, so the lines about the selected
+// frame, y and O follow what was asked about. For a function the graph does
+// not have, nothing is searched and the cursor stays.
 func (v *flameView) applySearchFor() {
 	if v.graph == nil || v.searchFor == "" {
 		return
 	}
-	// The function was asked about: the cursor starts on its first frame
-	// on screen, unless the reader already put it somewhere.
-	if v.graph.SearchLabel(v.searchFor) && v.graph.Selected() == flame.Root {
-		v.graph.NextMatch(true)
+	if v.graph.SearchLabel(v.searchFor) {
+		v.graph.FirstMatch()
 	}
 	v.searchFor = ""
 }
@@ -229,6 +311,7 @@ func (v *flameView) Init() tea.Cmd {
 // Refresh asks for the analysis as the table's refresh does: one that
 // arrived a moment ago is reused, an older one is run again.
 func (v *flameView) Refresh() tea.Cmd {
+	v.awaited = "" // the reader asks for an analysis of the graph's own
 	if v.parked {
 		v.interrupted = true
 		return nil
@@ -253,6 +336,9 @@ func (v *flameView) fetch(api string) tea.Cmd {
 
 func (v *flameView) SetTimeframe(tf catalog.Timeframe) tea.Cmd {
 	v.scope.Timeframe = tf
+	// The functions are re-timed too: their next hand-over names a window
+	// the graph already asked for.
+	v.handed.window, v.awaited = "", ""
 	v.drop()
 	if v.parked {
 		v.interrupted = true
@@ -399,7 +485,8 @@ func (v *flameView) Update(msg tea.Msg) tea.Cmd {
 func (v *flameView) arrived(msg dataMsg) tea.Cmd {
 	v.loading = false
 	if msg.err != nil {
-		v.graph, v.summary, v.err = nil, nil, msg.err
+		v.forget()
+		v.err = msg.err
 		return nil
 	}
 	summary, rows := catalog.SplitSummary(msg.records)
@@ -412,9 +499,17 @@ func (v *flameView) arrived(msg dataMsg) tea.Cmd {
 	// so it runs off the update loop and comes back as a message.
 	v.building = true
 	view, seq, lenses := v, v.seq, len(catalog.HotspotStates())
-	return func() tea.Msg {
+	build := func() tea.Msg {
 		return flameBuiltMsg{view: view, seq: seq, summary: summary, tree: flameTree(rows, lenses)}
 	}
+	// The graph asked for the analysis the functions show. The sources hold
+	// only so many: when that one is gone they run a new one, and the two
+	// readings are then of two windows, which the reader is told once.
+	if want := v.awaited; want != "" && profileWindowOf(summary) != want {
+		v.awaited = ""
+		return tea.Batch(build, status("the functions' analysis is no longer held: this graph is of a new one, of the window its caption names (r on the functions reads that one too)"))
+	}
+	return build
 }
 
 // flameTree builds the call tree of a stacks result: one stack per row,
@@ -438,15 +533,16 @@ func flameTree(rows []map[string]any, lenses int) *flame.Tree {
 // was on is searched again, since it is a pattern and not a place.
 func (v *flameView) built(msg flameBuiltMsg) {
 	v.building = false
-	pattern := ""
-	if v.graph != nil {
-		pattern = v.graph.Pattern()
-	}
+	v.forget()
+	search := v.kept
 	v.graph, v.summary = flame.New(msg.tree), msg.summary
 	v.graph.SetLens(v.scope.Lens)
 	v.resize(v.width, v.height)
-	if pattern != "" {
-		_ = v.graph.Search(pattern) // it compiled before
+	switch {
+	case search.function != "":
+		v.graph.SearchLabel(search.function) // none, if the function is gone
+	case search.pattern != "":
+		_ = v.graph.Search(search.pattern) // it compiled before
 	}
 	v.applySearchFor()
 }
@@ -524,7 +620,13 @@ func (v *flameView) handleKey(msg tea.KeyMsg) tea.Cmd {
 		if !v.ds.previewOn() {
 			return status("the details are off: P shows them")
 		}
-		if v.detailsFirst = !v.detailsFirst; v.detailsFirst {
+		v.detailsFirst = !v.detailsFirst
+		v.resize(v.width, v.height)
+		if v.detailsFirst && len(v.lines.details) == 0 {
+			v.detailsFirst = false
+			return status("there is no room for the details on a screen this short")
+		}
+		if v.detailsFirst {
 			return status("the details have the room, the graph keeps a few levels: d gives it back")
 		}
 		return status("the graph has the room again")

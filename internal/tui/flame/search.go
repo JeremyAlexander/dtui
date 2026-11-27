@@ -143,6 +143,25 @@ func (g *Graph) matched(under NodeID) int64 {
 	return sum
 }
 
+// FirstMatch moves the selection to the first frame the search marks among
+// those on screen, in reading order: level by level, left to right. It
+// reports whether there was one; without one the selection stays.
+func (g *Graph) FirstMatch() bool {
+	if g.search == nil {
+		return false
+	}
+	for _, row := range g.Layout().Rows {
+		for _, c := range row {
+			if c.Hidden == 0 && g.Matches(c.Node) {
+				g.sel = c.Node
+				g.reveal()
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // NextMatch moves the selection to the next frame the search marks among
 // those on screen: to the right on the selection's level, then on the levels
 // below, and from the last one around to the first. Backwards it goes the

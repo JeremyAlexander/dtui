@@ -36,5 +36,5 @@
 
 
  ▸ com.fasterxml.jackson.core.json.UTF8JsonGenerator.writeString
- [ ] lens  tab flame graph  enter callers/callees  / filter  J/K sort  : views  t timeframe  S segments  r refresh  esc…
+ [ ] lens  tab flame graph  enter callers/callees  / filter  J/K sort  : views  t timeframe  r refresh  esc back  ? help
  ≡ dtctl exec profiling hotspots PROCESS-000000000000A001 --focus 'com.fasterxml.jackson.core.json.UTF8JsonGenerator.wr…
