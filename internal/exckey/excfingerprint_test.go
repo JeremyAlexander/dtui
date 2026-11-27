@@ -861,6 +861,33 @@ func TestTopFramesMergeADependencyWithItsWrapper(t *testing.T) {
 	}
 }
 
+// The throw site counts as the application's also where it only hands the
+// call on: with no other frame of the application the key is still on the
+// app-frames rung, and holds that frame alone.
+func TestPassThroughThrowSiteAloneIsTheApplications(t *testing.T) {
+	got := mustFingerprint(t, Event{Type: "java.lang.IllegalStateException", StackTrace: "java.lang.IllegalStateException: x\n" +
+		"\tat com.example.shop.AuthFilter.doFilter(AuthFilter.java:9)\n" +
+		"\tat org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:178)\n" +
+		"\tat org.apache.catalina.core.StandardWrapperValve.invoke(StandardWrapperValve.java:167)\n"})
+	if want := frames(StackJava, "com.example.shop.AuthFilter", "doFilter"); got.Rung != RungAppFrames || !reflect.DeepEqual(got.Frames, want) {
+		t.Errorf("rung %v, frames %+v, want %+v on the app-frames rung", got.Rung, got.Frames, want)
+	}
+}
+
+// The type the stack text gives belongs to the frames of its root cause.
+// Where no frame could be read the key is the event's: its type, with its
+// message.
+func TestInnerTypeWithoutAFrameIsNotTheKeys(t *testing.T) {
+	got := mustFingerprint(t, Event{Type: "System.Exception", Message: "outer", StackTrace: "System.Exception: outer\n" +
+		" ---> MyApp.InnerException: locked\n   at MyApp.Cart.()\n"})
+	if got.Type != "System.Exception" || got.Rung != RungMessage || got.Frames != nil {
+		t.Errorf("type %q on rung %v with frames %+v, want the event's type on the message rung", got.Type, got.Rung, got.Frames)
+	}
+	if _, typ, _ := parseStack("System.Exception: outer\n ---> MyApp.InnerException: locked\n   at MyApp.Cart.()\n"); typ != "MyApp.InnerException" {
+		t.Errorf("the stack text gives the type %q", typ)
+	}
+}
+
 func TestRootException(t *testing.T) {
 	cases := []struct {
 		name string

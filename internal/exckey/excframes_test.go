@@ -1502,17 +1502,20 @@ func javaChain(n int) string {
 // Reading a chain costs in proportion to its length: twice the causes must
 // not take four times the memory.
 func TestJavaChainIsReadInLinearSpace(t *testing.T) {
-	allocated := func(stack string) uint64 {
-		var before, after runtime.MemStats
-		runtime.ReadMemStats(&before)
-		if got := ParseStackFrames(stack); len(got) != 2 {
-			t.Fatalf("%d frames, want the root cause's and the one all share", len(got))
-		}
-		runtime.ReadMemStats(&after)
-		return after.TotalAlloc - before.TotalAlloc
+	// Measured over the runs of a benchmark: one cold call would count
+	// whatever else the process allocates meanwhile.
+	allocated := func(stack string) int64 {
+		return testing.Benchmark(func(b *testing.B) {
+			b.ReportAllocs()
+			for b.Loop() {
+				if got := ParseStackFrames(stack); len(got) != 2 {
+					b.Fatalf("%d frames, want the root cause's and the one all share", len(got))
+				}
+			}
+		}).AllocedBytesPerOp()
 	}
 	short, long := javaChain(2000), javaChain(4000)
-	if a, b := allocated(short), allocated(long); b > 3*a {
+	if a, b := allocated(short), allocated(long); a == 0 || b > 3*a {
 		t.Errorf("%d bytes for 2000 causes, %d for 4000: more than three times as much", a, b)
 	}
 }
@@ -2279,6 +2282,109 @@ func TestStackTextIsCutBeforeItIsRead(t *testing.T) {
 	}
 	if got := ParseStackFrames(trace(n + 1)); len(got) != 1 {
 		t.Errorf("a frame whose line ends past byte %d: %d frames, want one", stackTextMax, len(got))
+	}
+}
+
+// Cases for conditions no other test moved a key for.
+func TestFrameReadersAtTheirEdges(t *testing.T) {
+	// A package vendored inside a vendored one is the innermost.
+	f, ok := goFrame("shop/vendor/shop.example.invalid/db/vendor/golang.org/x/net/http2.(*Framer).ReadFrame(0x1)")
+	if !ok || f.Module != "golang.org/x/net/http2" || !f.Dependency {
+		t.Errorf("a nested vendor directory: %+v", f)
+	}
+	// Mono's notation without the offset: a frame where every parameter
+	// starts with a type, prose otherwise; with the offset, a frame.
+	for line, want := range map[string]bool{
+		"at Example.Shop.Cart.Add (System.String sku)":                  true,
+		"at Example.Shop.Cart.Add (System.String sku, Int32 count)":     true,
+		"at Example.Shop.Cart.Add ()":                                   true,
+		"at Example.Shop.checkout (final step)":                         false,
+		"at Example.Shop.Cart.Add (final step) [0x0001a] in <abc>:0":    true,
+		"at Example.Shop.Cart.Add (System.String sku) [0x0001a] in <a>": true,
+		"at checkout (System.String sku) [0x0001a] in <abc>:0":          false,
+	} {
+		if _, ok := dotnetFrame(line); ok != want {
+			t.Errorf("%q is a frame: %v, want %v", line, ok, want)
+		}
+	}
+	// A location of the runtime's own is its module as it stands, whatever
+	// directories it names.
+	for loc, want := range map[string]string{
+		"node:internal/modules/cjs/loader:1760:14": "node:internal/modules/cjs/loader",
+		"node:internal/deps/node_modules/x:1:2":    "node:internal/deps/node_modules/x",
+		"node:internal/releases/1.4.2/x:1:2":       "node:internal/releases/1.4.2/x",
+	} {
+		if got := jsModule(loc); got != want {
+			t.Errorf("jsModule(%q) = %q, want %q", loc, got, want)
+		}
+	}
+	// Of two release directories the last one ends what is cut, and a
+	// user's directory is cut with the home it stands in.
+	for path, want := range map[string]string{
+		"/app/releases/1.4.2/versions/2.0.1/src/cart.js": "src/cart.js",
+		"/app/releases/1.4.2/src/cart.js":                "src/cart.js",
+		"/Users/ann/shop/src/cart.js":                    "shop/src/cart.js",
+		"/home/ann/shop/src/cart.js":                     "shop/src/cart.js",
+		"/Users/cart.js":                                 "/Users/cart.js",
+	} {
+		if got := sourceModule(path); got != want {
+			t.Errorf("sourceModule(%q) = %q, want %q", path, got, want)
+		}
+	}
+	// An arrow in a line behind the frames of a .NET root cause introduces
+	// no type.
+	_, typ, _ := parseStack("System.Exception: outer\n ---> MyApp.InnerException: locked\n   at MyApp.Cart.Add()\n" +
+		"Note: handled ---> MyApp.OtherException: logged\n")
+	if typ != "MyApp.InnerException" {
+		t.Errorf("an arrow behind the frames: type %q", typ)
+	}
+	// A trace of exactly the limit is read to its last byte.
+	frame := "\tat com.example.shop.Cart.add(Cart.java:12)"
+	last := "\n\tat com.example.shop.Last.run(Last.java:1)"
+	exact := frame + "\n" + strings.Repeat("x", stackTextMax-len(frame)-1-len(last)) + last
+	if got := ParseStackFrames(exact); len(exact) != stackTextMax || len(got) != 2 {
+		t.Errorf("a trace of %d bytes that ends in a frame: %d frames, want two", len(exact), len(got))
+	}
+}
+
+// How the JVM's count of shared frames is read where the text is not what
+// a JVM prints, and where a section has nothing but generated frames.
+func TestJavaSharedFramesAtTheirEdges(t *testing.T) {
+	const top = "java.lang.IllegalStateException: m\n\tat a.F.f1(F.java:1)\n\tat a.F.f2(F.java:2)\n\tat a.F.f3(F.java:3)\n"
+	for name, tc := range map[string]struct {
+		stack string
+		want  []StackFrame
+	}{
+		// A cause without frames of its own is what the next one shares
+		// its frames with.
+		"a cause of shared frames alone": {top + "Caused by: a.B: b\n\t... 2 more\nCaused by: a.C: c\n\tat a.C.c1(C.java:1)\n\t... 3 more\n",
+			frames(StackJava, "a.C", "c1", "a.F", "f2", "a.F", "f3")},
+		"a cause that shares none": {top + "Caused by: a.B: b\n\t... 0 more\nCaused by: a.C: c\n\tat a.C.c1(C.java:1)\n\t... 3 more\n",
+			frames(StackJava, "a.C", "c1")},
+		"a count above what there is": {top + "Caused by: a.C: c\n\tat a.C.c1(C.java:1)\n\t... 7 more\n",
+			frames(StackJava, "a.C", "c1", "a.F", "f1", "a.F", "f2", "a.F", "f3")},
+		// The first section has nothing to share frames with.
+		"a count in the first section": {"java.lang.IllegalStateException: m\n\tat a.B.c(B.java:1)\n\t... 1 more\n",
+			frames(StackJava, "a.B", "c")},
+		// Shared frames that are all generated leave the cause its own.
+		"shared frames that are generated": {"java.lang.IllegalStateException: m\n\tat a.F$$Lambda$1/0x01.run(Unknown Source)\n" +
+			"\tat a.F$$Lambda$2/0x02.run(Unknown Source)\nCaused by: a.C: c\n\tat a.C.c1(C.java:1)\n\t... 1 more\n",
+			frames(StackJava, "a.C", "c1")},
+	} {
+		if got := ParseStackFrames(tc.stack); !reflect.DeepEqual(got, tc.want) {
+			t.Errorf("%s: %+v, want %+v", name, got, tc.want)
+		}
+	}
+}
+
+// Two notations that own as many lines: the one whose line comes first.
+func TestStackNotationTieGoesToTheFirstLine(t *testing.T) {
+	java, dotnet := "\tat com.example.shop.Cart.add(Cart.java:42)\n", "   at Example.Shop.Cart.Add(String sku)\n"
+	if got := ParseStackFrames(java + dotnet); len(got) == 0 || got[0].Syntax != StackJava {
+		t.Errorf("Java first: %+v", got)
+	}
+	if got := ParseStackFrames(dotnet + java); len(got) == 0 || got[0].Syntax != StackDotNet {
+		t.Errorf(".NET first: %+v", got)
 	}
 }
 

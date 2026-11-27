@@ -99,6 +99,11 @@ func TestParameterizeMessageReplacesEachKind(t *testing.T) {
 		// Accepted: a route whose last segment ends like a file name reads
 		// as a file.
 		{"a route that ends like a file", "GET /api/v1.internal failed", "GET <path> failed"},
+		{"a file behind a closing slash", "open /etc/shop/cart.yaml/ now", "open <path> now"},
+		{"a code of five digits", "HTTP 12345 seen", "HTTP 12345 seen"},
+		{"six digits are no code", "HTTP 123456 seen", "HTTP <n> seen"},
+		{"ipv6 in full", "peer 2001:0db8:0000:0000:0000:ff00:0042:8329 gone", "peer <ip> gone"},
+		{"seven groups are no address", "peer 2001:0db8:0000:0000:0000:ff00:0042 gone", "peer <n>:0db8:<n>:<n>:<n>:ff00:<n> gone"},
 		{"a directory is kept", "cannot list /var/data/cart", "cannot list /var/data/cart"},
 		{"a slash between words is not a path", "read/write error", "read/write error"},
 		{"windows path", `open C:\data\cart\7.json failed`, "open <path> failed"},
@@ -435,6 +440,18 @@ func TestParameterizeMessageIsIdempotent(t *testing.T) {
 	// A value whose quotes are doubled.
 	if got := ParameterizeMessage(`''a''`); got != msgQuoted {
 		t.Errorf("nested quotes = %q, want %q", got, msgQuoted)
+	}
+}
+
+// The cut never leaves the start of a placeholder behind, which takes the
+// longest one to know.
+func TestPlaceholderMaxIsTheLongest(t *testing.T) {
+	longest := 0
+	for _, p := range msgPlaceholders {
+		longest = max(longest, len(p))
+	}
+	if msgPlaceholderMax != longest {
+		t.Errorf("msgPlaceholderMax = %d, the longest placeholder has %d bytes", msgPlaceholderMax, longest)
 	}
 }
 
