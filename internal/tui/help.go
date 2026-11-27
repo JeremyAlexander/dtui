@@ -81,7 +81,7 @@ func (h *helpOverlay) View(width, height int) string {
 			{"enter", "detail / drill into children / follow entity link / expand value / waterfall / session timeline"},
 			{"0-9", "global bookmarks: 0 home · 1 problems · 2 services · 3 hosts · 4 pods · 5 logs · 6 traces · 7 workloads · 8 events · 9 aws — on an entered page 1-9 address the innermost numbered strip: its tabs, or the active tab's lens strip when it shows one (0 still jumps home, esc restores all bookmarks)"},
 			{"esc / -", "back / toggle last two views"},
-			{"tab", "cycle the view's primary strip: lens strip on tables · tabs on detail pages · panels on home · functions and flame graph on :hotspots"},
+			{"tab", "cycle the view's primary strip (shift+tab backwards): lens strip on tables · tabs on detail pages · panels on home · functions and flame graph on :hotspots"},
 			{"[ / ]", "cycle the lens strip explicitly (the only way for a strip nested inside a detail tab)"},
 			{"P", "preview pane on/off — the peek at the selected row is on by default and auto-hides on cramped terminals"},
 			{"H", "history — restore a previous page (survives restarts)"},
@@ -151,6 +151,9 @@ func (h *helpOverlay) View(width, height int) string {
 	h.page = rows - 1
 	h.top = max(min(h.top, len(lines)-h.page), 0)
 	h.more = len(lines) > rows
+	if !h.more {
+		h.top = 0 // all of it is in view: nothing is scrolled, any key closes
+	}
 	if h.more {
 		// One line of the box says where the reader is and how to move.
 		note := fmt.Sprintf("lines %d to %d of %d · j/k pgdn/pgup scroll · any other key closes",

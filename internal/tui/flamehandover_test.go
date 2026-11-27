@@ -386,3 +386,51 @@ func TestFlameGraphIsKeptAfterBothWereRetimed(t *testing.T) {
 		t.Errorf("the graph of the new timeframe was dropped at the next tab (calls %v)", calls)
 	}
 }
+
+// shift+tab switches between the functions and the graph as tab does (there
+// are two readings, so backwards is the other one), and the help says so.
+func TestShiftTabSwitchesBetweenFunctionsAndGraph(t *testing.T) {
+	a, tv, fv, _ := openFlame(t)
+	answerFlame(a, fv, windowed(tv.summary, flameWalk...), nil)
+	press(a, key("shift+tab"))
+	if a.top() != viewModel(tv) {
+		t.Fatalf("shift+tab on the graph: %T", a.top())
+	}
+	press(a, key("shift+tab"))
+	if a.top() != viewModel(fv) {
+		t.Fatalf("shift+tab on the functions: %T", a.top())
+	}
+	a.Update(tea.WindowSizeMsg{Width: 120, Height: 200})
+	press(a, key("?"))
+	if out := strings.Join(strings.Fields(screen(a)), " "); !strings.Contains(out, "(shift+tab backwards)") {
+		t.Errorf("the help does not name shift+tab:\n%s", out)
+	}
+}
+
+// The help closes on any key when all of it is in view, also after it was
+// scrolled on a smaller terminal that then grew to fit it exactly.
+func TestHelpClosesWhenItCameToFitExactly(t *testing.T) {
+	a, _ := walkFlame(t)
+	a.Update(tea.WindowSizeMsg{Width: 120, Height: 20})
+	press(a, key("?"))
+	screen(a)
+	h, ok := a.overlay.(*helpOverlay)
+	if !ok || !h.more {
+		t.Fatal("the help is to need scrolling at 20 lines")
+	}
+	press(a, key("j"))
+	screen(a)
+	total := 0
+	for height := 21; height < 400 && h.more; height++ {
+		a.Update(tea.WindowSizeMsg{Width: 120, Height: height})
+		screen(a)
+		total = height
+	}
+	if h.more || h.top != 0 {
+		t.Fatalf("at %d lines the help fits and is still scrolled (top %d, more %v)", total, h.top, h.more)
+	}
+	press(a, key("j"))
+	if a.overlay != nil {
+		t.Error("j did not close a help that is all in view")
+	}
+}
