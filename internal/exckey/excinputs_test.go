@@ -11,9 +11,11 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
+	"unicode"
 )
 
 // exceptionKeySources are the files the key algorithm lives in, by name: a
@@ -22,6 +24,52 @@ var exceptionKeySources = []string{
 	"excfingerprint.go", "excframes.go", "excframes_dotnet.go", "excframes_go.go", "excframes_java.go",
 	"excframes_javascript.go", "excframes_python.go", "excmessage.go",
 }
+
+// Every file of the package that is not a test is a key source: a file the
+// list does not name would hold tables and expressions no pin sees.
+func TestExceptionKeySourcesAreAllListed(t *testing.T) {
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	for _, fault := range keySourceListFaults(names, exceptionKeySources) {
+		t.Error(fault)
+	}
+	got := keySourceListFaults([]string{"a.go", "a_test.go", "b.go", "testdata", "notes.md", "c.go"}, []string{"a.go", "c.go", "d.go"})
+	if want := []string{"b.go is not in exceptionKeySources", "d.go is in exceptionKeySources and is no file of the package"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("faults %q, want %q", got, want)
+	}
+}
+
+// keySourceListFaults compares the files of the package's directory with
+// the listed key sources.
+func keySourceListFaults(dir, listed []string) []string {
+	var faults []string
+	seen := map[string]bool{}
+	for _, name := range dir {
+		if !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		seen[name] = true
+		if !slices.Contains(listed, name) {
+			faults = append(faults, name+" is not in exceptionKeySources")
+		}
+	}
+	for _, name := range listed {
+		if !seen[name] {
+			faults = append(faults, name+" is in exceptionKeySources and is no file of the package")
+		}
+	}
+	return faults
+}
+
+// unicodeVersionInput names the line that pins the Unicode tables of the
+// toolchain, by their version.
+const unicodeVersionInput = "unicode.Version"
 
 // exceptionKeyRepin says what to do about a pinned value that changed, for
 // the golden file of the given kind ("keys" or "inputs").
@@ -93,6 +141,16 @@ type keyInput struct {
 // change fails here, whatever the corpus says. Comments and layout are not
 // part of a digest.
 //
+// One line is no declaration: unicode.Version, the version of the Unicode
+// tables the toolchain was built with. Every reader that matches \p{L} or
+// \p{N} or asks the unicode package what a letter is depends on them: the
+// names of .NET, Java, JavaScript, Go and Python frames and types, and the
+// quotes of a message. A Go release that changes the tables fails here so
+// that somebody looks. Only a name in a script the new tables add can read
+// differently, so where the corpus keys hold (TestExceptionKeysAreStable)
+// this is a repin of that one line and no new key version: delete the line
+// and run with -update.
+//
 // What this does not see is the code of the functions: a condition dropped
 // from a function body changes keys without changing a declaration. Only a
 // case catches that, in the corpus or in a test of the function.
@@ -107,6 +165,10 @@ func TestExceptionKeyInputsArePinned(t *testing.T) {
 	for _, in := range exceptionKeyInputs(t) {
 		want, ok := pinned[in.name]
 		switch {
+		case ok && want != in.digest && in.name == unicodeVersionInput:
+			t.Errorf("%s is %s, pinned %s — the toolchain's Unicode tables changed, which every reader of a name in "+
+				"any script depends on. If TestExceptionKeysAreStable holds, repin without raising %s: delete the line from %s "+
+				"and run go test -run TestExceptionKey -update", in.name, in.digest, want, "ExceptionKeyVersion", golden)
 		case ok && want != in.digest:
 			t.Errorf("%s changed — it is part of the %s key algorithm; %s",
 				in.name, ExceptionKeyVersion, exceptionKeyRepin("inputs"))
@@ -131,32 +193,75 @@ func TestExceptionKeyInputsArePinned(t *testing.T) {
 // algorithm is configured by may be built where it cannot see: no expression
 // compiled, no replacer built and no table of literals written inside a
 // function. A table is a slice, array or map literal that holds a literal,
-// as an element or as a key.
+// as an element or as a key. For the same reason a key source has no init
+// function, which could change a pinned table after it was declared, and
+// imports regexp and strings under their own names, which is how the check
+// knows them.
 func TestExceptionKeyInputsArePackageLevel(t *testing.T) {
 	eachExceptionKeySource(t, func(fset *token.FileSet, file *ast.File, _ []byte) {
-		for _, decl := range file.Decls {
-			fn, ok := decl.(*ast.FuncDecl)
-			if !ok {
-				continue
-			}
-			ast.Inspect(fn, func(n ast.Node) bool {
-				switch n := n.(type) {
-				case *ast.SelectorExpr:
-					if pkg, ok := n.X.(*ast.Ident); ok && (pkg.Name == "regexp" || pkg.Name == "strings" && n.Sel.Name == "NewReplacer") {
-						t.Errorf("%s: %s.%s in %s; declare it at package level", fset.Position(n.Pos()), pkg.Name, n.Sel.Name, fn.Name.Name)
-					}
-				case *ast.CompositeLit:
-					if !isTableType(n.Type) {
-						break
-					}
-					if holdsLiteral(n) {
-						t.Errorf("%s: a table of literals in %s; declare it at package level", fset.Position(n.Pos()), fn.Name.Name)
-					}
-				}
-				return true
-			})
+		for _, fault := range keySourceFaults(fset, file) {
+			t.Error(fault)
 		}
 	})
+}
+
+// keySourceFaults lists what in a key source the inputs pin would not see.
+func keySourceFaults(fset *token.FileSet, file *ast.File) []string {
+	var faults []string
+	for _, imp := range file.Imports {
+		if path := strings.Trim(imp.Path.Value, `"`); imp.Name != nil && (path == "regexp" || path == "strings") {
+			faults = append(faults, fmt.Sprintf("%s: %s is imported as %s; import it under its own name", fset.Position(imp.Pos()), path, imp.Name.Name))
+		}
+	}
+	for _, decl := range file.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok {
+			continue
+		}
+		if fn.Recv == nil && fn.Name.Name == "init" {
+			faults = append(faults, fmt.Sprintf("%s: an init function; what it sets up belongs in a package-level declaration", fset.Position(fn.Pos())))
+		}
+		ast.Inspect(fn, func(n ast.Node) bool {
+			switch n := n.(type) {
+			case *ast.SelectorExpr:
+				if pkg, ok := n.X.(*ast.Ident); ok && (pkg.Name == "regexp" || pkg.Name == "strings" && n.Sel.Name == "NewReplacer") {
+					faults = append(faults, fmt.Sprintf("%s: %s.%s in %s; declare it at package level", fset.Position(n.Pos()), pkg.Name, n.Sel.Name, fn.Name.Name))
+				}
+			case *ast.CompositeLit:
+				if isTableType(n.Type) && holdsLiteral(n) {
+					faults = append(faults, fmt.Sprintf("%s: a table of literals in %s; declare it at package level", fset.Position(n.Pos()), fn.Name.Name))
+				}
+			}
+			return true
+		})
+	}
+	return faults
+}
+
+func TestKeySourceFaults(t *testing.T) {
+	for src, want := range map[string]string{
+		"package p\nfunc f() {}\n": "",
+		"package p\nimport (\n\"regexp\"\n\"strings\"\n)\nvar re = regexp.MustCompile(strings.ToLower(`A`))\n": "",
+		"package p\ntype t struct{}\nfunc (t) init() {}\n":                                                     "",
+		"package p\nimport u \"unicode/utf8\"\nvar n = u.RuneSelf\n":                                           "",
+		"package p\nvar table = []string{\"a\"}\nfunc init() { table = append(table, x) }\n":                   "an init function",
+		"package p\nimport re \"regexp\"\nfunc f() { re.MustCompile(`a`) }\n":                                  "regexp is imported as re",
+		"package p\nimport . \"regexp\"\nfunc f() { MustCompile(`a`) }\n":                                      "regexp is imported as .",
+		"package p\nimport s \"strings\"\nfunc f() { s.NewReplacer(a, b) }\n":                                  "strings is imported as s",
+		"package p\nimport \"regexp\"\nfunc f() { regexp.MustCompile(`a`) }\n":                                 "regexp.MustCompile in f",
+		"package p\nimport \"strings\"\nfunc f() { strings.NewReplacer(a, b) }\n":                              "strings.NewReplacer in f",
+		"package p\nfunc f() []string { return []string{\"a\"} }\n":                                            "a table of literals in f",
+	} {
+		fset := token.NewFileSet()
+		file, err := parser.ParseFile(fset, "p.go", src, parser.SkipObjectResolution)
+		if err != nil {
+			t.Fatal(err)
+		}
+		faults := keySourceFaults(fset, file)
+		if want == "" && len(faults) > 0 || want != "" && (len(faults) != 1 || !strings.Contains(faults[0], want)) {
+			t.Errorf("%q: faults %q, want %q", src, faults, want)
+		}
+	}
 }
 
 // holdsLiteral reports whether a composite literal has a basic literal among
@@ -213,12 +318,15 @@ func isTableType(e ast.Expr) bool {
 func TestExceptionKeyInputsCoverTheTables(t *testing.T) {
 	names := map[string]bool{}
 	for _, in := range exceptionKeyInputs(t) {
+		if in.name == unicodeVersionInput && in.digest != unicode.Version {
+			t.Errorf("%s is pinned as %q, want the version itself, %s", in.name, in.digest, unicode.Version)
+		}
 		for _, name := range strings.Fields(strings.NewReplacer("const", "", "var", "", ",", " ").Replace(in.name)) {
 			names[name] = true
 		}
 	}
 	for _, name := range []string{
-		"ExceptionKeyVersion", "FingerprintFrames", "fingerprintKeyLen", "RungAppFrames",
+		unicodeVersionInput, "msgUnits", "ExceptionKeyVersion", "FingerprintFrames", "fingerprintKeyLen", "RungAppFrames",
 		"messageRules", "msgNumberRe", "exceptionMessageInput", "ExceptionMessageMax",
 		"stackNotations", "StackJava", "deployRoots", "sourceReleaseRe",
 		"javaVendorPrefixes", "javaPassThrough", "javaNoSource", "javaLogArchives", "dotnetVendorPrefixes", "dotnetPassThrough",
@@ -263,6 +371,7 @@ func exceptionKeyInputs(t *testing.T) []keyInput {
 			}
 		}
 	})
+	out = append(out, keyInput{unicodeVersionInput, unicode.Version})
 	sort.Slice(out, func(i, j int) bool { return out[i].name < out[j].name })
 	return out
 }

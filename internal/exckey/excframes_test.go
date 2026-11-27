@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 )
 
 // frames builds the expected result of a parse: module, function pairs.
@@ -321,7 +322,6 @@ created by main.main in goroutine 1
 				"github.com/acme/shop/cart", "Service.AddItem",
 				"github.com/acme/shop/cart", "Total",
 				"net/http", "HandlerFunc.ServeHTTP",
-				"main", "main.func1",
 				"main", "main")},
 		{"the throw site is below the panic and what ran while panicking", `goroutine 51 [running]:
 net/http.(*conn).serve.func1()
@@ -1012,7 +1012,11 @@ func TestVendorTablesApplyWhole(t *testing.T) {
 	}
 	for _, table := range tables {
 		for _, prefix := range table.prefixes {
-			if f := (StackFrame{Module: prefix + "x", Function: "f", Syntax: table.syntax}); frameInApp(f) {
+			module := prefix + "x"
+			if table.syntax == StackGo && !strings.HasSuffix(prefix, "/") {
+				module = prefix + "/x" // a module, which matches whole
+			}
+			if f := (StackFrame{Module: module, Function: "f", Syntax: table.syntax}); frameInApp(f) {
 				t.Errorf("%+v counts as application code", f)
 			}
 		}
@@ -1066,6 +1070,17 @@ func FuzzParseStackFrames(f *testing.F) {
 		got := ParseStackFrames(in)
 		if again := ParseStackFrames(in); !reflect.DeepEqual(got, again) {
 			t.Fatalf("not deterministic for %q", in)
+		}
+		// What a key takes of a trace is what the trace gives where it
+		// is at fault, and nothing where it is not.
+		lines := stackLines(in)
+		_, typ, atFault := parseStack(in)
+		if _, _, goFault := goRootCause(lines); goAtFault(lines) != goFault {
+			t.Fatalf("goAtFault disagrees with the frames for %q", in)
+		}
+		faultFrames, faultType := faultStack(in)
+		if atFault && (!reflect.DeepEqual(faultFrames, got) || faultType != typ) || !atFault && (faultFrames != nil || faultType != "") {
+			t.Fatalf("faultStack gives %+v (%q) for %q, at fault %v", faultFrames, faultType, in, atFault)
 		}
 		for i, fr := range got {
 			if fr.Function == "" {
@@ -1227,11 +1242,25 @@ Caused by: shop.Root: root
 	at shop.C$$Lambda$5/0x0000000800c04000.call(Unknown Source)
 	... 3 more`, frames(StackJava, "shop.C", "c", "shop.A", "a", "shop.B", "b"), "shop.Root"},
 		// The words after "Caused by:" are a type only where a colon or the
-		// line's end follows them.
+		// line's end follows them. Below a frame such a line still starts
+		// a cause, whose type cannot be read; above the frames of its
+		// section it is a line of the message.
 		{"prose after Caused by is no type", `shop.A: outer
 	at shop.A.a(A.java:1)
 Caused by: connection reset by peer
 	at shop.C.c(C.java:3)`, frames(StackJava, "shop.C", "c"), ""},
+		{"prose after Caused by below the shared frames", `shop.A: outer
+	at shop.A.a(A.java:1)
+Caused by: shop.Inner: write failed
+	... 1 more
+Caused by: connection reset by peer
+	at shop.C.c(C.java:3)`, frames(StackJava, "shop.C", "c"), ""},
+		{"prose after Caused by in a message opens no section", `shop.A: outer
+	at shop.A.a(A.java:1)
+Caused by: shop.Inner: write failed
+Caused by: connection reset by peer
+	at shop.C.c(C.java:3)
+	... 1 more`, frames(StackJava, "shop.C", "c", "shop.A", "a"), "shop.Inner"},
 		{"a type beyond ASCII", `shop.A: outer
 	at shop.A.a(A.java:1)
 Caused by: shop.Größenfehler: zu groß
@@ -1244,6 +1273,229 @@ Caused by: shop.Größenfehler: zu groß
 				t.Errorf("frames %+v type %q\nwant %+v %q", got, typ, tc.want, tc.typ)
 			}
 		})
+	}
+}
+
+// A JVM class compiled without line tables prints the file alone, and an
+// obfuscated one the word "SourceFile". Both are Java's: read as .NET, whose
+// innermost exception comes first, the wrapper would be the root.
+func TestJavaTraceWithoutLineNumbers(t *testing.T) {
+	trace := func(location func(file string, line int) string) string {
+		return "Exception in thread \"main\" java.lang.IllegalStateException: checkout failed\n" +
+			"\tat Checkout.pay(" + location("Checkout.java", 12) + ")\n\tat Checkout.main(" + location("Checkout.java", 5) + ")\n" +
+			"Caused by: java.lang.IllegalArgumentException: no stock\n" +
+			"\tat Checkout.reserve(" + location("Checkout.java", 20) + ")\n\tat Checkout.pay(" + location("Checkout.java", 10) + ")\n\t... 1 more\n"
+	}
+	want := frames(StackJava, "Checkout", "reserve", "Checkout", "pay", "Checkout", "main")
+	lines := mustFingerprint(t, Event{Type: "java.lang.IllegalStateException", StackTrace: trace(func(file string, line int) string {
+		return fmt.Sprintf("%s:%d", file, line)
+	})})
+	if lines.Type != "java.lang.IllegalArgumentException" || !reflect.DeepEqual(lines.Frames, want) {
+		t.Fatalf("with lines: type %q frames %+v", lines.Type, lines.Frames)
+	}
+	for name, location := range map[string]func(string, int) string{
+		"the file alone":      func(file string, _ int) string { return file },
+		"a Kotlin file alone": func(string, int) string { return "Checkout.kt" },
+		"an obfuscated file":  func(string, int) string { return "SourceFile" },
+	} {
+		got := mustFingerprint(t, Event{Type: "java.lang.IllegalStateException", StackTrace: trace(location)})
+		if got.Key != lines.Key || got.Type != lines.Type {
+			t.Errorf("%s: key %s type %q frames %+v, want %s", name, got.Key, got.Type, got.Frames, lines.Key)
+		}
+	}
+	// However many of its first frames have no line: the notation is voted
+	// on the first lines alone.
+	var mixed strings.Builder
+	mixed.WriteString("java.lang.IllegalStateException: checkout failed\n")
+	for i := range 9 {
+		fmt.Fprintf(&mixed, "\tat shop.Step%d.run(Step%d.java)\n", i, i)
+	}
+	for i := range 26 {
+		fmt.Fprintf(&mixed, "\tat shop.Deep%d.run(Deep%d.java:%d)\n", i, i, i+1)
+	}
+	if got := ParseStackFrames(mixed.String()); len(got) != 35 || got[0].Syntax != StackJava || got[0].Module != "shop.Step0" {
+		t.Errorf("nine frames without lines above 26 with: %d frames, the first %+v", len(got), got[:min(1, len(got))])
+	}
+	// A .NET parameter list still reads as one, whatever its types end in.
+	for _, params := range []string{"System.String", "Shop.Java", "Shop.Source.java, Int32", "SourceFile file"} {
+		stack := "Example.Shop.CheckoutException: failed\n ---> System.InvalidOperationException: Cart 7 is locked\n" +
+			"   at Example.Shop.Util.Check(" + params + ")\n   at Example.Shop.Cart.Save(" + params + ")\n" +
+			"   --- End of inner exception stack trace ---\n   at Example.Shop.Checkout.Run(" + params + ")"
+		got, typ, _ := parseStack(stack)
+		if want := frames(StackDotNet, "Example.Shop.Util", "Check", "Example.Shop.Cart", "Save"); !reflect.DeepEqual(got, want) ||
+			typ != "System.InvalidOperationException" {
+			t.Errorf("(%s): frames %+v type %q", params, got, typ)
+		}
+	}
+	for line, want := range map[string]bool{
+		"at a.B.c(B.java)": true, "at a.B.c(B.kt)": true, "at a.B.c(build.gradle.kts)": true, "at a.B.c(B.scala)": true,
+		"at a.B.c(B.groovy)": true, "at a.B.c(b.clj)": true, "at a.B.c(SourceFile)": true,
+		"at a.B.c(B.javax)": false, "at a.B.c(System.String)": false, "at a.B.c(java)": false, "at a.B.c(SourceFiles)": false,
+		"at a.B.c(B.Java)": false,
+	} {
+		if got := javaOwns(line); got != want {
+			t.Errorf("javaOwns(%q) = %v, want %v", line, got, want)
+		}
+	}
+}
+
+// "... N more" counts the frames the JVM printed. A frame the reader cannot
+// read (a module version with "+") is one of them: it holds its place in
+// the count and is left out of the result, so a chain reads the same
+// compressed and written out, for every length of the shared tail.
+func TestJavaMoreCountsFramesItCannotRead(t *testing.T) {
+	enclosing := []string{
+		"\tat com.example.shop.Wrap.wrap(Wrap.java:9)\n",
+		"\tat dep@1.0+7/vendor.Lib.call(Lib.java:3)\n",
+		"\tat com.example.shop.Api.post(Api.java:4)\n",
+		"\tat dep@1.0+7/vendor.Lib.run(Lib.java:8)\n",
+	}
+	const head = "com.example.shop.WrapException: wrapped\n"
+	const cause = "Caused by: java.lang.IllegalStateException: Cart 7 is locked\n\tat com.example.shop.Cart.fail(Cart.java:12)\n"
+	for shared := 0; shared <= len(enclosing); shared++ {
+		tail := strings.Join(enclosing[len(enclosing)-shared:], "")
+		written := mustFingerprint(t, Event{Type: "T", StackTrace: head + strings.Join(enclosing, "") + cause + tail})
+		compressed := mustFingerprint(t, Event{Type: "T",
+			StackTrace: head + strings.Join(enclosing, "") + cause + fmt.Sprintf("\t... %d more\n", shared)})
+		if written.Key != compressed.Key || !reflect.DeepEqual(written.Frames, compressed.Frames) {
+			t.Errorf("%d shared: written out %s %+v, compressed %s %+v", shared, written.Key, written.Frames, compressed.Key, compressed.Frames)
+		}
+		for _, f := range compressed.Frames {
+			if strings.Contains(f.Module, "vendor") || f.Module == javaSyntheticClass {
+				t.Errorf("%d shared: a frame that cannot be read is in the key: %+v", shared, compressed.Frames)
+			}
+		}
+	}
+	// Only a line the JVM starts a frame with holds a place, and only below
+	// a frame: a line of a message that starts with "at" is no frame, so a
+	// cause that has nothing else is still one without frames, and an
+	// empty line counts for nothing.
+	for name, stack := range map[string]string{
+		"prose in a cause without frames": head + "\tat com.example.shop.Wrap.wrap(Wrap.java:9)\n\tat com.example.shop.Api.post(Api.java:4)\n" +
+			"Caused by: com.example.shop.StepException: step failed\nat least one cart (of 3)\n" +
+			"Caused by: java.lang.IllegalStateException: locked\n\tat com.example.shop.Cart.fail(Cart.java:12)\n\t... 1 more\n",
+		"an empty line below the frames": head + "\tat com.example.shop.Wrap.wrap(Wrap.java:9)\n\tat com.example.shop.Api.post(Api.java:4)\n\n" +
+			"Caused by: java.lang.IllegalStateException: locked\n\tat com.example.shop.Cart.fail(Cart.java:12)\n\t... 1 more\n",
+	} {
+		got, _, _ := parseStack(stack)
+		if want := frames(StackJava, "com.example.shop.Cart", "fail", "com.example.shop.Api", "post"); !reflect.DeepEqual(got, want) {
+			t.Errorf("%s: %+v, want %+v", name, got, want)
+		}
+	}
+}
+
+// A line of an exception's message that starts with "Caused by:" and names
+// no type leaves the type and the key alone.
+func TestJavaProseCauseLineChangesNothing(t *testing.T) {
+	trace := func(extra string) string {
+		return "java.lang.RuntimeException: request failed\n\tat com.example.shop.Api.post(Api.java:4)\n" +
+			"Caused by: java.lang.IllegalArgumentException: write failed\n" + extra +
+			"\tat com.example.shop.Cart.save(Cart.java:12)\n\t... 1 more\n"
+	}
+	plain := mustFingerprint(t, Event{Type: "java.lang.RuntimeException", StackTrace: trace("")})
+	prose := mustFingerprint(t, Event{Type: "java.lang.RuntimeException", StackTrace: trace("Caused by: connection reset by peer\n")})
+	if plain.Type != "java.lang.IllegalArgumentException" || prose.Type != plain.Type || prose.Key != plain.Key {
+		t.Errorf("plain %s (%s), with a line of prose %s (%s)", plain.Key, plain.Type, prose.Key, prose.Type)
+	}
+}
+
+// A suppressed exception is left out with everything in it. Its message
+// may take a second line, which the JVM prints at the left margin: that
+// ends nothing, only a line of the exception around the block does. The
+// traces are OpenJDK 21's, of a resource whose close throws.
+func TestJavaSuppressedBlockWithATwoLineMessage(t *testing.T) {
+	const second = "second line\n"
+	plain := func(extra string) string {
+		return "java.lang.IllegalArgumentException: no stock\n\tat Sup.run(Sup.java:9)\n\tat Sup.main(Sup.java:18)\n" +
+			"\tSuppressed: java.lang.IllegalStateException: close failed\n" + extra +
+			"\t\tat Sup$Conn.close(Sup.java:5)\n\t\tat Sup.run(Sup.java:8)\n\t\t... 1 more\n"
+	}
+	chain := func(extra string) string {
+		return "java.lang.RuntimeException: checkout failed\n\tat Sup.outer(Sup.java:13)\n\tat Sup.main(Sup.java:20)\n" +
+			"Caused by: java.lang.IllegalArgumentException: no stock\n\tat Sup.run(Sup.java:9)\n\t... 2 more\n" +
+			"\tSuppressed: java.lang.IllegalStateException: close failed\n" + extra +
+			"\t\tat Sup$Conn.close(Sup.java:5)\n\t\tat Sup.run(Sup.java:8)\n\t\t... 2 more\n"
+	}
+	for name, tc := range map[string]struct {
+		stack string
+		want  []StackFrame
+	}{
+		"one line":           {plain(""), frames(StackJava, "Sup", "run", "Sup", "main")},
+		"two lines":          {plain(second), frames(StackJava, "Sup", "run", "Sup", "main")},
+		"in a chain":         {chain(""), frames(StackJava, "Sup", "run", "Sup", "outer", "Sup", "main")},
+		"two lines in chain": {chain(second), frames(StackJava, "Sup", "run", "Sup", "outer", "Sup", "main")},
+		// What follows the block at the indentation of the exception
+		// around it is that exception's again.
+		"a cause after the block": {plain(second) + "Caused by: java.io.IOException: disk\n\tat Sup.read(Sup.java:30)\n\t... 2 more\n",
+			frames(StackJava, "Sup", "read", "Sup", "run", "Sup", "main")},
+		"a bare frame after it":  {plain(second) + "Sup.late (Sup.java:40)\n", frames(StackJava, "Sup", "run", "Sup", "main", "Sup", "late")},
+		"a frame count after it": {chain(second) + "... 1 more\n", frames(StackJava, "Sup", "run", "Sup", "main")},
+	} {
+		if got := ParseStackFrames(tc.stack); !reflect.DeepEqual(got, tc.want) {
+			t.Errorf("%s: %+v, want %+v", name, got, tc.want)
+		}
+	}
+}
+
+// Lines that only look like the JVM's: a count of something else in a
+// message, a cause that names a number.
+func TestJavaLinesOfAMessageThatReadLikeStructure(t *testing.T) {
+	const enclosing = "com.example.shop.WrapException: wrapped\n\tat com.example.shop.Wrap.wrap(Wrap.java:9)\n\tat com.example.shop.Api.post(Api.java:4)\n"
+	got, typ, _ := parseStack(enclosing + "Caused by: java.lang.IllegalStateException: rejected\n... 2 more errors in payload\n" +
+		"\tat com.example.shop.Cart.fail(Cart.java:12)\n")
+	if want := frames(StackJava, "com.example.shop.Cart", "fail"); !reflect.DeepEqual(got, want) || typ != "java.lang.IllegalStateException" {
+		t.Errorf("a count in a message: %+v (%s), want %+v", got, typ, want)
+	}
+	for _, more := range []string{"... 1 more", "... 1 common frames omitted"} {
+		got, _, _ = parseStack(enclosing + "Caused by: java.lang.IllegalStateException: rejected\n\tat com.example.shop.Cart.fail(Cart.java:12)\n\t" + more + "\n")
+		if want := frames(StackJava, "com.example.shop.Cart", "fail", "com.example.shop.Api", "post"); !reflect.DeepEqual(got, want) {
+			t.Errorf("%s: %+v, want %+v", more, got, want)
+		}
+	}
+	// No type starts with a digit: the line is one of the message.
+	a := mustFingerprint(t, Event{Type: "T", StackTrace: enclosing + "Caused by: java.io.IOException: upstream\n" +
+		"Caused by: 503: Service Unavailable\n\tat com.example.shop.Http.get(Http.java:7)\n\t... 1 more\n"})
+	if a.Type != "java.io.IOException" {
+		t.Errorf("a status after Caused by: type %q", a.Type)
+	}
+	for _, line := range []string{"Caused by: 503: Service Unavailable", "Caused by: 503", "Caused by: 4xx.Error: x"} {
+		if javaCauseRe.MatchString(line) {
+			t.Errorf("%q names a type", line)
+		}
+	}
+	for _, line := range []string{"Caused by: _T: x", "Caused by: $Proxy12", "Caused by: a.B2: x"} {
+		if !javaCauseRe.MatchString(line) {
+			t.Errorf("%q names no type", line)
+		}
+	}
+}
+
+// Generated names of Scala and of Android's D8, written by hand from the
+// compilers' naming: a closure of a method named in any script, and the
+// class D8 generates for a lambda, which is plumbing like the JVM's.
+func TestJavaGeneratedNamesOfOtherCompilers(t *testing.T) {
+	for line, want := range map[string][2]string{
+		"at shop.Cart$$anonfun$size$1.apply(Cart.scala:12)":                {"shop.Cart", "size"},
+		"at shop.Cart$$anonfun$größe$1.apply(Cart.scala:12)":               {"shop.Cart", "größe"},
+		"at shop.Cart$$anonfun$größe$2.apply(Cart.scala:14)":               {"shop.Cart", "größe"},
+		"at shop.Cart.$anonfun$größe$1(Cart.scala:12)":                     {"shop.Cart", "größe"},
+		"at shop.Cart.$anonfun$größe$3$adapted(Cart.scala:12)":             {"shop.Cart", "größe"},
+		"at shop.Cart$$ExternalSyntheticLambda0.run(D8$$SyntheticClass:0)": {javaSyntheticClass, "run"},
+		"at shop.Cart$$ExternalSyntheticLambda3.run(Unknown Source:2)":     {javaSyntheticClass, "run"},
+	} {
+		f, ok := javaFrame(line)
+		if !ok || f.Module != want[0] || f.Function != want[1] {
+			t.Errorf("%s: %q %q %v, want %q %q", line, f.Module, f.Function, ok, want[0], want[1])
+		}
+	}
+	trace := func(n string) string {
+		return "java.lang.IllegalStateException: locked\n\tat shop.Cart.lambda$add$0(Cart.java:12)\n" +
+			"\tat shop.Cart$$ExternalSyntheticLambda" + n + ".run(Unknown Source:2)\n\tat android.os.Handler.handleCallback(Handler.java:942)\n"
+	}
+	a := mustFingerprint(t, Event{Type: "T", StackTrace: trace("0")})
+	b := mustFingerprint(t, Event{Type: "T", StackTrace: trace("3")})
+	if want := frames(StackJava, "shop.Cart", "add"); a.Key != b.Key || !reflect.DeepEqual(a.Frames, want) {
+		t.Errorf("two D8 lambda ordinals: %s %+v and %s", a.Key, a.Frames, b.Key)
 	}
 }
 
@@ -1261,17 +1513,20 @@ func javaChain(n int) string {
 // Reading a chain costs in proportion to its length: twice the causes must
 // not take four times the memory.
 func TestJavaChainIsReadInLinearSpace(t *testing.T) {
-	allocated := func(stack string) uint64 {
-		var before, after runtime.MemStats
-		runtime.ReadMemStats(&before)
-		if got := ParseStackFrames(stack); len(got) != 2 {
-			t.Fatalf("%d frames, want the root cause's and the one all share", len(got))
-		}
-		runtime.ReadMemStats(&after)
-		return after.TotalAlloc - before.TotalAlloc
+	// Measured over the runs of a benchmark: one cold call would count
+	// whatever else the process allocates meanwhile.
+	allocated := func(stack string) int64 {
+		return testing.Benchmark(func(b *testing.B) {
+			b.ReportAllocs()
+			for b.Loop() {
+				if got := ParseStackFrames(stack); len(got) != 2 {
+					b.Fatalf("%d frames, want the root cause's and the one all share", len(got))
+				}
+			}
+		}).AllocedBytesPerOp()
 	}
 	short, long := javaChain(2000), javaChain(4000)
-	if a, b := allocated(short), allocated(long); b > 3*a {
+	if a, b := allocated(short), allocated(long); a == 0 || b > 3*a {
 		t.Errorf("%d bytes for 2000 causes, %d for 4000: more than three times as much", a, b)
 	}
 }
@@ -1398,6 +1653,141 @@ ValueError: locked
 	}
 }
 
+// The traces below are CPython 3.14's, of a script deployed under /srv.
+
+// pythonGroup is a group whose only member is a group that was never
+// raised, so the outer group's traceback is all there is.
+func pythonGroup(fn, line string) string {
+	return `  + Exception Group Traceback (most recent call last):
+  |   File "/srv/app/shop.py", line 50, in <module>
+  |     fn()
+  |     ~~^^
+  |   File "/srv/app/shop.py", line ` + line + `, in ` + fn + `
+  |     raise ExceptionGroup("batch", [ExceptionGroup("part", [ValueError("missing")])])
+  | ExceptionGroup: batch (1 sub-exception)
+  +-+---------------- 1 ----------------
+    | ExceptionGroup: part (1 sub-exception)
+    +-+---------------- 1 ----------------
+      | ValueError: missing
+      +------------------------------------
+`
+}
+
+// pythonChain is an exception raised in fn and wrapped in a RuntimeError.
+func pythonChain(fn, raise, raised string) string {
+	return pythonRaised(fn, raise, raised) + `
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/srv/app/shop.py", line 50, in <module>
+    fn()
+    ~~^^
+  File "/srv/app/shop.py", line 24, in chain
+    raise RuntimeError("wrapped") from e
+RuntimeError: wrapped
+`
+}
+
+func pythonRaised(fn, raise, raised string) string {
+	return `Traceback (most recent call last):
+  File "/srv/app/shop.py", line 22, in chain
+    f()
+    ~^^
+  File "/srv/app/shop.py", line 12, in ` + fn + `
+    ` + raise + `
+` + raised + `
+`
+}
+
+// A group whose first member has no traceback keeps its own as the root,
+// also where that member is a group itself.
+func TestPythonNestedGroupKeepsTheOuterTraceback(t *testing.T) {
+	alpha := mustFingerprint(t, Event{Type: "ExceptionGroup", Message: "batch (1 sub-exception)", StackTrace: pythonGroup("alpha", "4")})
+	beta := mustFingerprint(t, Event{Type: "ExceptionGroup", Message: "batch (1 sub-exception)", StackTrace: pythonGroup("beta", "7")})
+	if want := frames(StackPython, "app/shop.py", "alpha", "app/shop.py", "<module>"); alpha.Rung != RungAppFrames ||
+		!reflect.DeepEqual(alpha.Frames, want) || alpha.Type != "ExceptionGroup" {
+		t.Errorf("rung %v, type %q, frames %+v, want %+v", alpha.Rung, alpha.Type, alpha.Frames, want)
+	}
+	if beta.Rung != RungAppFrames || alpha.Key == beta.Key {
+		t.Errorf("two throw sites: %s on rung %v and %s on rung %v", alpha.Key, alpha.Rung, beta.Key, beta.Rung)
+	}
+}
+
+// What was raised is named as Python names a class: in any script, and
+// with the function it is local to.
+func TestPythonRaisedTypeNames(t *testing.T) {
+	for _, tc := range []struct{ fn, raise, raised, typ string }{
+		{"op", `raise Failure("local failure")`, "op.<locals>.Failure: local failure", "op.<locals>.Failure"},
+		{"echec", `raise Échec("raté")`, "Échec: raté", "Échec"},
+		{"quoted", `raise ValueError("saw Traceback (most recent call last) in output")`,
+			"ValueError: saw Traceback (most recent call last) in output", "ValueError"},
+		{"quoted", `raise ValueError(log)`, "ValueError: the log says: Traceback (most recent call last):", "ValueError"},
+		{"bare", "raise shop.errors.Échec2", "shop.errors.Échec2", "shop.errors.Échec2"},
+	} {
+		chain := mustFingerprint(t, Event{Type: "RuntimeError", StackTrace: pythonChain(tc.fn, tc.raise, tc.raised)})
+		alone := mustFingerprint(t, Event{Type: tc.typ, StackTrace: pythonRaised(tc.fn, tc.raise, tc.raised)})
+		if chain.Type != tc.typ || chain.Key != alone.Key {
+			t.Errorf("%s: the chain is %s (%s), its root alone %s (%s)", tc.fn, chain.Key, chain.Type, alone.Key, alone.Type)
+		}
+	}
+	// Where the indentation was stripped the line after a frame is its
+	// source text, and the first line after that which reads like a name is
+	// what was raised. That holds in any script, for the type and for the
+	// second source line of a statement, which is then taken for it.
+	strip := func(stack string) string {
+		lines := strings.Split(stack, "\n")
+		for i, line := range lines {
+			lines[i] = strings.TrimSpace(line)
+		}
+		return strings.Join(lines, "\n")
+	}
+	if _, typ, _ := parseStack(strip(pythonChain("echec", `raise Échec("raté")`, "Échec: raté"))); typ != "Échec" {
+		t.Errorf("stripped: type %q", typ)
+	}
+	if _, typ, _ := parseStack(strip(pythonChain("echec", "raise Échec(\n    détail", "Échec: raté"))); typ != "détail" {
+		t.Errorf("stripped, a second source line: type %q; if it is the raised type now, say so in the package's known gaps", typ)
+	}
+}
+
+// An exception that is handled by raising a group is still the root: the
+// group's header starts another traceback, however deep it is indented.
+func TestPythonGroupRaisedWhileHandling(t *testing.T) {
+	const root = `Traceback (most recent call last):
+  File "/srv/app/shop.py", line 34, in wrap
+    root()
+    ~~~~^^
+  File "/srv/app/shop.py", line 27, in root
+    raise ValueError("no stock")
+ValueError: no stock
+`
+	const handled = root + `
+During handling of the above exception, another exception occurred:
+
+  + Exception Group Traceback (most recent call last):
+  |   File "/srv/app/shop.py", line 50, in <module>
+  |     fn()
+  |     ~~^^
+  |   File "/srv/app/shop.py", line 41, in wrap
+  |     raise ExceptionGroup("cleanup failed", errs)
+  | ExceptionGroup: cleanup failed (1 sub-exception)
+  +-+---------------- 1 ----------------
+    | Traceback (most recent call last):
+    |   File "/srv/app/shop.py", line 38, in wrap
+    |     sub1()
+    |     ~~~~^^
+    |   File "/srv/app/shop.py", line 30, in sub1
+    |     raise KeyError("sku")
+    | KeyError: 'sku'
+    +------------------------------------
+`
+	alone := mustFingerprint(t, Event{Type: "ValueError", StackTrace: root})
+	group := mustFingerprint(t, Event{Type: "ExceptionGroup", StackTrace: handled})
+	if want := frames(StackPython, "app/shop.py", "root", "app/shop.py", "wrap"); group.Type != "ValueError" ||
+		!reflect.DeepEqual(group.Frames, want) || group.Key != alone.Key {
+		t.Errorf("handled by a group: %s (%s) %+v, the root alone %s", group.Key, group.Type, group.Frames, alone.Key)
+	}
+}
+
 // An arrow introduces an inner exception only where a qualified type and a
 // colon, or the end of the line, follow it; and an inner exception without
 // frames is not the one the frames under it belong to.
@@ -1433,6 +1823,50 @@ func TestDotNetInnerExceptionTypes(t *testing.T) {
 		{"a nested and a generic type", "Example.Shop.CheckoutException: failed\n ---> Example.Shop.Cart+LockedException`1[System.String]: locked\n" +
 			"   at Example.Shop.Cart.Add(String sku)\n   --- End of inner exception stack trace ---\n   at Example.Shop.Checkout.Run()",
 			frames(StackDotNet, "Example.Shop.Cart", "Add"), "Example.Shop.Cart+LockedException`1"},
+		// .NET prints an inner exception on a line of its own, so there a
+		// type needs no namespace to be told from a word of the message.
+		{"a type without a namespace on its own line", `Example.Shop.OrderException: order failed
+ ---> CartLockedException: cart 7
+   at Example.Shop.Cart.Lock()
+   --- End of inner exception stack trace ---
+   at Example.Shop.Orders.Place()`, frames(StackDotNet, "Example.Shop.Cart", "Lock"), "CartLockedException"},
+		{"a generic type without a namespace, in an aggregate", "System.AggregateException: One or more errors occurred. (cart 7)\n" +
+			" ---> (Inner Exception #0) Locked`1[System.String]: cart 7<---\n   at Example.Shop.Cart.Lock()",
+			frames(StackDotNet, "Example.Shop.Cart", "Lock"), "Locked`1"},
+		{"a word without a colon on its own line", "Example.Shop.StateException: order moved Open\n ---> Pending\n" +
+			"   at Example.Shop.Orders.Move(String id)", frames(StackDotNet, "Example.Shop.Orders", "Move"), ""},
+		{"words and a colon on their own line", "Example.Shop.StateException: order moved Open\n ---> Pending now: retry\n" +
+			"   at Example.Shop.Orders.Move(String id)", frames(StackDotNet, "Example.Shop.Orders", "Move"), ""},
+		{"a qualified type on its own line is read once", "Example.Shop.OrderException: order failed\n" +
+			" ---> Example.Shop.CartLockedException: cart 7\n   --- End of inner exception stack trace ---\n   at Example.Shop.Orders.Place()",
+			frames(StackDotNet, "Example.Shop.Orders", "Place"), ""},
+		{"three deep, the innermost without a namespace or frames", `System.Exception: outer
+ ---> MyApp.OrderException: order failed
+ ---> CartLockedException: cart 7
+   --- End of inner exception stack trace ---
+   at MyApp.Order.Submit()
+   --- End of inner exception stack trace ---
+   at MyApp.Api.Post()`, frames(StackDotNet, "MyApp.Order", "Submit"), "MyApp.OrderException"},
+		// AggregateException.ToString prints its first inner exception as
+		// any exception does, then every further one behind an arrow of
+		// its own and closed by "<---". Those are siblings of the first,
+		// not causes of it.
+		{"an aggregate whose first inner exception has no frames", `System.AggregateException: One or more errors occurred. (cart 7) (query failed)
+ ---> MyApp.CartException: cart 7
+   --- End of inner exception stack trace ---
+   at MyApp.Order.Submit()
+ ---> (Inner Exception #1) MyApp.DbException: query failed
+   at MyApp.Db.Query()<---
+`, frames(StackDotNet, "MyApp.Order", "Submit"), ""},
+		{"an aggregate that was never thrown", `System.AggregateException: One or more errors occurred. (cart 7) (query failed)
+ ---> MyApp.CartException: cart 7
+   --- End of inner exception stack trace ---
+ ---> (Inner Exception #1) MyApp.DbException: query failed
+   at MyApp.Db.Query()<---
+`, frames(StackDotNet, "MyApp.Db", "Query"), "MyApp.DbException"},
+		{"a type in another script", "Boutique.CommandeException: échec\n ---> Boutique.Panier.ÉchecException: verrouillé\n" +
+			"   at Boutique.Panier.Ajouter(String sku)\n   --- End of inner exception stack trace ---\n   at Boutique.Commande.Lancer()",
+			frames(StackDotNet, "Boutique.Panier", "Ajouter"), "Boutique.Panier.ÉchecException"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1464,12 +1898,187 @@ func TestDotNetGeneratedNames(t *testing.T) {
 		{"at Example.Shop.CartService+<>c__DisplayClass5_0.<AddItem>b__0 (Example.Shop.Item item) [0x00007] in <3f2b8c1e>:0",
 			"Example.Shop.CartService", "AddItem"},
 		{"at Example.Shop.Cart+Line.Total () [0x00000] in <3f2b8c1e>:0", "Example.Shop.Cart.Line", "Total"},
+		// Three deep, each kind once.
+		{"at Example.Shop.Cart.<<<Run>b__4_0>g__Check|4_1>d__3.MoveNext()", "Example.Shop.Cart.Run", "Check"},
+		// Brackets that hold no method name, or that nothing generated
+		// follows, stay as they are written, and so does what wraps them.
+		{"at Example.Shop.Cart.<Add|x>b__0()", "Example.Shop.Cart", "<Add|x>b__0"},
+		{"at Example.Shop.Cart.<>b__0()", "Example.Shop.Cart", "<>b__0"},
+		{"at Example.Shop.Cart.<<Add>x>b__0()", "Example.Shop.Cart", "<<Add>x>b__0"},
+		{"at Example.Shop.Cart.<Add>b__()", "Example.Shop.Cart", "<Add>b__"},
+		{"at Example.Shop.Cart.<Add>g__|1_0()", "Example.Shop.Cart", "<Add>g__|1_0"},
+		{"at Example.Shop.Cart.<Add>g__Check|()", "Example.Shop.Cart", "<Add>g__Check|"},
+		{"at Example.Shop.Cart.<Add>d__.MoveNext()", "Example.Shop.Cart.<Add>d__", "MoveNext"},
+		{"at Example.Shop.Cart.<Add>d__12.Dispose()", "Example.Shop.Cart.<Add>d__12", "Dispose"},
+		{"at Example.Shop.Cart.<Add>d__12.MoveNextStep()", "Example.Shop.Cart.<Add>d__12", "MoveNextStep"},
+		{"at Example.Shop.Cart.Add>b__0()", "Example.Shop.Cart", "Add>b__0"},
+		{"at Example.Shop.Cart.<Step2>g__Check3|1_0()", "Example.Shop.Cart.Step2", "Check3"},
+		// A method that implements an interface explicitly is named with it.
+		{"at Example.Shop.Cart.<Example.Shop.ICart.Add>b__3_0()", "Example.Shop.Cart.Example.Shop.ICart", "Add"},
+		// In the name of a generated type the compiler writes the dots of
+		// the interface as hyphens. Written by hand from that rule.
+		{"at Example.Shop.Cart.<Example-Shop-ICart-AddItemAsync>d__12.MoveNext()", "Example.Shop.Cart.Example.Shop.ICart", "AddItemAsync"},
+		{"at Example.Shop.Cart.<Example-Shop-ICart-AddItemAsync>d__13.MoveNext()", "Example.Shop.Cart.Example.Shop.ICart", "AddItemAsync"},
+		{"at Example.Shop.Cart.<Add-Item>x()", "Example.Shop.Cart", "<Add-Item>x"},
+		{"at Example.Shop.Cart.<Add-Item>x.<Run>b__0()", "Example.Shop.Cart.<Add-Item>x", "Run"},
+		{"at Example.Shop.Cart.<<Example-Shop-ICart-Add>b__0>d.MoveNext()", "Example.Shop.Cart.Example.Shop.ICart", "Add"},
+		// The ordinals end where the next name starts.
+		{"at Example.Shop.Cart.<Run>g__Check|1_0<Add>b__2()", "Example.Shop.Cart.Run", "CheckAdd"},
+		// The closure class of a generic method.
+		{"at MyApp.Cart.<>c__5`1.<Add>b__5_0(Item item)", "MyApp.Cart", "Add"},
+		{"at MyApp.Cart.<>c__6`1.<Add>b__6_0(Item item)", "MyApp.Cart", "Add"},
+		{"at MyApp.Cart.<>c__x.<Add>b__6_0(Item item)", "MyApp.Cart.<>c__x", "Add"},
+		// A name in any script: an ordinal behind it goes like any other.
+		{"at Boutique.Panier.<Réserver>d__12.MoveNext()", "Boutique.Panier", "Réserver"},
+		{"at Boutique.Panier.<Réserver>d__13.MoveNext()", "Boutique.Panier", "Réserver"},
+		{"at Boutique.Panier.<>c.<Réserver>b__5_0(Article a)", "Boutique.Panier", "Réserver"},
+		{"at Boutique.Panier.<Réserver>g__Vérifie|5_1(Int32 n)", "Boutique.Panier.Réserver", "Vérifie"},
+		{"at Boutique.Programme.<Démarrer>$(String[] args)", "Boutique.Programme", "Démarrer"},
+		{"at Магазин.Корзина.<<Добавить>b__0>d.MoveNext()", "Магазин.Корзина", "Добавить"},
 	}
 	for _, tc := range cases {
 		f, ok := dotnetFrame(tc.line)
 		if !ok || f.Module != tc.module || f.Function != tc.function {
 			t.Errorf("%s\n got %q %q %v\nwant %q %q", tc.line, f.Module, f.Function, ok, tc.module, tc.function)
 		}
+	}
+}
+
+// dotnetNestedTrace is a .NET trace of the given number of frame lines, each
+// a lambda nested in a lambda to the given depth.
+func dotnetNestedTrace(depth, lines int) string {
+	return "System.InvalidOperationException: Cart 7 is locked\n" + strings.Repeat(
+		"   at Example.Shop.Cart."+strings.Repeat("<", depth)+"Run"+strings.Repeat(">b__0", depth)+"(Item item)\n", lines)
+}
+
+// A generated name is unwrapped in one pass, however deep it nests: the
+// work and the memory are in proportion to the text, at any depth a line
+// has room for.
+func TestDotNetNestedNamesAreReadInLinearTime(t *testing.T) {
+	want := frames(StackDotNet, "Example.Shop.Cart", "Run")
+	cost := func(stack string) (time.Duration, uint64) {
+		t.Helper()
+		best, least := time.Duration(0), uint64(0)
+		for i := range 3 {
+			var before, after runtime.MemStats
+			runtime.ReadMemStats(&before)
+			start := time.Now()
+			got := ParseStackFrames(stack)
+			took := time.Since(start)
+			runtime.ReadMemStats(&after)
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("frames %+v, want %+v", got, want)
+			}
+			if allocated := after.TotalAlloc - before.TotalAlloc; i == 0 || allocated < least {
+				least = allocated
+			}
+			if i == 0 || took < best {
+				best = took
+			}
+		}
+		return best, least
+	}
+	// As deep as a line can hold, on as many lines as the text limit takes.
+	depth := (stackLineMax - len(dotnetNestedTrace(0, 1))) / len("<>b__0")
+	line := len(dotnetNestedTrace(depth, 1)) - len(dotnetNestedTrace(depth, 0))
+	worst := dotnetNestedTrace(depth, (stackTextMax-len(dotnetNestedTrace(depth, 0)))/line)
+	if line > stackLineMax || len(worst) > stackTextMax || len(worst) < stackTextMax*9/10 {
+		t.Fatalf("a line of %d bytes, a trace of %d: want the limits %d and %d", line, len(worst), stackLineMax, stackTextMax)
+	}
+	took, allocated := cost(worst)
+	if limit := uint64(dotnetNestedAllocFactor * len(worst)); allocated > limit {
+		t.Errorf("%d bytes allocated for %d bytes of text at depth %d, want at most %d", allocated, len(worst), depth, limit)
+	}
+	if took > dotnetNestedTimeLimit {
+		t.Errorf("%v for %d bytes of text at depth %d, want at most %v", took, len(worst), depth, dotnetNestedTimeLimit)
+	}
+	// Twice the depth is twice the text, and must not be four times the
+	// memory.
+	_, shallow := cost(dotnetNestedTrace(150, 8))
+	if _, deep := cost(dotnetNestedTrace(300, 8)); deep > 3*shallow {
+		t.Errorf("%d bytes allocated at depth 150, %d at depth 300: more than three times as much", shallow, deep)
+	}
+}
+
+const (
+	// dotnetNestedAllocFactor bounds the bytes allocated per byte of the
+	// deepest trace the limits admit. One unwrapping pass per level of
+	// nesting allocated 1,500 times the text.
+	dotnetNestedAllocFactor = 64
+	// dotnetNestedTimeLimit bounds reading that trace, with room for the
+	// race detector on a busy machine: it takes 20 ms without the detector
+	// and a quarter of a second with it. One pass per level took 2 s
+	// without.
+	dotnetNestedTimeLimit = 1500 * time.Millisecond
+)
+
+// A closure, the wrapper of a go or defer statement and a closure in a
+// closure are numbered in the order they stand in their function, so the
+// numbers move when one is added above. None stays in a name: the code is
+// the function's.
+func TestGoGeneratedNames(t *testing.T) {
+	cases := []struct{ line, module, function string }{
+		{"main.run.func1()", "main", "run"},
+		{"main.run.func2()", "main", "run"},
+		{"main.run.func1.1()", "main", "run"},
+		{"main.run.func1.2.3(0x1)", "main", "run"},
+		{"main.run.func1.gowrap2()", "main", "run"},
+		{"main.run.gowrap1()", "main", "run"},
+		{"main.run.deferwrap2()", "main", "run"},
+		{"shop/internal/cart.(*Service).AddItem.func1(0x1)", "shop/internal/cart", "Service.AddItem"},
+		{"shop/internal/cart.(*Service).AddItem.func1.deferwrap1(0x1)", "shop/internal/cart", "Service.AddItem"},
+		{"shop/internal/cart.glob..func1()", "shop/internal/cart", "glob"},
+		{"shop/internal/cart.init.0()", "shop/internal/cart", "init"},
+		{"shop/internal/cart.init.func1()", "shop/internal/cart", "init"},
+		{"created by main.run.func1 in goroutine 1", "main", "run"},
+		// A function may be named like a generated one, and a name only
+		// ends that way where a number does.
+		{"main.func1()", "main", "func1"},
+		{"shop/internal/cart..func1()", "shop/internal/cart", ".func1"},
+		{"main.gowrap1(0x1)", "main", "gowrap1"},
+		{"main.run.func()", "main", "run.func"},
+		{"main.run.func1x()", "main", "run.func1x"},
+		{"main.run.wrap1()", "main", "run.wrap1"},
+		{"main.(*V2).Get(0x1)", "main", "V2.Get"},
+		{"main.run.func1.Close(0x1)", "main", "run.func1.Close"},
+	}
+	for _, tc := range cases {
+		f, ok := goFrame(tc.line)
+		if !ok || f.Module != tc.module || f.Function != tc.function {
+			t.Errorf("%s\n got %q %q %v\nwant %q %q", tc.line, f.Module, f.Function, ok, tc.module, tc.function)
+		}
+	}
+}
+
+// A module on the vendor list is that module and what is below it, not
+// every module whose path starts the same way.
+func TestGoVendorModulesMatchWhole(t *testing.T) {
+	for module, want := range map[string]bool{
+		"github.com/lib/pq": false, "github.com/lib/pq/oid": false, "github.com/lib/pq-tools": true,
+		"github.com/mattn/go-sqlite3": false, "github.com/mattn/go-sqlite3-wrapper/db": true,
+		"github.com/jackc/pgx/v5": false, "golang.org/x/net/http2": false, "github.com/lib": true,
+	} {
+		if got := goInApp(StackFrame{Module: module, Function: "Open", Syntax: StackGo}); got != want {
+			t.Errorf("goInApp(%s) = %v, want %v", module, got, want)
+		}
+	}
+}
+
+// A frame written in assembly has a file line like any other, and a
+// dependency shows by it.
+func TestGoAssemblyFileLines(t *testing.T) {
+	stack := "goroutine 1 [running]:\npanic({0x1, 0x2})\n\t/usr/local/go/src/runtime/panic.go:770 +0x132\n" +
+		"shop.example.invalid/zstd.sequenceDecs_decode_amd64()\n" +
+		"\t/go/pkg/mod/shop.example.invalid/zstd@v1.17.0/zstd/seqdec_amd64.s:123 +0x1d\nmain.main()\n\t/app/main.go:12 +0x25\n"
+	got := ParseStackFrames(stack)
+	want := []StackFrame{{Module: "shop.example.invalid/zstd", Function: "sequenceDecs_decode_amd64", Syntax: StackGo, Dependency: true},
+		{Module: "main", Function: "main", Syntax: StackGo}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("frames %+v, want %+v", got, want)
+	}
+	if !goOwns("/go/pkg/mod/shop.example.invalid/zstd@v1.17.0/zstd/seqdec_amd64.s:123 +0x1d") || goOwns("see notes.s:12 for more") ||
+		goOwns("/app/main.sh:12") {
+		t.Error("goOwns: an assembly file line is Go's, prose and other files are not")
 	}
 }
 
@@ -1608,6 +2217,286 @@ func TestEscapedBreaksLeaveWindowsPaths(t *testing.T) {
 	}
 }
 
+// An escaped trace is one whatever stands at its ends: a real line break
+// behind it, which a log shipper adds, does not make its breaks real.
+func TestEscapedTraceWithARealBreakAtItsEnds(t *testing.T) {
+	chain := "com.example.shop.CheckoutException: failed\n\tat com.example.shop.Api.post(Api.java:12)\n" +
+		"Caused by: java.lang.IllegalStateException: locked\n\tat com.example.shop.Cart.add(Cart.java:42)\n\t... 1 more"
+	escaped := strings.ReplaceAll(strings.ReplaceAll(chain, "\n", `\n`), "\t", `\t`)
+	want := ParseStackFrames(chain)
+	for _, stack := range []string{escaped + "\n", escaped + "\r\n", "\n" + escaped, escaped + "\n\n", escaped + `\n` + "\n"} {
+		if got := ParseStackFrames(stack); len(want) != 2 || !reflect.DeepEqual(got, want) {
+			t.Errorf("%q: %+v, want %+v", stack[len(stack)-12:], got, want)
+		}
+	}
+	// A real break inside it shows that the breaks are real.
+	if got := ParseStackFrames(escaped + "\n" + "\tat com.example.shop.Late.run(Late.java:1)"); len(got) != 1 {
+		t.Errorf("a real break inside: %+v", got)
+	}
+}
+
+// In an escaped trace a Windows path ends at the colon before its line
+// number, so the break behind the number is one.
+func TestEscapedBreaksBehindAWindowsPath(t *testing.T) {
+	escape := func(s string) string { return strings.ReplaceAll(strings.ReplaceAll(s, "\n", `\n`), "\t", `\t`) }
+	dump := "goroutine 1 [running]:\nshop/cart.Fail(0x1)\n\tC:\\app\\cart.go:10\nshop/cart.Checkout(0x1)\n\tC:\\app\\cart.go:20\nmain.main()\n\tC:\\app\\main.go:5"
+	if got, want := ParseStackFrames(escape(dump)), ParseStackFrames(dump); len(want) != 3 || !reflect.DeepEqual(got, want) {
+		t.Errorf("go dump: %+v, want %+v", got, want)
+	}
+	v8 := "Error: outer\n    at checkout (C:\\app\\src\\api.js:3:1) {\n  [cause]: Error: inner\n      at Cart.add (C:\\app\\src\\cart.js:10:5)\n}"
+	if got, want := ParseStackFrames(escape(v8)), ParseStackFrames(v8); len(want) == 0 || !reflect.DeepEqual(got, want) {
+		t.Errorf("v8 cause: %+v, want %+v", got, want)
+	}
+	v8 = "Error: x\n    at Cart.add (C:\\app\\src\\cart.js:10:5)\n[stack]: next\n    at run (C:\\app\\src\\new.js:1:2)"
+	if got, want := ParseStackFrames(escape(v8)), ParseStackFrames(v8); len(want) != 2 || !reflect.DeepEqual(got, want) {
+		t.Errorf("v8, a line at the first column: %+v, want %+v", got, want)
+	}
+	// The drive's colon ends nothing.
+	if got := unescapeBreaks(`at run (C:\app\new\tools.js:1:2)\n at x`); got != "at run (C:\\app\\new\\tools.js:1:2)\n at x" {
+		t.Errorf("unescaped %q", got)
+	}
+}
+
+// What is read of a trace is bounded before any pass over it: text past
+// the limit costs nothing.
+func TestStackTextIsCutBeforeItIsRead(t *testing.T) {
+	frame := `\n\tat com.example.shop.Cart.add(Cart.java:12)`
+	allocated := func(stack string) uint64 {
+		least := uint64(0)
+		for i := range 3 {
+			var before, after runtime.MemStats
+			runtime.ReadMemStats(&before)
+			got := ParseStackFrames(stack)
+			runtime.ReadMemStats(&after)
+			if len(got) != 1 {
+				t.Fatalf("%d frames, want one", len(got))
+			}
+			if a := after.TotalAlloc - before.TotalAlloc; i == 0 || a < least {
+				least = a
+			}
+		}
+		return least
+	}
+	head := "java.lang.IllegalStateException: locked" + frame + `\n\t`
+	atLimit := allocated(head + strings.Repeat(`\`, stackTextMax-len(head)))
+	if past := allocated(head + strings.Repeat(`\`, 8*stackTextMax)); past > atLimit*3/2 {
+		t.Errorf("%d bytes allocated for a trace at the limit, %d for eight times the text", atLimit, past)
+	}
+	// The cut is on the bytes that arrive, and the line it goes through is
+	// not read.
+	late := `\tat com.example.shop.Late.run(Late.java:1)\n`
+	past := `\tat com.example.shop.Past.run(Past.java:1)`
+	trace := func(n int) string { return head + strings.Repeat("x", n) + `\n` + late + past }
+	n := stackTextMax - len(trace(0)) + len(past)
+	if got := ParseStackFrames(trace(n)); len(got) != 2 {
+		t.Errorf("a frame whose line ends at byte %d: %d frames, want two", stackTextMax, len(got))
+	}
+	if got := ParseStackFrames(trace(n + 1)); len(got) != 1 {
+		t.Errorf("a frame whose line ends past byte %d: %d frames, want one", stackTextMax, len(got))
+	}
+}
+
+// Cases for conditions no other test moved a key for.
+func TestFrameReadersAtTheirEdges(t *testing.T) {
+	// A package vendored inside a vendored one is the innermost.
+	f, ok := goFrame("shop/vendor/shop.example.invalid/db/vendor/golang.org/x/net/http2.(*Framer).ReadFrame(0x1)")
+	if !ok || f.Module != "golang.org/x/net/http2" || !f.Dependency {
+		t.Errorf("a nested vendor directory: %+v", f)
+	}
+	// Mono's notation without the offset: a frame where every parameter
+	// starts with a type, prose otherwise; with the offset, a frame.
+	for line, want := range map[string]bool{
+		"at Example.Shop.Cart.Add (System.String sku)":                  true,
+		"at Example.Shop.Cart.Add (System.String sku, Int32 count)":     true,
+		"at Example.Shop.Cart.Add ()":                                   true,
+		"at Example.Shop.checkout (final step)":                         false,
+		"at Example.Shop.Cart.Add (final step) [0x0001a] in <abc>:0":    true,
+		"at Example.Shop.Cart.Add (System.String sku) [0x0001a] in <a>": true,
+		"at checkout (System.String sku) [0x0001a] in <abc>:0":          false,
+	} {
+		if _, ok := dotnetFrame(line); ok != want {
+			t.Errorf("%q is a frame: %v, want %v", line, ok, want)
+		}
+	}
+	// A location of the runtime's own is its module as it stands, whatever
+	// directories it names.
+	for loc, want := range map[string]string{
+		"node:internal/modules/cjs/loader:1760:14": "node:internal/modules/cjs/loader",
+		"node:internal/deps/node_modules/x:1:2":    "node:internal/deps/node_modules/x",
+		"node:internal/releases/1.4.2/x:1:2":       "node:internal/releases/1.4.2/x",
+	} {
+		if got := jsModule(loc); got != want {
+			t.Errorf("jsModule(%q) = %q, want %q", loc, got, want)
+		}
+	}
+	// Of two release directories the last one ends what is cut, and a
+	// user's directory is cut with the home it stands in.
+	for path, want := range map[string]string{
+		"/app/releases/1.4.2/versions/2.0.1/src/cart.js": "src/cart.js",
+		"/app/releases/1.4.2/src/cart.js":                "src/cart.js",
+		"/Users/ann/shop/src/cart.js":                    "shop/src/cart.js",
+		"/home/ann/shop/src/cart.js":                     "shop/src/cart.js",
+		"/Users/cart.js":                                 "/Users/cart.js",
+	} {
+		if got := sourceModule(path); got != want {
+			t.Errorf("sourceModule(%q) = %q, want %q", path, got, want)
+		}
+	}
+	// An arrow in a line behind the frames of a .NET root cause introduces
+	// no type.
+	_, typ, _ := parseStack("System.Exception: outer\n ---> MyApp.InnerException: locked\n   at MyApp.Cart.Add()\n" +
+		"Note: handled ---> MyApp.OtherException: logged\n")
+	if typ != "MyApp.InnerException" {
+		t.Errorf("an arrow behind the frames: type %q", typ)
+	}
+	// A trace of exactly the limit is read to its last byte.
+	frame := "\tat com.example.shop.Cart.add(Cart.java:12)"
+	last := "\n\tat com.example.shop.Last.run(Last.java:1)"
+	exact := frame + "\n" + strings.Repeat("x", stackTextMax-len(frame)-1-len(last)) + last
+	if got := ParseStackFrames(exact); len(exact) != stackTextMax || len(got) != 2 {
+		t.Errorf("a trace of %d bytes that ends in a frame: %d frames, want two", len(exact), len(got))
+	}
+}
+
+// How the JVM's count of shared frames is read where the text is not what
+// a JVM prints, and where a section has nothing but generated frames.
+func TestJavaSharedFramesAtTheirEdges(t *testing.T) {
+	const top = "java.lang.IllegalStateException: m\n\tat a.F.f1(F.java:1)\n\tat a.F.f2(F.java:2)\n\tat a.F.f3(F.java:3)\n"
+	for name, tc := range map[string]struct {
+		stack string
+		want  []StackFrame
+	}{
+		// A cause without frames of its own is what the next one shares
+		// its frames with.
+		"a cause of shared frames alone": {top + "Caused by: a.B: b\n\t... 2 more\nCaused by: a.C: c\n\tat a.C.c1(C.java:1)\n\t... 3 more\n",
+			frames(StackJava, "a.C", "c1", "a.F", "f2", "a.F", "f3")},
+		"a cause that shares none": {top + "Caused by: a.B: b\n\t... 0 more\nCaused by: a.C: c\n\tat a.C.c1(C.java:1)\n\t... 3 more\n",
+			frames(StackJava, "a.C", "c1")},
+		"a count above what there is": {top + "Caused by: a.C: c\n\tat a.C.c1(C.java:1)\n\t... 7 more\n",
+			frames(StackJava, "a.C", "c1", "a.F", "f1", "a.F", "f2", "a.F", "f3")},
+		// The first section has nothing to share frames with.
+		"a count in the first section": {"java.lang.IllegalStateException: m\n\tat a.B.c(B.java:1)\n\t... 1 more\n",
+			frames(StackJava, "a.B", "c")},
+		// Shared frames that are all generated leave the cause its own.
+		"shared frames that are generated": {"java.lang.IllegalStateException: m\n\tat a.F$$Lambda$1/0x01.run(Unknown Source)\n" +
+			"\tat a.F$$Lambda$2/0x02.run(Unknown Source)\nCaused by: a.C: c\n\tat a.C.c1(C.java:1)\n\t... 1 more\n",
+			frames(StackJava, "a.C", "c1")},
+	} {
+		if got := ParseStackFrames(tc.stack); !reflect.DeepEqual(got, tc.want) {
+			t.Errorf("%s: %+v, want %+v", name, got, tc.want)
+		}
+	}
+}
+
+// Frameworks and libraries that are not the application, by the frames a
+// trace shows of them.
+func TestCommonLibrariesAreNotTheApplication(t *testing.T) {
+	for _, module := range []string{
+		"io.micronaut.http.server.netty.RoutingInBoundHandler", "io.ktor.server.netty.NettyApplicationCallHandler",
+		"org.aspectj.runtime.reflect.JoinPointImpl", "net.bytebuddy.implementation.MethodDelegation",
+		"io.reactivex.internal.operators.observable.ObservableMap", "io.reactivex.rxjava3.core.Observable",
+		"com.google.gson.Gson", "com.rabbitmq.client.impl.ChannelN", "org.jooq.impl.AbstractQuery",
+		"org.mybatis.spring.SqlSessionTemplate", "com.stripe.net.LiveStripeResponseGetter", "io.sentry.Sentry",
+		"com.squareup.okhttp.Call", "retrofit2.OkHttpCall",
+	} {
+		if frameInApp(StackFrame{Module: module, Function: "run", Syntax: StackJava}) {
+			t.Errorf("Java: %s counts as the application's", module)
+		}
+	}
+	for _, module := range []string{
+		"Polly.Policy", "MediatR.Mediator", "MassTransit.Middleware.ConsumerMessageFilter", "Castle.DynamicProxy.AbstractInvocation",
+		"Autofac.Core.Resolving.ResolveOperation", "Serilog.Core.Logger", "NLog.Logger", "AutoMapper.Mapper",
+		"RabbitMQ.Client.Impl.ModelBase", "Confluent.Kafka.Consumer",
+	} {
+		if frameInApp(StackFrame{Module: module, Function: "Run", Syntax: StackDotNet}) {
+			t.Errorf(".NET: %s counts as the application's", module)
+		}
+	}
+	// A prefix is whole names: what only starts like one is the
+	// application's.
+	for _, f := range []StackFrame{
+		{Module: "PollyShop.Cart", Function: "Add", Syntax: StackDotNet}, {Module: "RabbitMQ.Shop.Cart", Function: "Add", Syntax: StackDotNet},
+		{Module: "io.sentryshop.Cart", Function: "add", Syntax: StackJava}, {Module: "retrofit2shop.Cart", Function: "add", Syntax: StackJava},
+	} {
+		if !frameInApp(f) {
+			t.Errorf("%s does not count as the application's", f.Module)
+		}
+	}
+}
+
+// A Go trace that is not a panic's gives no frames to a key, which is the
+// common case: an error logged with debug.Stack. That is known before its
+// frames are read (goAtFault), and they are not read.
+func TestGoTraceNotAtFaultIsNotParsed(t *testing.T) {
+	var dump strings.Builder
+	dump.WriteString("goroutine 1 [running]:\n")
+	for i := range 70 {
+		fmt.Fprintf(&dump, "shop.example.invalid/cart.(*Service).Step%d(0xc000012345, {0xc00001a0c0, 0x6})\n\t/app/cart/service.go:%d +0x1d\n", i, 40+i)
+	}
+	seen, crash := dump.String(), "panic: bad state\n\n"+dump.String()
+	if frames, typ := faultStack(seen); frames != nil || typ != "" {
+		t.Errorf("a trace that is no panic's: %d frames, type %q", len(frames), typ)
+	}
+	if frames, _ := faultStack(crash); len(frames) != 70 {
+		t.Errorf("a panic's trace: %d frames, want 70", len(frames))
+	}
+	allocs := func(stack string) float64 {
+		return testing.AllocsPerRun(20, func() { FingerprintExceptions([]Event{{Type: "E", StackTrace: stack}}) })
+	}
+	if a, b := allocs(seen), allocs(crash); a*4 > b {
+		t.Errorf("%v allocations for a trace that is no panic's, %v for the panic's: its frames were read", a, b)
+	}
+}
+
+// The test before the frames gives the answer the frames give.
+func TestGoAtFaultAgreesWithTheFrames(t *testing.T) {
+	const (
+		head  = "goroutine 1 [running]:\n"
+		frame = "main.process(0xc000012345)\n\t/app/main.go:42 +0x1d\n"
+		main  = "main.main()\n\t/app/main.go:12 +0x25\n"
+	)
+	for stack, want := range map[string]bool{
+		head + frame + main: false,
+		frame + main:        false,
+		"panic: bad state\n\n" + head + frame + main:                                                           true,
+		"fatal error: all goroutines are asleep\n\n" + head + frame:                                            true,
+		"panic: bad state\n" + frame:                                                                           true,
+		head + "panic: bad state\n" + frame:                                                                    false,
+		frame + "panic: bad state\n" + main:                                                                    false,
+		head + "panic({0x1, 0x2})\n\t/usr/local/go/src/runtime/panic.go:770 +0x132\n" + frame:                  true,
+		head + frame + "runtime.gopanic({0x1, 0x2})\n\t/usr/local/go/src/runtime/panic.go:770 +0x132\n" + main: true,
+		head + "runtime.goPanicIndex(0x5, 0x3)\n\t/usr/local/go/src/runtime/panic.go:115 +0x74\n" + frame:      true,
+		head + "runtime.sigpanic()\n\t/usr/local/go/src/runtime/signal_unix.go:917 +0x35b\n" + frame:           true,
+		head + "runtime.throw({0x1, 0x2})\n\t/usr/local/go/src/runtime/panic.go:1101 +0x48\n" + frame:          true,
+		head + frame + "runtime.throw({0x1, 0x2})\n\t/usr/local/go/src/runtime/panic.go:1101 +0x48\n" + main:   true,
+		head + "runtime.Gosched()\n\t/usr/local/go/src/runtime/proc.go:1 +0x1\n" + frame:                       false,
+		head + "shop/vendor/runtime.gopanic(0x1)\n\t/app/x.go:1 +0x1\n" + frame:                                true,
+		head + "shop.example.invalid/panic.Recover(0x1)\n\t/app/x.go:1 +0x1\n" + frame:                         false,
+		head + "shop.example.invalid/cart.panicIfLocked(0x1)\n\t/app/x.go:1 +0x1\n" + frame:                    false,
+		// The panic of another goroutine of the dump is not this one's.
+		head + frame + "\ngoroutine 7 [running]:\npanic({0x1, 0x2})\n\t/usr/local/go/src/runtime/panic.go:770 +0x132\n" + main: false,
+		head + "\ngoroutine 7 [running]:\npanic({0x1, 0x2})\n\t/usr/local/go/src/runtime/panic.go:770 +0x132\n" + main:         true,
+		"": false,
+	} {
+		lines := stackLines(stack)
+		_, _, atFault := goRootCause(lines)
+		if got := goAtFault(lines); got != atFault || got != want {
+			t.Errorf("%q: goAtFault %v, the frames say %v, want %v", stack, got, atFault, want)
+		}
+	}
+}
+
+// Two notations that own as many lines: the one whose line comes first.
+func TestStackNotationTieGoesToTheFirstLine(t *testing.T) {
+	java, dotnet := "\tat com.example.shop.Cart.add(Cart.java:42)\n", "   at Example.Shop.Cart.Add(String sku)\n"
+	if got := ParseStackFrames(java + dotnet); len(got) == 0 || got[0].Syntax != StackJava {
+		t.Errorf("Java first: %+v", got)
+	}
+	if got := ParseStackFrames(dotnet + java); len(got) == 0 || got[0].Syntax != StackDotNet {
+		t.Errorf(".NET first: %+v", got)
+	}
+}
+
 // A getter and a setter are functions of their own.
 func TestJavaScriptAccessors(t *testing.T) {
 	for line, want := range map[string]string{
@@ -1626,6 +2515,79 @@ func TestJavaScriptAccessors(t *testing.T) {
 	b := mustFingerprint(t, Event{Type: "TypeError", StackTrace: "TypeError: x\n    at get right (/app/src/box.js:5:11)" + caller})
 	if a.Key == b.Key {
 		t.Errorf("two getters share the key %s", a.Key)
+	}
+}
+
+// V8 prints a function by its display name, which is any text: a method
+// with a string or a symbol for its key, a bound function. Once a trace is
+// known to be JavaScript's, a frame is whatever stands before a location
+// with a line and a column. The traces are Node 24's.
+func TestJavaScriptDisplayNames(t *testing.T) {
+	trace := func(top string) string {
+		return "Error: sku 7 is locked\n    at " + top + "\n    at dispatch (/srv/app/shop.js:8:41)\n" +
+			"    at Object.<anonymous> (/srv/app/shop.js:11:9)\n    at Module._compile (node:internal/modules/cjs/loader:1760:14)\n"
+	}
+	keys := map[string]string{}
+	for top, function := range map[string]string{
+		"cart-added (/srv/app/shop.js:2:26)":         "cart-added",
+		"user:created (/srv/app/shop.js:3:28)":       "user:created",
+		"my handler (/srv/app/shop.js:4:26)":         "my handler",
+		"[evt] (/srv/app/shop.js:5:33)":              "[evt]",
+		"Object.plain (/srv/app/shop.js:6:19)":       "Object.plain",
+		"bound addItem (/srv/app/shop.js:9:42)":      "bound addItem",
+		"async my handler (/srv/app/shop.js:4:26)":   "my handler",
+		"(the) end [as last] (/srv/app/shop.js:4:2)": "(the) end",
+	} {
+		fp := mustFingerprint(t, Event{Type: "Error", StackTrace: trace(top)})
+		want := frames(StackJS, "app/shop.js", function, "app/shop.js", "dispatch", "app/shop.js", FrameAnonymous)
+		if !reflect.DeepEqual(fp.Frames, want) {
+			t.Errorf("%s: frames %+v, want %+v", top, fp.Frames, want)
+		}
+		if other, dup := keys[fp.Key]; dup && function != "my handler" {
+			t.Errorf("%s and %s share the key %s", top, other, fp.Key)
+		}
+		keys[fp.Key] = top
+	}
+	// Prose stays prose, above the frames of a trace and alone. A location
+	// has a line and a column, or is one of V8's words.
+	want := frames(StackJS, "app/shop.js", "dispatch", "app/shop.js", FrameAnonymous, "node:internal/modules/cjs/loader", "Module._compile")
+	for _, prose := range []string{
+		"at least 3 items (max 5)", "at the checkout step (see cart 7)", "at 10:11:12 the cart (id 7:12) was locked",
+		"at checkout step (retry 2:1 failed)x", "at step two (cart:12)", "at checkout step (cart:2:1) again", "at my handler (10:11:12)",
+	} {
+		if got := ParseStackFrames(trace(prose)); !reflect.DeepEqual(got, want) {
+			t.Errorf("%q above the frames: %+v", prose, got)
+		}
+		if jsOwns(prose) {
+			t.Errorf("%q marks a trace as JavaScript's", prose)
+		}
+	}
+	for _, line := range []string{"at cart-added (/srv/app/shop.js:2:26)", "at my handler (/srv/app/shop.js:4:26)"} {
+		if jsOwns(line) {
+			t.Errorf("%q marks a trace as JavaScript's: only a plain name does", line)
+		}
+	}
+	if got := ParseStackFrames("at my handler (native)\nat my handler (<anonymous>)\n" + trace("x (/srv/app/a.js:1:1)")); len(got) != 6 {
+		t.Errorf("V8's words for code without a file: %+v", got)
+	}
+}
+
+// A dependency is the same module whatever a URL says behind it: a query
+// that busts a cache is not part of its name, and names no directory.
+func TestJavaScriptModuleQueries(t *testing.T) {
+	for loc, want := range map[string]string{
+		"https://shop.example.invalid/node_modules/lib/index.js?v=100:1:2": "node_modules/lib/index.js",
+		"https://shop.example.invalid/node_modules/lib/index.js?v=101:1:2": "node_modules/lib/index.js",
+		"http://localhost:5173/src/a.js?t=/node_modules/x:1:2":             "src/a.js",
+		"http://localhost:5173/src/a.js?t=1700000000:1:2":                  "src/a.js",
+		"/srv/app/node_modules/lib/index.js:1:2":                           "node_modules/lib/index.js",
+	} {
+		if got := jsModule(loc); got != want {
+			t.Errorf("jsModule(%q) = %q, want %q", loc, got, want)
+		}
+	}
+	if !jsInApp(StackFrame{Module: jsModule("http://localhost:5173/src/a.js?t=/node_modules/x:1:2"), Syntax: StackJS}) {
+		t.Error("a query made a dependency of the application's file")
 	}
 }
 

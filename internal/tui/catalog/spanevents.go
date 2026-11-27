@@ -65,10 +65,14 @@ func (e SpanEvent) Exception() (SpanException, bool) {
 		return SpanException{}, false
 	}
 	ex := SpanException{
-		Type:    Str(e.Fields, "exception.type"),
-		Message: Str(e.Fields, "exception.message"),
-		StackTrace: firstNonEmpty(
-			Str(e.Fields, "exception.stack_trace"), Str(e.Fields, "exception.stacktrace")),
+		Type:       Str(e.Fields, "exception.type"),
+		Message:    Str(e.Fields, "exception.message"),
+		StackTrace: Str(e.Fields, "exception.stack_trace"),
+	}
+	// Grail's spelling first; one of white space alone does not hide the
+	// other.
+	if strings.TrimSpace(ex.StackTrace) == "" {
+		ex.StackTrace = Str(e.Fields, "exception.stacktrace")
 	}
 	// The flag is a boolean, or a string attribute that spells one.
 	switch root := e.Fields["exception.is_caused_by_root"].(type) {
@@ -116,8 +120,8 @@ func parseSpanExceptions(rec map[string]any) []SpanException {
 }
 
 // FingerprintExceptions computes the grouping key of a span's exception
-// events (exckey.FingerprintExceptions); false when no event says anything
-// about an exception.
+// events (exckey.FingerprintExceptions); false when no event gives a type, a
+// message or a frame a reader can use.
 func FingerprintExceptions(excs []SpanException) (exckey.ExceptionFingerprint, bool) {
 	events := make([]exckey.Event, len(excs))
 	for i, ex := range excs {

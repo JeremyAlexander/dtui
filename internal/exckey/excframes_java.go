@@ -12,10 +12,13 @@ import (
 // after it.
 
 var (
-	javaMoreRe = regexp.MustCompile(`^\.\.\. (\d+) (?:more|common frames omitted)`)
+	// The whole of its line: "... 2 more errors in payload" is a message's.
+	javaMoreRe = regexp.MustCompile(`^\.\.\. (\d+) (?:more|common frames omitted)$`)
 	// The type a "Caused by:" line names, before its message. Words that no
-	// colon follows are prose ("Caused by: connection reset by peer").
-	javaCauseRe = regexp.MustCompile(`^Caused by: ([\p{L}\p{N}_.$]+)(?::|$)`)
+	// colon follows are prose ("Caused by: connection reset by peer"): no
+	// type, and above the frames of a section a line of its message.
+	// No type starts with a digit ("Caused by: 503: Service Unavailable").
+	javaCauseRe = regexp.MustCompile(`^Caused by: ([\p{L}_$][\p{L}\p{N}_.$]*)(?::|$)`)
 
 	// Classes generated at run time are named after the class they stand in
 	// for plus a suffix that differs in every process: CGLIB subclasses
@@ -30,8 +33,8 @@ var (
 	javaLambdaRe    = regexp.MustCompile(`^lambda\$(.+)\$\d+$`)
 	// A Scala closure is a class "Owner$$anonfun$method$1" up to 2.11 and a
 	// method "$anonfun$method$1" since; either way it is code of the method.
-	javaScalaClassRe  = regexp.MustCompile(`^(.*?)\$\$anonfun\$(\w+)\$\d+`)
-	javaScalaMethodRe = regexp.MustCompile(`^\$anonfun\$(\w+)\$\d+(?:\$adapted)?$`)
+	javaScalaClassRe  = regexp.MustCompile(`^(.*?)\$\$anonfun\$([\p{L}\p{N}_]+)\$\d+`)
+	javaScalaMethodRe = regexp.MustCompile(`^\$anonfun\$([\p{L}\p{N}_]+)\$\d+(?:\$adapted)?$`)
 )
 
 // javaVendorPrefixes are the packages that are never the application's:
@@ -47,9 +50,13 @@ var javaVendorPrefixes = []string{
 	"io.netty.", "io.grpc.", "io.undertow.", "io.vertx.", "io.quarkus.", "io.micrometer.", "io.opentelemetry.",
 	"reactor.", "akka.", "okhttp3.", "ch.qos.logback.", "com.fasterxml.", "com.google.common.", "com.zaxxer.",
 	"com.dynatrace.",
-	// Database drivers.
+	// Further frameworks and libraries.
+	"io.micronaut.", "io.ktor.", "org.aspectj.", "net.bytebuddy.", "io.reactivex.", "com.google.gson.",
+	"com.rabbitmq.", "com.stripe.", "io.sentry.", "com.squareup.", "retrofit2.",
+	// Database drivers and mappers.
 	"org.postgresql.", "com.mysql.", "org.mariadb.", "oracle.jdbc.", "com.microsoft.sqlserver.", "org.h2.",
 	"com.mongodb.", "org.bson.", "redis.clients.", "io.lettuce.", "com.datastax.", "org.neo4j.driver.",
+	"org.jooq.", "org.mybatis.",
 	// Cloud SDKs.
 	"software.amazon.", "com.amazonaws.", "com.azure.", "com.microsoft.azure.", "com.google.cloud.",
 	"com.google.api.", "com.google.protobuf.",
@@ -63,11 +70,17 @@ var javaVendorPrefixes = []string{
 // application's own invoke is as often where the work is done.
 var javaPassThrough = []string{"doFilter", "doFilterInternal", "intercept", "proceed"}
 
-// javaNoSource are the JVM's words for code without a source file, and
-// what CGLIB writes for a class it generated. javaUnknownSource is the one
-// that may carry a line all the same ("Unknown Source:12", after
-// obfuscation).
-var javaNoSource = []string{"Native Method", javaUnknownSource, "Compiled Code", "<generated>"}
+// javaNoSource are the JVM's words for code without a source file, what
+// CGLIB writes for a class it generated, and the file name an obfuscator
+// leaves, which stands alone where it dropped the line tables too.
+// javaUnknownSource is the one that may carry a line all the same
+// ("Unknown Source:12", after obfuscation).
+var javaNoSource = []string{"Native Method", javaUnknownSource, "Compiled Code", "<generated>", "SourceFile"}
+
+// javaSourceExtensions end the source files of the JVM's languages. A file
+// with one of them is Java's even where it stands alone, as it does for a
+// class compiled without line tables.
+var javaSourceExtensions = []string{".java", ".kt", ".kts", ".scala", ".groovy", ".clj"}
 
 const (
 	javaUnknownSource = "Unknown Source"
@@ -75,6 +88,9 @@ const (
 	// parentheses, a path separator, a second colon.
 	javaNotInFile = " \t\f():/\\"
 )
+
+// javaCausePrefix is what javaCauseRe starts with.
+const javaCausePrefix = "Caused by:"
 
 // javaLogArchives start what a logger appends to a frame: the archive the
 // class was loaded from (" ~[shop.jar:1.4]").
@@ -150,12 +166,24 @@ func javaFrameParts(line string) (name, location string, ok bool) {
 	return name, location, true
 }
 
-// javaOwns: a frame whose location has a line or is one of the JVM's words.
-// A file alone ("(Cart.java)") reads the same as a .NET parameter
+// javaOwns: a frame whose location has a line, is one of the JVM's words,
+// or is a source file of a JVM language (javaSourceExtensions). Any other
+// file alone ("(cart.html)") reads the same as a .NET parameter
 // ("(System.String)") and as an argument in a line of source text.
 func javaOwns(line string) bool {
 	_, location, ok := javaFrameParts(line)
-	return ok && (strings.Contains(location, ":") || !strings.Contains(location, "."))
+	if !ok {
+		return false
+	}
+	if strings.Contains(location, ":") || !strings.Contains(location, ".") {
+		return true
+	}
+	for _, ext := range javaSourceExtensions {
+		if strings.HasSuffix(location, ext) {
+			return true
+		}
+	}
+	return false
 }
 
 // javaSyntheticClass marks the class the JVM generates for a lambda
@@ -164,12 +192,27 @@ func javaOwns(line string) bool {
 // and is in no root cause.
 const javaSyntheticClass = "$$Lambda"
 
+// javaSyntheticClasses are what the name of such a class holds: the JVM's
+// own, and the one Android's D8 generates
+// ("Cart$$ExternalSyntheticLambda0.run").
+var javaSyntheticClasses = []string{javaSyntheticClass, "$$ExternalSyntheticLambda"}
+
+// javaSuppressedPrefix starts the line of a suppressed exception.
+const javaSuppressedPrefix = "Suppressed:"
+
+// javaFramePrefix starts a frame line as the JVM prints it. Such a line
+// that the reader cannot read as a frame, below the first frame of its
+// section, is still a frame the JVM printed: it holds a place in the
+// section (as a frame of javaSyntheticClass) so that "... N more" counts
+// right, and is in no root cause.
+const javaFramePrefix = "at "
+
 func javaFrame(line string) (StackFrame, bool) {
 	name, ok := javaFrameName(line)
 	if !ok {
 		return StackFrame{}, false
 	}
-	if strings.Contains(name, javaSyntheticClass) {
+	if strings.Contains(name, "$$") && containsAny(name, javaSyntheticClasses) {
 		return StackFrame{Module: javaSyntheticClass, Function: name[strings.LastIndexByte(name, '.')+1:], Syntax: StackJava}, true
 	}
 	// Module and class-loader prefixes: "java.base/", "app//".
@@ -232,9 +275,12 @@ type javaSection struct {
 // A "Suppressed:" block is left out with everything in it, including its own
 // "Caused by:" sections. The block reaches as far as the lines are indented
 // at least as deep as its first: Java indents a suppressed exception and its
-// causes one step further than the exception they belong to. A trace whose
-// indentation was stripped therefore ends at its first suppressed block.
-func javaRootCause(lines []string) (root []StackFrame, typ string) {
+// causes one step further than the exception they belong to. Only a line of
+// the trace's structure ends it (javaStructureLine): the second line of a
+// suppressed exception's message stands at the left margin and ends
+// nothing. A trace whose indentation was stripped therefore ends at its
+// first suppressed block.
+func javaRootCause(lines []string) (root []StackFrame, typ string, atFault bool) {
 	var frames []StackFrame
 	sections := []javaSection{{more: -1, enclosing: -1}}
 	enclosing := -1  // the last section with frames or a "more" line
@@ -268,20 +314,24 @@ func javaRootCause(lines []string) (root []StackFrame, typ string) {
 		line := strings.TrimSpace(raw)
 		indent := len(raw) - len(strings.TrimLeft(raw, " \t"))
 		if suppressed >= 0 {
-			if line == "" || indent >= suppressed {
+			if line == "" || indent >= suppressed || !javaStructureLine(line) {
 				continue
 			}
 			suppressed = -1
 		}
 		switch {
-		case strings.HasPrefix(line, "Suppressed:"):
+		case strings.HasPrefix(line, javaSuppressedPrefix):
 			suppressed = indent
-		case strings.HasPrefix(line, "Caused by:"):
-			closeSection()
+		case strings.HasPrefix(line, javaCausePrefix):
 			cause := javaSection{more: -1, start: len(frames)}
 			if m := javaCauseRe.FindStringSubmatch(line); m != nil {
 				cause.typ = m[1]
+			} else if last := sections[len(sections)-1]; last.more < 0 && last.start == len(frames) {
+				// Prose above the frames of its section: a line of the
+				// message.
+				continue
 			}
+			closeSection()
 			sections = append(sections, cause)
 		default:
 			if strings.HasPrefix(line, "...") {
@@ -290,6 +340,8 @@ func javaRootCause(lines []string) (root []StackFrame, typ string) {
 				}
 			} else if f, ok := javaFrame(line); ok {
 				frames = append(frames, f)
+			} else if strings.HasPrefix(line, javaFramePrefix) && len(frames) > sections[len(sections)-1].start {
+				frames = append(frames, StackFrame{Module: javaSyntheticClass, Syntax: StackJava})
 			}
 		}
 	}
@@ -300,7 +352,7 @@ func javaRootCause(lines []string) (root []StackFrame, typ string) {
 		at--
 	}
 	if at < 0 {
-		return nil, ""
+		return nil, "", true
 	}
 	typ = sections[at].typ
 	root = make([]StackFrame, 0, sections[at].total)
@@ -318,7 +370,18 @@ func javaRootCause(lines []string) (root []StackFrame, typ string) {
 			need = sec.shared
 		}
 	}
-	return root, typ
+	return root, typ, true
+}
+
+// javaStructureLine reports whether a line, already trimmed, is one the JVM
+// builds the trace of an exception of: a frame, a count of shared frames,
+// or the header of a cause. Anything else is a line of a message.
+func javaStructureLine(line string) bool {
+	if strings.HasPrefix(line, "...") || strings.HasPrefix(line, javaCausePrefix) {
+		return true
+	}
+	_, ok := javaFrameName(line)
+	return ok
 }
 
 func javaInApp(f StackFrame) bool {

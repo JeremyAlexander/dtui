@@ -70,5 +70,9 @@ e1:fc967edb343e	python: raised in a task group
 e1:3d80e3328fa5	python: same function name in another file
 e1:227a927b4fa6	python: standard library frames only
 e1:227a927b4fa6	python: standard library frames only, another interpreter and caller
+e1:6d1efa1dc7d0	real: CPython 3.14, a chained traceback through json
+e1:a7f88431a358	real: Go 1.26, a crash in a closure below sort.Slice, built with -trimpath
+e1:d1606be88ce0	real: Node 24, a callback of Array.map in an async function
+e1:bc92da90753b	real: OpenJDK 21, a cause below a stream
 e1:214bf26d118c	type: no message, no stack
 e1:214bf26d118c	type: without a chain the last event counts

@@ -64,11 +64,12 @@ type stackNotation struct {
 	// rootCause reads a trace written in this notation and returns the
 	// frames of its root cause, throw site first, and that exception's type
 	// where the trace is a chain and names it; a trace of one exception
-	// does not have to say what it is, so its type is "".
-	rootCause func(lines []string) (frames []StackFrame, typ string)
-	// atFault reports whether the frames of a trace lead to where the
-	// exception arose. nil where they always do: a runtime that throws
-	// records the stack at the throw.
+	// does not have to say what it is, so its type is "". atFault reports
+	// whether the frames lead to where the exception arose. They always do
+	// where the runtime throws, since it records the stack at the throw.
+	rootCause func(lines []string) (frames []StackFrame, typ string, atFault bool)
+	// atFault, where a notation has traces that are not at fault, is what
+	// rootCause reports as atFault, found without reading the frames.
 	atFault func(lines []string) bool
 	// inApp reports whether a frame is application code rather than the
 	// runtime's or a framework's.
@@ -112,7 +113,7 @@ func ParseStackFrames(stack string) []StackFrame {
 
 // parseStack is ParseStackFrames plus the type of the root cause, where the
 // trace is a chain of exceptions and names it, and whether the frames lead
-// to where the exception arose (stackNotation.atFault). Where they do not,
+// to where the exception arose (stackNotation.rootCause). Where they do not,
 // they are no evidence of which exception this is.
 func parseStack(stack string) (frames []StackFrame, typ string, atFault bool) {
 	lines := stackLines(stack)
@@ -120,8 +121,25 @@ func parseStack(stack string) (frames []StackFrame, typ string, atFault bool) {
 	if notation == nil {
 		return nil, "", false
 	}
-	frames, typ = notation.rootCause(lines)
-	return collapseFrames(frames), typ, notation.atFault == nil || notation.atFault(lines)
+	frames, typ, atFault = notation.rootCause(lines)
+	return collapseFrames(frames), typ, atFault
+}
+
+// faultStack is what a key takes of a trace: the frames and the type
+// parseStack gives where the trace is at fault, and nothing where it is
+// not. A trace that is known not to be at fault before its frames are read
+// (stackNotation.atFault) is not read.
+func faultStack(stack string) (frames []StackFrame, typ string) {
+	lines := stackLines(stack)
+	notation := stackNotationOf(lines)
+	if notation == nil || notation.atFault != nil && !notation.atFault(lines) {
+		return nil, ""
+	}
+	frames, typ, atFault := notation.rootCause(lines)
+	if !atFault {
+		return nil, ""
+	}
+	return collapseFrames(frames), typ
 }
 
 // stackNotationOf picks the notation a trace is written in: the one with
@@ -176,7 +194,8 @@ const (
 	// one a trace is in.
 	stackVoteLines = 16
 	// stackTextMax caps how much of a trace is read, far above what a
-	// runtime prints: the text is cut at the last line that ends inside it.
+	// runtime prints: the text is cut at the last line that ends inside it
+	// (stackLines).
 	stackTextMax = 1 << 20
 	// stackLineMax is the longest line that can be a frame. A longer one is
 	// read as an empty line.
@@ -202,16 +221,24 @@ const stackWordEnds = " \t\"'("
 // without any line break whose breaks arrived escaped (a backslash and an
 // "n") is split at those instead. Only an escaped break followed by
 // indentation shows that this happened: a backslash and an "n" alone are
-// also part of "C:\app\node_modules".
+// also part of "C:\app\node_modules". Real breaks at the ends of the text,
+// which a shipper of logs adds, say nothing about the ones inside it.
+//
+// The text is cut to stackTextMax bytes as it arrived, before any pass over
+// it, and the line the cut goes through is not read.
 func stackLines(stack string) []string {
-	if !strings.ContainsAny(stack, "\r\n") && (strings.Contains(stack, `\n `) || strings.Contains(stack, `\n\t`)) {
+	cut := len(stack) > stackTextMax
+	if cut {
+		stack = stack[:stackTextMax]
+	}
+	if !strings.ContainsAny(strings.Trim(stack, "\r\n"), "\r\n") && (strings.Contains(stack, `\n `) || strings.Contains(stack, `\n\t`)) {
 		stack = unescapeBreaks(stack)
 	}
 	if strings.Contains(stack, "\r") {
 		stack = stackLineBreaks.Replace(stack)
 	}
-	if len(stack) > stackTextMax {
-		stack = stack[:strings.LastIndexByte(stack[:stackTextMax], '\n')+1]
+	if cut {
+		stack = stack[:strings.LastIndexByte(stack, '\n')+1]
 	}
 	lines := strings.Split(stack, "\n")
 	for i, line := range lines {
@@ -225,7 +252,8 @@ func stackLines(stack string) []string {
 // unescapeBreaks turns escaped line breaks and tabs into real ones. Inside
 // a Windows path a backslash before an "n", an "r" or a "t" separates two
 // directories ("C:\app\node_modules", "C:\src\tools"), so there only a
-// break that indentation follows is one.
+// break that indentation follows is one. A path ends at a colon that is not
+// its drive's, which stands before a line number ("C:\app\cart.go:10").
 func unescapeBreaks(stack string) string {
 	var b strings.Builder
 	b.Grow(len(stack))
@@ -248,7 +276,7 @@ scan:
 		}
 		b.WriteByte(c)
 		i++
-		if strings.IndexByte(stackWordEnds, c) >= 0 {
+		if strings.IndexByte(stackWordEnds, c) >= 0 || c == ':' && i-word != len("C:") {
 			word = i
 		}
 	}
@@ -434,6 +462,15 @@ func isPassThrough(f StackFrame) bool {
 func hasAnyPrefix(s string, prefixes []string) bool {
 	for _, p := range prefixes {
 		if strings.HasPrefix(s, p) {
+			return true
+		}
+	}
+	return false
+}
+
+func containsAny(s string, parts []string) bool {
+	for _, p := range parts {
+		if strings.Contains(s, p) {
 			return true
 		}
 	}

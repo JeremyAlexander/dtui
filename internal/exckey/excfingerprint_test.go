@@ -664,6 +664,86 @@ shop/internal/api.(*Handler).PostItem(0xc000012345, {0x7b2a40, 0xc0000a2000}, 0x
 	}
 }
 
+// Whether a trace is a panic's is read from the goroutine its frames come
+// from. A reporter that dumps every goroutine (runtime.Stack(buf, true))
+// prints the others too, and one of them may be in the deferred call of a
+// panic of its own. The dumps are a Go 1.26 program's.
+func TestGoPanicOfAnotherGoroutineIsNotTheErrors(t *testing.T) {
+	const alone = `goroutine 1 [running]:
+main.report({0x27ff77b1af28?, 0x1043c1a40?})
+	shop/main.go:11 +0x40
+main.main()
+	shop/main.go:27 +0x3c
+`
+	const beside = `goroutine 1 [running]:
+main.report({0x1044f79c8?, 0x0?})
+	shop/main.go:11 +0x40
+main.main()
+	shop/main.go:32 +0xfc
+
+goroutine 19 [chan receive]:
+main.worker.func1()
+	shop/main.go:19 +0x3c
+panic({0x1044dfd00?, 0x1045011c0?})
+	runtime/panic.go:860 +0x12c
+main.worker(0x0?, 0x0?)
+	shop/main.go:22 +0x5c
+created by main.main in goroutine 1
+	shop/main.go:30 +0xe0
+`
+	seen := func(stack string) ExceptionFingerprint {
+		return mustFingerprint(t, Event{Type: "*errors.errorString", Message: "cart 7 is locked", StackTrace: stack})
+	}
+	a, b := seen(alone), seen(beside)
+	if a.Rung != RungMessage || b.Rung != RungMessage || a.Key != b.Key {
+		t.Errorf("alone %s on rung %v, beside a panicking goroutine %s on rung %v (%+v)", a.Key, a.Rung, b.Key, b.Rung, b.Frames)
+	}
+	// The first goroutine's own panic still counts, with or without others.
+	const own = `goroutine 19 [running]:
+main.worker.func1()
+	shop/main.go:19 +0x3c
+panic({0x1044dfd00?, 0x1045011c0?})
+	runtime/panic.go:860 +0x12c
+main.worker(0x0?, 0x0?)
+	shop/main.go:22 +0x5c
+
+` + alone
+	if got := seen(own); got.Rung != RungAppFrames || !reflect.DeepEqual(got.Frames, frames(StackGo, "main", "worker")) {
+		t.Errorf("its own panic: rung %v, frames %+v", got.Rung, got.Frames)
+	}
+	// A crash header stands above the first goroutine, not somewhere in
+	// the lines of another.
+	const later = alone + "\ngoroutine 19 [running]:\npanic: not this goroutine's\nmain.worker(0x0?, 0x0?)\n\tshop/main.go:22 +0x5c\n"
+	if got := seen(later); got.Rung != RungMessage {
+		t.Errorf("a panic line of another goroutine: rung %v, frames %+v", got.Rung, got.Frames)
+	}
+	headerless := strings.TrimPrefix(alone, "goroutine 1 [running]:\n") + "panic: logged by something else\n"
+	if got := seen(headerless); got.Rung != RungMessage {
+		t.Errorf("a panic line below the frames: rung %v, frames %+v", got.Rung, got.Frames)
+	}
+}
+
+// The value of a panic may take several lines, and one of them may read
+// like a call. They end at the first empty line, and none is a frame.
+func TestGoPanicValueLinesAreNoFrames(t *testing.T) {
+	want := frames(StackGo, "main", "real", "main", "main")
+	for name, stack := range map[string]string{
+		"a call in the value":            "panic: bad state:\n\tshop.fake()\n\ngoroutine 1 [running]:\nmain.real(0x1)\n\t/app/main.go:9 +0x1d\nmain.main()\n\t/app/main.go:5 +0x25\n",
+		"a call with arguments":          "panic: bad state:\n\tshop.fake(0x1, 0x2)\n\ngoroutine 1 [running]:\nmain.real(0x1)\n\t/app/main.go:9 +0x1d\nmain.main()\n\t/app/main.go:5 +0x25\n",
+		"a fatal error":                  "fatal error: bad state:\nshop.fake(0x1)\n\ngoroutine 1 [running]:\nmain.real(0x1)\nmain.main()\n",
+		"no header below the value":      "panic: bad state:\n\tshop.fake(0x1)\n\nmain.real(0x1)\n\t/app/main.go:9 +0x1d\nmain.main()\n\t/app/main.go:5 +0x25\n",
+		"a signal line and no header":    "panic: runtime error: index out of range\n[signal SIGSEGV: segmentation violation]\n\nmain.real(0x1)\nmain.main()\n",
+		"no empty line above the header": "panic: bad state:\n\tshop.fake(0x1)\ngoroutine 1 [running]:\nmain.real(0x1)\nmain.main()\n",
+		"no line of a value":             "panic: bad state\nmain.real(0x1)\nmain.main()\n",
+		"lines above the crash header":   "2026/11/26 10:11:12 shutting down\npanic: bad state:\n\tshop.fake(0x1)\n\ngoroutine 1 [running]:\nmain.real(0x1)\nmain.main()\n",
+	} {
+		got := mustFingerprint(t, Event{Type: "panic", Message: "bad state", StackTrace: stack})
+		if got.Rung != RungAppFrames || !reflect.DeepEqual(got.Frames, want) {
+			t.Errorf("%s: rung %v, frames %+v, want %+v", name, got.Rung, got.Frames, want)
+		}
+	}
+}
+
 // An event that says nothing about an exception (no type, no message, no
 // stack) is not one to key on: it would give every such span one key, and
 // as the last event hide the real one before it.
@@ -690,10 +770,121 @@ func TestFingerprintSkipsEventsThatSayNothing(t *testing.T) {
 		}
 	}
 	// One of the three is enough.
-	for _, ex := range []Event{{Type: "A"}, {Message: "locked"}, {StackTrace: "no frames in here"}} {
+	for _, ex := range []Event{{Type: "A"}, {Message: "locked"}, {StackTrace: "\tat com.example.shop.Cart.add(Cart.java:42)\n"}} {
 		if _, ok := FingerprintExceptions([]Event{ex, {}}); !ok {
 			t.Errorf("%+v has no key", ex)
 		}
+	}
+}
+
+// What an event gives must be something a reader can use: a type, a message
+// that is not empty once parameterised, or a frame. An event with none of
+// them would get the key of the empty type, the same for every such event
+// of every service, and as the last event of a span stand in for the real
+// one before it.
+func TestFingerprintSkipsEventsNoReaderCanUse(t *testing.T) {
+	goTrace := "goroutine 1 [running]:\nmain.process(0xc000012345)\n\t/app/main.go:42 +0x1d\nmain.main()\n\t/app/main.go:12 +0x25\n"
+	useless := map[string]Event{
+		"stack text no reader can use":     {StackTrace: "something unreadable"},
+		"a Go stack that is not a panic's": {StackTrace: goTrace},
+		"a message of colour codes":        {Message: "\x1b[31m\x1b[0m"},
+		"a message of a NUL":               {Message: "\x00"},
+		"a message of invalid UTF-8":       {Message: "\xff\xfe"},
+		"a message past its limit":         {Message: strings.Repeat(" ", exceptionMessageInput) + "real error"},
+		"a message of 5000 spaces":         {Message: strings.Repeat(" ", 5000) + "real error"},
+		"all three, none usable":           {Type: " ", Message: "\x1b[0m", StackTrace: "at least nothing"},
+		"a message of spaces beyond ASCII": {Message: "\u00a0\u2003"},
+	}
+	real := Event{Type: "java.lang.NullPointerException", Message: "x is null"}
+	want := mustFingerprint(t, real)
+	for name, ex := range useless {
+		if got, ok := FingerprintExceptions([]Event{ex}); ok {
+			t.Errorf("%s: got the key %s on rung %s", name, got.Key, got.Rung)
+		}
+		for _, flagged := range []bool{false, true} {
+			ex.Root = flagged
+			if got, ok := FingerprintExceptions([]Event{real, ex}); !ok || got.Key != want.Key {
+				t.Errorf("%s (flagged %v) after a typed event: key %s %v, want %s", name, flagged, got.Key, ok, want.Key)
+			}
+		}
+	}
+	// The same events with one thing a reader can use.
+	for name, ex := range map[string]Event{
+		"a type":                       {Type: "E", StackTrace: "something unreadable"},
+		"a message beside the stack":   {Message: "locked", StackTrace: goTrace},
+		"a message behind colour":      {Message: "\x1b[31mlocked\x1b[0m"},
+		"a message inside its limit":   {Message: strings.Repeat(" ", exceptionMessageInput-1) + "real error"},
+		"a frame":                      {StackTrace: "\tat com.example.shop.Cart.add(Cart.java:42)\n"},
+		"a Go panic's stack":           {StackTrace: "panic: bad state\n\n" + goTrace},
+		"a message that is all values": {Message: "42"},
+	} {
+		got, ok := FingerprintExceptions([]Event{real, ex})
+		if !ok || got.Key == want.Key {
+			t.Errorf("%s: key %s %v, want one of its own", name, got.Key, ok)
+		}
+	}
+	// A Go stack that is not a panic's is keyed as if the event had none.
+	a := mustFingerprint(t, Event{Type: "E", Message: "locked", StackTrace: goTrace})
+	if b := mustFingerprint(t, Event{Type: "E", Message: "locked"}); a.Key != b.Key || a.Rung != RungMessage {
+		t.Errorf("with a message: %s on %s, want %s", a.Key, a.Rung, b.Key)
+	}
+	a = mustFingerprint(t, Event{Type: "E", StackTrace: goTrace})
+	if b := mustFingerprint(t, Event{Type: "E"}); a.Key != b.Key || a.Rung != RungType {
+		t.Errorf("with a type alone: %s on %s, want %s", a.Key, a.Rung, b.Key)
+	}
+}
+
+// A wrapper the compiler generated for a dependency's method is the method,
+// also where other frames stand between the two: it is in a key once, and
+// never as the application's.
+func TestTopFramesMergeADependencyWithItsWrapper(t *testing.T) {
+	stack := "goroutine 1 [running]:\npanic({0x1, 0x2})\n\t/usr/local/go/src/runtime/panic.go:770 +0x132\n" +
+		"shop.example.invalid/db.(*Conn).Do(0x1)\n\t/go/pkg/mod/shop.example.invalid/db@v1.2.0/conn.go:10 +0x1d\n" +
+		"reflect.Value.call({0x1})\n\t/usr/local/go/src/reflect/value.go:581 +0xca\n" +
+		"shop.example.invalid/db.(*Conn).Do(0x1)\n\t<autogenerated>:1 +0x1d\n" +
+		"main.main()\n\t/app/main.go:12 +0x25\n"
+	got := mustFingerprint(t, Event{Type: "panic", StackTrace: stack})
+	want := []StackFrame{{Module: "shop.example.invalid/db", Function: "Conn.Do", Syntax: StackGo, Dependency: true},
+		{Module: "main", Function: "main", Syntax: StackGo}}
+	if got.Rung != RungAppFrames || !reflect.DeepEqual(got.Frames, want) {
+		t.Errorf("rung %v, frames %+v, want %+v", got.Rung, got.Frames, want)
+	}
+	// A recursion through frames that do not count is one frame as well.
+	all := frames(StackJava, "com.example.shop.Cart", "add", "java.util.ArrayList", "forEach", "com.example.shop.Cart", "add", "com.example.shop.Api", "post")
+	if got := topFrames(all, frameInApp, isPassThrough); len(got) != 2 {
+		t.Errorf("a recursion: %+v", got)
+	}
+	// Two notations that spell a name alike do not name the same code.
+	two := []StackFrame{{Module: "shop", Function: "add", Syntax: StackJava}, {Module: "shop", Function: "add", Syntax: StackDotNet}}
+	if got := topFrames(two, anyFrame, noFrame); len(got) != 2 {
+		t.Errorf("one name in two notations: %+v", got)
+	}
+}
+
+// The throw site counts as the application's also where it only hands the
+// call on: with no other frame of the application the key is still on the
+// app-frames rung, and holds that frame alone.
+func TestPassThroughThrowSiteAloneIsTheApplications(t *testing.T) {
+	got := mustFingerprint(t, Event{Type: "java.lang.IllegalStateException", StackTrace: "java.lang.IllegalStateException: x\n" +
+		"\tat com.example.shop.AuthFilter.doFilter(AuthFilter.java:9)\n" +
+		"\tat org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:178)\n" +
+		"\tat org.apache.catalina.core.StandardWrapperValve.invoke(StandardWrapperValve.java:167)\n"})
+	if want := frames(StackJava, "com.example.shop.AuthFilter", "doFilter"); got.Rung != RungAppFrames || !reflect.DeepEqual(got.Frames, want) {
+		t.Errorf("rung %v, frames %+v, want %+v on the app-frames rung", got.Rung, got.Frames, want)
+	}
+}
+
+// The type the stack text gives belongs to the frames of its root cause.
+// Where no frame could be read the key is the event's: its type, with its
+// message.
+func TestInnerTypeWithoutAFrameIsNotTheKeys(t *testing.T) {
+	got := mustFingerprint(t, Event{Type: "System.Exception", Message: "outer", StackTrace: "System.Exception: outer\n" +
+		" ---> MyApp.InnerException: locked\n   at MyApp.Cart.()\n"})
+	if got.Type != "System.Exception" || got.Rung != RungMessage || got.Frames != nil {
+		t.Errorf("type %q on rung %v with frames %+v, want the event's type on the message rung", got.Type, got.Rung, got.Frames)
+	}
+	if _, typ, _ := parseStack("System.Exception: outer\n ---> MyApp.InnerException: locked\n   at MyApp.Cart.()\n"); typ != "MyApp.InnerException" {
+		t.Errorf("the stack text gives the type %q", typ)
 	}
 }
 
@@ -713,8 +904,8 @@ func TestRootException(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got, ok := rootException(tc.excs); !ok || got.Type != tc.want {
-				t.Errorf("root = %s, want %s", got.Type, tc.want)
+			if got, ok := rootException(tc.excs); !ok || got.typ != tc.want {
+				t.Errorf("root = %s, want %s", got.typ, tc.want)
 			}
 		})
 	}

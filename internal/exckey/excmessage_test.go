@@ -3,6 +3,7 @@ package exckey
 import (
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 )
 
@@ -20,6 +21,34 @@ func TestParameterizeMessageReplacesEachKind(t *testing.T) {
 		{"two single quoted values", "'a' and 'b'", "<q> and <q>"},
 		{"unbalanced quote stays", `expected " here`, `expected " here`},
 
+		{"a double quote inside single quotes", `unexpected char '"' near "foo"`, "unexpected char <q> near <q>"},
+		{"the same with another value", `unexpected char '"' near "bar"`, "unexpected char <q> near <q>"},
+		{"a double quote inside back quotes", "unexpected char `\"` near \"foo\"", "unexpected char <q> near <q>"},
+		{"a single quote inside double quotes", `unexpected "'" near 'foo'`, "unexpected <q> near <q>"},
+		{"a back quote inside double quotes", "unexpected \"`\" near `foo`", "unexpected <q> near <q>"},
+		{"quotes of one kind inside another", `got 'a "b" c' and "d 'e' f"`, "got <q> and <q>"},
+		{"an apostrophe after a letter beyond ASCII", "caf\u00e9's order and users' limit", "caf\u00e9's order and users' limit"},
+		{"the same in ASCII", "cafe's order and users' limit", "cafe's order and users' limit"},
+		{"an apostrophe after a closing bracket", "user (ann)'s cart exceeded users' limit", "user (ann)'s cart exceeded users' limit"},
+		{"an apostrophe after a digit beyond ASCII", "\u0663's and users' limit", "\u0663's and users' limit"},
+		{"a quoted value before a letter beyond ASCII is none", "'a'\u00e9 'b' c", "<q> c"},
+		{"a quoted value after an opening bracket", "name ('ann') taken", "name (<q>) taken"},
+		{"a doubled single quote", "WHERE name = 'O''Brien'", "WHERE name = <q>"},
+		{"no doubled quote", "WHERE name = 'Smith'", "WHERE name = <q>"},
+		{"a doubled double quote", `column "a ""b"" c" bad`, "column <q> bad"},
+		{"a doubled back quote", "table `a``b` bad", "table <q> bad"},
+		{"doubled quotes around a value", "column ''sku'' is unknown", "column <q> is unknown"},
+		{"doubled quotes around another value", "column ''name'' is unknown", "column <q> is unknown"},
+		{"a doubled quote ends an unclosed value", `got "a"" b`, "got <q> b"},
+		{"two empty values", "'' and ''", "<q> and <q>"},
+		{"an apostrophe inside a quoted value", "said 'don't do it' twice", "said <q> twice"},
+		{"an escaped quote before a space", `name 'a\' b' taken`, "name <q> taken"},
+		{"an apostrophe after an underscore", "x_'s and users' limit", "x_'s and users' limit"},
+		{"an unclosed single quote is text", "expected ' here", "expected ' here"},
+		{"an unclosed quote before a closed one of another kind", `got " and 'a'`, `got " and <q>`},
+		{"an unclosed quote after a closed one", `got "a" and "b`, `got <q> and "b`},
+		{"a backslash ends an unclosed value", `got "a\`, `got "a\`},
+		{"a backslash in back quotes is text", "got `a\\` b`", "got <q> b`"},
 		{"url", "GET https://shop.example.invalid/cart/42?x=1 failed", "GET <url> failed"},
 		{"url with another scheme", "dial jdbc:postgresql://db.example.invalid:5432/shop", "dial jdbc:<url>"},
 
@@ -47,11 +76,11 @@ func TestParameterizeMessageReplacesEachKind(t *testing.T) {
 		{"ipv6 before a colon", "peer fd00::1f: gone", "peer <ip>: gone"},
 		{"a bare scope operator stays", "a :: b", "a :: b"},
 		{"a leading dot stays", ". then", ". then"},
-		{"underscore before an address", "_fd00::1f", "_fd00::<n>"},
+		{"underscore before an address", "_fd00::1f", "_fd00::1f"},
 		{"underscore after an address", "fd00::1f_x", "fd00::1f_x"},
 		{"brackets without an address", "index [12] out of range", "index [<n>] out of range"},
 		{"scope operator is not an address", "Cart::add failed", "Cart::add failed"},
-		{"address glued to a word is not one", "xfd00::1f", "xfd00::<n>"},
+		{"address glued to a word is not one", "xfd00::1f", "xfd00::1f"},
 
 		{"unix path", "open /var/data/cart/7.json: no such file", "open <path>: no such file"},
 		{"home path", "open ~/data/cart.json", "open <path>"},
@@ -64,12 +93,38 @@ func TestParameterizeMessageReplacesEachKind(t *testing.T) {
 			"no handler for /orders/<uuid>/lines"},
 		{"a file under a dated directory", "open /logs/2026-03-01/shop.log", "open <path>"},
 		{"a file ends a sentence", "cannot read /etc/shop/cart.yaml.", "cannot read <path>"},
+		{"a long extension", "open /opt/tenant-a/application.properties: denied", "open <path>: denied"},
+		{"an extension of ten letters", "open /opt/a/cart.abcdefghij", "open <path>"},
+		{"eleven letters are no extension", "GET /api/cart.abcdefghijk", "GET /api/cart.abcdefghijk"},
+		// Accepted: a route whose last segment ends like a file name reads
+		// as a file.
+		{"a route that ends like a file", "GET /api/v1.internal failed", "GET <path> failed"},
+		{"a file behind a closing slash", "open /etc/shop/cart.yaml/ now", "open <path> now"},
+		{"a code of five digits", "HTTP 12345 seen", "HTTP 12345 seen"},
+		{"six digits are no code", "HTTP 123456 seen", "HTTP <n> seen"},
+		{"ipv6 in full", "peer 2001:0db8:0000:0000:0000:ff00:0042:8329 gone", "peer <ip> gone"},
+		{"seven groups are no address", "peer 2001:0db8:0000:0000:0000:ff00:0042 gone", "peer <n>:0db8:<n>:<n>:<n>:ff00:<n> gone"},
 		{"a directory is kept", "cannot list /var/data/cart", "cannot list /var/data/cart"},
 		{"a slash between words is not a path", "read/write error", "read/write error"},
 		{"windows path", `open C:\data\cart\7.json failed`, "open <path> failed"},
 		{"windows path with a space", `open C:\Program Files\Shop\cart.json failed`, "open <path> failed"},
 		{"two windows paths", `copy C:\data\a.json to D:\backup files\a.json`, "copy <path> to <path>"},
 
+		{"mac address", "mac 00:1A:2B:FF:4D:5E down", "mac <mac> down"},
+		{"mac address of letters", "mac AA:BB:CC:DD:EE:FF down", "mac <mac> down"},
+		{"mac address of digits", "mac 00:12:34:56:78:90 down", "mac <mac> down"},
+		{"mac address that starts like a time", "mac 00:12:34:56:78:9A down", "mac <mac> down"},
+		{"mac address with hyphens", "mac 00-1a-2b-ff-4d-5e down", "mac <mac> down"},
+		{"mac address of eight octets", "eui 00:12:34:56:78:9A:BC:DE down", "eui <mac> down"},
+		{"mac address of eight octets with hyphens", "eui 00-12-34-56-78-9a-bc-de down", "eui <mac> down"},
+		{"mac address ends a sentence", "no route to 00:1A:2B:FF:4D:5E.", "no route to <mac>."},
+		{"five octets are no mac address", "id 00:1A:2B:FF:4D down", "id <n>:1A:<n>:FF:<n> down"},
+		{"mixed separators are no mac address", "id AA:BB-CC:DD-EE:FF down", "id AA:BB-CC:DD-EE:FF down"},
+		{"three letters are no octet", "id AA:BB:CC:DD:EE:FFF down", "id AA:BB:CC:DD:EE:FFF down"},
+		{"a short commit id", "commit 3f2b8c1 failed", "commit <hex> failed"},
+		{"a short commit id that starts with a letter", "commit f2b8c13 failed", "commit <hex> failed"},
+		{"six hex characters are a word", "commit f2b8c1 failed", "commit f2b8c1 failed"},
+		{"seven hex letters are a word", "the defaced page", "the defaced page"},
 		{"hex literal", "bad pointer 0x1F", "bad pointer <hex>"},
 		{"object identity", "Cart@1b2c3d is closed", "Cart@<hex> is closed"},
 		{"object identity of digits", "Cart@123456 is closed", "Cart@<hex> is closed"},
@@ -78,7 +133,7 @@ func TestParameterizeMessageReplacesEachKind(t *testing.T) {
 		{"a digit run is a number, however long", "id 1234567890 lost", "id <n> lost"},
 		{"seven and eight digits read alike", "order 1234567 or 12345678", "order <n> or <n>"},
 		{"hex word without a digit stays", "deadbeef", "deadbeef"},
-		{"short hex run is a number with a unit", "id 12ab lost", "id <n> lost"},
+		{"a short hex run is a word", "id 12ab lost", "id 12ab lost"},
 
 		{"number", "retry 3 of 5", "retry <n> of <n>"},
 		{"decimal", "took 1.5 seconds", "took <n> seconds"},
@@ -117,12 +172,50 @@ func TestParameterizeMessageReplacesEachKind(t *testing.T) {
 		{"a decimal after status wording", "status: 12.5ms", "status: <n>"},
 		{"a status ends a sentence", "upstream answered HTTP 404.", "upstream answered HTTP 404."},
 		{"sqlstate in lower case letters is no code", "sqlstate error on row 7", "sqlstate error on row <n>"},
-		{"a long s is no s", "a\u017ftatus 404", "a\u017ftatus 404"},
+		{"a long s is no s", "a\u017ftatus 404", "a\u017ftatus <n>"},
+		{"a long s inside the wording", "HTTP \u017ftatus 404", "HTTP \u017ftatus <n>"},
+		{"http error wording", "HTTP Error 404: upstream failure", "HTTP Error 404: upstream failure"},
+		{"http error wording, another status", "HTTP Error 500: upstream failure", "HTTP Error 500: upstream failure"},
+		{"http error wording in lower case", "http error 503", "http error 503"},
+		{"http error with a duration", "HTTP error 12.5ms", "HTTP error <n>"},
+		{"a negative exit code", "exit code -1", "exit code -1"},
+		{"a negative errno", "connect failed: errno -111", "connect failed: errno -111"},
+		{"a negative error code", "error code -32601", "error code -32601"},
+		{"another negative error code", "error code -32600", "error code -32600"},
+		{"a negative code of six digits is a value", "error code -326011", "error code <n>"},
+		{"a negative duration after status wording", "status: -12.5ms", "status: <n>"},
+		{"a hyphen after code wording is no sign", "status-404", "status-<n>"},
+		{"a long s before a sqlstate", "a\u017fQLSTATE 23505", "a\u017fQLSTATE <n>"},
+		{"a long s before a sqlstate of letters", "a\u017fQLSTATE ABCDE", "a\u017fQLSTATE ABCDE"},
+		{"a long s before a quoted sqlstate", "a\u017fQLSTATE '23505'", "a\u017fQLSTATE <q>"},
+		{"a quoted sqlstate", "SQLSTATE '23505' dup", "SQLSTATE 23505 dup"},
+		{"another quoted sqlstate", `SQLSTATE "40001" dup`, "SQLSTATE 40001 dup"},
+		{"a quoted sqlstate with a letter", "sqlstate: '2200G'", "sqlstate: 2200G"},
+		{"a quoted word after sqlstate is a value", "SQLSTATE 'unknown' dup", "SQLSTATE <q> dup"},
+		{"a quoted code elsewhere is a value", "state '23505' dup", "state <q> dup"},
 		{"a kelvin sign is no k", "to\u212aen 42", "to\u212aen <n>"},
 
 		{"a compound duration", "timeout after 1m0s", "timeout after <n>"},
 		{"a longer compound duration", "ran 2h45m30.5s then 1.5µs", "ran <n> then <n>"},
-		{"digits and letters in turns", "part 12gh34kl missing", "part <n> missing"},
+		{"digits and letters in turns are a word", "part 12gh34kl missing", "part 12gh34kl missing"},
+		{"a word that starts with a digit", "2fa failed and 3ds failed", "2fa failed and 3ds failed"},
+		{"a class of statuses", "upstream returned 4xx, then 5xx", "upstream returned 4xx, then 5xx"},
+		{"a status glued to a word", "404Err and 500Error and 404NotFound", "404Err and 500Error and 404NotFound"},
+		{"both micro signs", "took 100\u00b5s, then 100\u03bcs", "took <n>, then <n>"},
+		{"units of time", "1ns 2us 3ms 4s 5sec 6secs 7msec 8m 9min 10mins 11h 12hr 13hrs 14d", strings.TrimSuffix(strings.Repeat("<n> ", 14), " ")},
+		{"units of size", "1b 2B 3kb 4KB 5MB 6gb 7TB 8KiB 9MiB 10GiB 11k 12K 13M 14g", strings.TrimSuffix(strings.Repeat("<n> ", 14), " ")},
+		{"units of rate", "1bps 2kbps 3Mbps 4rps 5qps 6Hz 7kHz 8MHz 9GHz", strings.TrimSuffix(strings.Repeat("<n> ", 9), " ")},
+		{"a unit and more letters are a word", "5msx and 5sx and 3dx", "5msx and 5sx and 3dx"},
+		{"a compound with a word in it", "1m0sx", "1m0sx"},
+		{"scientific notation", "value 1.5e-10 out of range", "value <n> out of range"},
+		{"scientific notation, another value", "value 1.7e-10 out of range", "value <n> out of range"},
+		{"an exponent with a sign or without", "2.5E+03 and 1e5 and 3e8ms", "<n> and <n> and <n>"},
+		{"an exponent needs its digits", "5e and 5e+", "5e and 5e+"},
+		{"a factor", "2.5x slower than 3x", "<n> slower than <n>"},
+		{"a decimal glued to a word is a word", "1.5foo and 1.7foo", "1.5foo and 1.7foo"},
+		{"the same behind the wording of a code", "error code 123456.5foo", "error code 123456.5foo"},
+		{"a version in a sentence", "v 1.2.3 is out", "v <n>.<n> is out"},
+		{"a kelvin sign is no unit", "5\u212a", "<n>\u212a"},
 
 		{"a long quoted value", `value "` + strings.Repeat("x", 300) + `" rejected`, "value <q> rejected"},
 		{"escaped quotes inside a quoted value", `value "a \"red\" b" bad`, "value <q> bad"},
@@ -156,9 +249,58 @@ func TestParameterizeMessageReplacesEachKind(t *testing.T) {
 	}
 }
 
+// Quoted values inside one another are replaced by the pass that meets the
+// outermost, so nesting costs no passes of all the rules.
+func TestParameterizeMessageSettlesNestedQuotesAtOnce(t *testing.T) {
+	onion := "HTTP 404 ---- _ / :// " + strings.Repeat("'a:", 38) + "''" + strings.Repeat("a':", 38)
+	long := strings.Repeat("'a:", 41) + `"` + strings.Repeat("x", 3840) + `"` + strings.Repeat("a':", 41)
+	kinds := strings.Repeat("\"'`", 40) + "x" + strings.Repeat("`'\"", 40)
+	same := strings.Repeat(`"`, 252)
+	for name, msg := range map[string]string{"the onion of 252 bytes": onion, "a long one": long, "three kinds in turns": kinds, "one kind": same} {
+		got, passes := parameterize(msg)
+		if passes > 3 {
+			t.Errorf("%s: %d passes, want at most three", name, passes)
+		}
+		if again := ParameterizeMessage(got); again != got || got != ParameterizeMessage(msg) {
+			t.Errorf("%s: %q is not settled: %q", name, got, again)
+		}
+	}
+	if len(onion) != 252 {
+		t.Errorf("the onion is %d bytes", len(onion))
+	}
+	if got := ParameterizeMessage("\"a 'b `c` d' e\""); got != "<q>" {
+		t.Errorf("three kinds inside one another: %q", got)
+	}
+	// A quote that cannot open a value is passed by once however many
+	// follow: the scan does not start over at each.
+	unclosed := `"` + strings.Repeat(`\"`, exceptionMessageInput/2-1)
+	if got := ParameterizeMessage(unclosed); got != unclosed[:ExceptionMessageMax] {
+		t.Errorf("unclosed quotes: %q", got)
+	}
+	// Measured against the same text with a letter for each quote, which
+	// no rule has work with either.
+	plain := strings.ReplaceAll(unclosed, `"`, "x")
+	cost := func(msg string) time.Duration {
+		best := time.Duration(0)
+		for i := range 5 {
+			start := time.Now()
+			for range 100 {
+				ParameterizeMessage(msg)
+			}
+			if took := time.Since(start); i == 0 || took < best {
+				best = took
+			}
+		}
+		return best
+	}
+	if base, took := cost(plain), cost(unclosed); took > 3*base {
+		t.Errorf("unclosed quotes took %v, the same text without them %v", took, base)
+	}
+}
+
 // The rule order is part of the fingerprint: reordering changes keys.
 func TestParameterizeMessageRuleOrder(t *testing.T) {
-	want := []string{"quoted", "url", "uuid", "ip", "date", "path", "hex", "id", "number"}
+	want := []string{"sqlstate", "quoted", "url", "uuid", "mac", "ip", "date", "path", "hex", "id", "number"}
 	if len(messageRules) != len(want) {
 		t.Fatalf("rules = %d, want %d", len(messageRules), len(want))
 	}
@@ -303,9 +445,21 @@ func TestParameterizeMessageIsIdempotent(t *testing.T) {
 			t.Errorf("not idempotent for %q:\n  once  %q\n  twice %q", in, once, twice)
 		}
 	}
-	// A quote pair that only forms once the inner pair is replaced.
+	// A value whose quotes are doubled.
 	if got := ParameterizeMessage(`''a''`); got != msgQuoted {
 		t.Errorf("nested quotes = %q, want %q", got, msgQuoted)
+	}
+}
+
+// The cut never leaves the start of a placeholder behind, which takes the
+// longest one to know.
+func TestPlaceholderMaxIsTheLongest(t *testing.T) {
+	longest := 0
+	for _, p := range msgPlaceholders {
+		longest = max(longest, len(p))
+	}
+	if msgPlaceholderMax != longest {
+		t.Errorf("msgPlaceholderMax = %d, the longest placeholder has %d bytes", msgPlaceholderMax, longest)
 	}
 }
 

@@ -861,5 +861,53 @@
         "type": "com.acme.shop.TimeoutException"
       }
     ]
+  },
+  {
+    "name": "real: OpenJDK 21, a cause below a stream",
+    "group": "real-java-no-price",
+    "rung": "app frames",
+    "events": [
+      {
+        "type": "java.lang.RuntimeException",
+        "message": "checkout failed",
+        "stack": "real-java-no-price.txt"
+      }
+    ]
+  },
+  {
+    "name": "real: CPython 3.14, a chained traceback through json",
+    "group": "real-python-corrupt-cart",
+    "rung": "app frames",
+    "events": [
+      {
+        "type": "shop.cart.CartError",
+        "message": "cart 7 is corrupt",
+        "stack": "real-python-corrupt-cart.txt"
+      }
+    ]
+  },
+  {
+    "name": "real: Node 24, a callback of Array.map in an async function",
+    "group": "real-node-no-price",
+    "rung": "app frames",
+    "events": [
+      {
+        "type": "TypeError",
+        "message": "Cannot read properties of undefined (reading 'cents')",
+        "stack": "real-node-no-price.txt"
+      }
+    ]
+  },
+  {
+    "name": "real: Go 1.26, a crash in a closure below sort.Slice, built with -trimpath",
+    "group": "real-go-nil-price",
+    "rung": "app frames",
+    "events": [
+      {
+        "type": "panic",
+        "message": "runtime error: invalid memory address or nil pointer dereference",
+        "stack": "real-go-nil-price.txt"
+      }
+    ]
   }
 ]
