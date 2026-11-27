@@ -82,8 +82,9 @@ var (
 	// may be a placeholder an earlier rule left ("/orders/<uuid>/lines").
 	msgUnixPathRe = regexp.MustCompile(`(?:^|[\s=(\[,;:])(?:~|\.{1,2})?(?:/(?:[\w.@%+~-]+|<\w+>)){2,}/?`)
 	// A file name ends in an extension that starts with a letter, so the
-	// "5" of "/carts/1.5" is none.
-	msgFileNameRe = regexp.MustCompile(`\.[A-Za-z][A-Za-z0-9]{0,4}$`)
+	// "5" of "/carts/1.5" is none, and has at most ten characters
+	// ("application.properties").
+	msgFileNameRe = regexp.MustCompile(`\.[A-Za-z][A-Za-z0-9]{0,9}$`)
 	// A Windows path may hold spaces in its directories ("C:\Program
 	// Files\…"): a segment with spaces counts only when a backslash ends it,
 	// so the path stops at the first space after its last backslash. A

@@ -64,6 +64,12 @@ func TestParameterizeMessageReplacesEachKind(t *testing.T) {
 			"no handler for /orders/<uuid>/lines"},
 		{"a file under a dated directory", "open /logs/2026-03-01/shop.log", "open <path>"},
 		{"a file ends a sentence", "cannot read /etc/shop/cart.yaml.", "cannot read <path>"},
+		{"a long extension", "open /opt/tenant-a/application.properties: denied", "open <path>: denied"},
+		{"an extension of ten letters", "open /opt/a/cart.abcdefghij", "open <path>"},
+		{"eleven letters are no extension", "GET /api/cart.abcdefghijk", "GET /api/cart.abcdefghijk"},
+		// Accepted: a route whose last segment ends like a file name reads
+		// as a file.
+		{"a route that ends like a file", "GET /api/v1.internal failed", "GET <path> failed"},
 		{"a directory is kept", "cannot list /var/data/cart", "cannot list /var/data/cart"},
 		{"a slash between words is not a path", "read/write error", "read/write error"},
 		{"windows path", `open C:\data\cart\7.json failed`, "open <path> failed"},
