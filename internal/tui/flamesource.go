@@ -142,6 +142,8 @@ func (a *app) findSource(view viewModel, label string) tea.Cmd {
 	short := catalog.ShortFrame(oneLine(label), 48)
 	f := source.Parse(label)
 	switch {
+	case s == nil && a.opts.SourceRefused != "":
+		return statusErr("O looks for a frame's file in the repository dtui was started in: " + oneLine(a.opts.SourceRefused))
 	case s == nil:
 		return statusErr("O looks for a frame's file in the repository dtui was started in: start it inside the application's checkout")
 	case label == "":

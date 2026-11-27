@@ -197,7 +197,7 @@ as W would. See dtui send --help.`,
 			SavePreset:       savePersonalPreset(personalPresetsPath(cfg.CurrentContext)),
 			DeletePreset:     deletePersonalPreset(personalPresetsPath(cfg.CurrentContext)),
 		}
-		opts.SourceRoot, opts.Editor = sourceSettings(os.Getwd, os.Getenv)
+		opts.SourceRoot, opts.Editor, opts.SourceRefused = sourceSettings(os.Getwd, os.UserHomeDir, os.Getenv)
 		if listen {
 			opts.Listen = listenRemote(remoteSession)
 		}
@@ -524,12 +524,19 @@ func main() {
 // which editor opens them (O on the flame graph): the repository dtui was
 // started in, and the editor DTUI_EDITOR, the terminal or VISUAL/EDITOR
 // names. Neither is a setting of the project file: a committed file must
-// not behave differently per machine, and an editor is a person's.
-func sourceSettings(getwd func() (string, error), getenv func(string) string) (root, editor string) {
+// not behave differently per machine, and an editor is a person's. refused
+// says why a repository that was found is not looked in (a home directory,
+// a whole volume).
+func sourceSettings(getwd, home func() (string, error), getenv func(string) string) (root, editor, refused string) {
 	dir, err := getwd()
 	if err != nil {
-		return "", ""
+		return "", "", ""
 	}
 	e, _ := source.DetectEditor(getenv)
-	return source.Root(dir), e.ID
+	homeDir, _ := home() // unknown is "": no directory is refused for being it
+	root, err = source.Root(dir, homeDir)
+	if err != nil {
+		refused = err.Error()
+	}
+	return root, e.ID, refused
 }

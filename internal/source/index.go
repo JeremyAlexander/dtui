@@ -54,22 +54,68 @@ type Index struct {
 }
 
 // Root is the directory frames are looked up in: the repository dir is in,
+// The refusals of Root: a repository is found, and it is no place to look
+// for an application's source. Each reads on after "dtui was started in".
+var (
+	ErrHomeDirectory = errors.New("the repository here is your home directory, which is not searched: start dtui inside the application's checkout")
+	ErrVolumeRoot    = errors.New("the repository here is a whole volume, which is not searched: start dtui inside the application's checkout")
+)
+
 // which is the nearest directory at or above it that holds a .git entry.
 // Outside a repository it is "": there is nothing to say where an
 // application's source ends, and a home directory is not walked for being
 // where dtui was started.
-func Root(dir string) string {
-	for at := dir; ; at = filepath.Dir(at) {
-		if _, err := os.Lstat(filepath.Join(at, ".git")); err == nil {
-			return at
+//
+// A repository that is the home directory (home, "" when none is known) or
+// the root of a volume is refused with an error, also though it holds .git:
+// a walk of either reads a person's files and not an application's, and a
+// home directory kept in git is common. A repository inside one is found
+// before it and is looked in.
+func Root(dir, home string) (string, error) {
+	return rootIn(dir, home, func(p string) bool {
+		_, err := os.Lstat(p)
+		return err == nil
+	})
+}
+
+// rootIn is Root with the look at a path as a parameter, so that the root of
+// a volume can be tested without one that holds a .git entry.
+func rootIn(dir, home string, exists func(path string) bool) (string, error) {
+	for at := filepath.Clean(dir); ; at = filepath.Dir(at) {
+		top := filepath.Dir(at) == at
+		if exists(filepath.Join(at, ".git")) {
+			switch {
+			case top:
+				return "", ErrVolumeRoot
+			case sameDir(at, home):
+				return "", ErrHomeDirectory
+			}
+			return at, nil
 		}
-		if filepath.Dir(at) == at {
-			return ""
+		if top {
+			return "", nil
 		}
 	}
 }
 
 // Scan walks root and indexes its source files. Symbolic links are not
+// sameDir reports whether two paths name one directory, however each is
+// spelled; "" names none.
+func sameDir(a, b string) bool {
+	if a == "" || b == "" {
+		return false
+	}
+	if filepath.Clean(a) == filepath.Clean(b) {
+		return true
+	}
+	ia, err := os.Stat(a)
+	if err != nil {
+		return false
+	}
+	ib, err := os.Stat(b)
+	return err == nil && os.SameFile(ia, ib)
+}
+
 // followed and not kept, so nothing outside root is ever in the index.
 func Scan(ctx context.Context, root string, lim Limits) (*Index, error) {
 	root, err := filepath.Abs(root)

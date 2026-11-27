@@ -357,18 +357,27 @@ func TestSourceSettings(t *testing.T) {
 		t.Fatal(err)
 	}
 	env := map[string]string{"DTUI_EDITOR": "cursor"}
-	gotRoot, gotEditor := sourceSettings(func() (string, error) { return deep, nil }, func(k string) string { return env[k] })
-	if gotRoot != root || gotEditor != "cursor" {
-		t.Errorf("from %s: root %q, editor %q", deep, gotRoot, gotEditor)
+	getenv := func(k string) string { return env[k] }
+	at := func(dir string) func() (string, error) { return func() (string, error) { return dir, nil } }
+	noHome := func() (string, error) { return "", os.ErrNotExist }
+	gotRoot, gotEditor, refused := sourceSettings(at(deep), noHome, getenv)
+	if gotRoot != root || gotEditor != "cursor" || refused != "" {
+		t.Errorf("from %s: root %q, editor %q, refused %q", deep, gotRoot, gotEditor, refused)
 	}
 	// Outside a repository there is no directory to look in, whatever the
 	// editor. (A temporary directory is under no repository.)
 	outside := t.TempDir()
-	if gotRoot, _ := sourceSettings(func() (string, error) { return outside, nil }, func(k string) string { return env[k] }); gotRoot == outside || (gotRoot != "" && !strings.HasPrefix(outside, gotRoot)) {
-		t.Errorf("outside a repository: root %q, want none", gotRoot)
+	if gotRoot, _, refused := sourceSettings(at(outside), noHome, getenv); gotRoot == outside || (gotRoot != "" && !strings.HasPrefix(outside, gotRoot)) || refused != "" {
+		t.Errorf("outside a repository: root %q, refused %q, want none", gotRoot, refused)
 	}
-	gotRoot, gotEditor = sourceSettings(func() (string, error) { return "", os.ErrNotExist }, func(string) string { return "" })
-	if gotRoot != "" || gotEditor != "" {
-		t.Errorf("without a working directory: root %q, editor %q", gotRoot, gotEditor)
+	// A home directory that is a repository is not looked in, and the
+	// reason is kept for the key to say. The home is the test's own.
+	gotRoot, gotEditor, refused = sourceSettings(at(deep), at(root), getenv)
+	if gotRoot != "" || gotEditor != "cursor" || !strings.Contains(refused, "home directory") {
+		t.Errorf("in a home directory: root %q, editor %q, refused %q", gotRoot, gotEditor, refused)
+	}
+	gotRoot, gotEditor, refused = sourceSettings(func() (string, error) { return "", os.ErrNotExist }, noHome, func(string) string { return "" })
+	if gotRoot != "" || gotEditor != "" || refused != "" {
+		t.Errorf("without a working directory: root %q, editor %q, refused %q", gotRoot, gotEditor, refused)
 	}
 }

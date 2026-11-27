@@ -2,6 +2,7 @@ package source
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -447,14 +448,103 @@ func TestRoot(t *testing.T) {
 		root:                           root,
 		filepath.Join(root, "a/sub/x"): filepath.Join(root, "a/sub"),
 	} {
-		if got := Root(dir); got != want {
-			t.Errorf("Root(%s) = %s, want %s", dir, got, want)
+		if got, err := Root(dir, ""); got != want || err != nil {
+			t.Errorf("Root(%s) = %s, %v, want %s", dir, got, err, want)
 		}
 	}
 	// Without a repository at or above it there is no directory to look
 	// in: a home directory is not walked for being where dtui was started.
 	// (Unless a parent of the test's directory happens to be a repository.)
-	if got := Root(filepath.Join(plain, "a")); got != "" && !strings.HasPrefix(plain, got) {
-		t.Errorf("Root outside a repository = %q, want none", got)
+	if got, err := Root(filepath.Join(plain, "a"), ""); err != nil || (got != "" && !strings.HasPrefix(plain, got)) {
+		t.Errorf("Root outside a repository = %q, %v, want none", got, err)
+	}
+}
+
+// A home directory and the root of a volume are not looked in, also when
+// they are a repository (a home directory kept in git is common): a walk of
+// either reads a person's files, not an application's. A repository inside
+// one is looked in as any other. The home directory is one made for the
+// test, and the volume's .git exists only in what the test answers.
+func TestRootRefusesAHomeDirectoryAndAVolume(t *testing.T) {
+	home := tree(t, map[string]string{".git/HEAD": "x", "notes/todo.py": "", "src/shop/.git/HEAD": "x", "src/shop/api/main.go": ""})
+	link := filepath.Join(t.TempDir(), "home")
+	linked := os.Symlink(home, link) == nil
+	bare := tree(t, map[string]string{"src/shop/.git/HEAD": "x", "notes/todo.py": ""})
+	for _, tc := range []struct {
+		name, dir, home, want string
+		err                   error
+	}{
+		{"the home directory", home, home, "", ErrHomeDirectory},
+		{"a directory of it that is no repository", filepath.Join(home, "notes"), home, "", ErrHomeDirectory},
+		{"spelled with a way round", filepath.Join(home, "notes"), filepath.Join(home, "notes", ".."), "", ErrHomeDirectory},
+		{"a repository inside it", filepath.Join(home, "src", "shop", "api"), home, filepath.Join(home, "src", "shop"), nil},
+		{"another person's home", filepath.Join(home, "notes"), bare, home, nil},
+		{"a home that is no repository", filepath.Join(bare, "notes"), bare, "", nil},
+		{"a repository inside a home that is none", filepath.Join(bare, "src", "shop"), bare, filepath.Join(bare, "src", "shop"), nil},
+		{"no home is known", filepath.Join(home, "notes"), "", home, nil},
+	} {
+		got, err := Root(tc.dir, tc.home)
+		if tc.name == "a home that is no repository" && got != "" && strings.HasPrefix(bare, got) {
+			continue // a parent of the test's directory happens to be a repository
+		}
+		if got != tc.want || !errors.Is(err, tc.err) || (tc.err == nil && err != nil) {
+			t.Errorf("%s: Root(%s, %s) = %q, %v; want %q, %v", tc.name, tc.dir, tc.home, got, err, tc.want, tc.err)
+		}
+	}
+	if linked {
+		// The home directory named through a link is the same directory.
+		if got, err := Root(filepath.Join(home, "notes"), link); got != "" || !errors.Is(err, ErrHomeDirectory) {
+			t.Errorf("a home named through a link: %q, %v", got, err)
+		}
+	}
+
+	// The root of a volume: the same on a system whose paths start with a
+	// drive letter, since it is taken from a path of this one.
+	volume := filepath.VolumeName(home) + string(filepath.Separator)
+	deep := filepath.Join(volume, "srv", "shop")
+	var asked []string
+	onVolume := func(p string) bool {
+		asked = append(asked, p)
+		return p == filepath.Join(volume, ".git")
+	}
+	if got, err := rootIn(deep, "", onVolume); got != "" || !errors.Is(err, ErrVolumeRoot) {
+		t.Errorf("a volume that is a repository: %q, %v; want none and the refusal", got, err)
+	}
+	if want := []string{filepath.Join(deep, ".git"), filepath.Join(volume, "srv", ".git"), filepath.Join(volume, ".git")}; !reflect.DeepEqual(asked, want) {
+		t.Errorf("looked at %q, want %q", asked, want)
+	}
+	if got, err := rootIn(deep, "", func(p string) bool { return p == filepath.Join(volume, "srv", ".git") }); got != filepath.Join(volume, "srv") || err != nil {
+		t.Errorf("a repository under the volume's root: %q, %v", got, err)
+	}
+	if got, err := rootIn(deep, "", func(string) bool { return false }); got != "" || err != nil {
+		t.Errorf("no repository up to the volume's root: %q, %v", got, err)
+	}
+	// A home directory that is the volume's root is refused as either.
+	if got, err := rootIn(deep, volume, onVolume); got != "" || err == nil {
+		t.Errorf("a home that is a volume: %q, %v", got, err)
+	}
+}
+
+// Abs holds for an index whose root is the root of a volume, where a
+// separator after the root would be a second one. The index is made by hand:
+// no volume is walked.
+func TestAbsUnderAVolumeRoot(t *testing.T) {
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(dir, "main.go")
+	if err := os.WriteFile(file, []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	volume := filepath.VolumeName(file) + string(filepath.Separator)
+	rel, err := filepath.Rel(volume, file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rel = filepath.ToSlash(rel)
+	ix := &Index{root: volume, known: map[string]bool{rel: true}}
+	if abs, err := ix.Abs(rel); err != nil || abs != file {
+		t.Errorf("Abs(%q) under %s = %q, %v; want %q", rel, volume, abs, err, file)
 	}
 }

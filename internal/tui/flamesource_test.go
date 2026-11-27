@@ -308,6 +308,13 @@ func TestOpenSourceWithoutAnEditorOrADirectory(t *testing.T) {
 		t.Errorf("without a directory: opened %v, status %q", *opened, a.status)
 	}
 
+	// A repository that is not looked in says which it is.
+	a.opts.SourceRefused = source.ErrHomeDirectory.Error()
+	press(a, key("O"))
+	if len(*opened) != 0 || !a.statusErr || a.status != "O looks for a frame's file in the repository dtui was started in: the repository here is your home directory, which is not searched: start dtui inside the application's checkout" {
+		t.Errorf("in a home directory: opened %v, status %q", *opened, a.status)
+	}
+
 	a, fv, _, _ = sourceApp(t, "zed")
 	a.opts.OpenURL = func(string) error { return errors.New("no handler for zed://\x1b[31m") }
 	onFrame(t, a, fv, "com.example.shop.CartService.total")

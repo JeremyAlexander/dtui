@@ -69,6 +69,9 @@ type Options struct {
 	// "" means none is known, and the file's place is copied instead.
 	SourceRoot string
 	Editor     string
+	// SourceRefused says why a repository was found and SourceRoot is ""
+	// all the same (a home directory, a whole volume), for O to say.
+	SourceRefused string
 	// OpenURL opens a Dynatrace intent/app URL ('o' — open in the Dynatrace UI).
 	// nil falls back to launching the system browser (openBrowser); the wasm
 	// host sets it to a JS window.open, since a browser tab can't shell out.
