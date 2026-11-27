@@ -103,13 +103,13 @@ rest how the view uses it.
   library only (`TestExceptionKeyPackageIsALeaf`). The catalog may import it
   and nothing else of this module (`TestCatalogIsFrameworkFree`), so the key
   is testable without a tenant.
-- **The view is a catalog `Spec` of its own, `:exceptions` with the alias
-  `:exc`.** It is not a lens of `:traces`: sampling belongs to a `Spec`
-  ([ADR-0003](0003-declarative-view-catalog.md)), so a grouping lens would
-  group every other lens with it. It is registered after events, so `:e` still
-  opens events. It is a second list over the spans of the traces noun, not a
-  new tab, a chart or a bespoke screen, which keeps it inside the depth cap of
-  [ADR-0014](0014-breadth-not-depth.md).
+- **The view is a catalog `Spec` of its own, `:exceptions` with the aliases
+  `:exc` and `:exception`.** It is not a lens of `:traces`: sampling belongs
+  to a `Spec` ([ADR-0003](0003-declarative-view-catalog.md)), so a grouping
+  lens would group every other lens with it. It is registered after events, so
+  `:e` still opens events. It is a second list over the spans of the traces
+  noun, not a new tab, a chart or a bespoke screen, which keeps it inside the
+  depth cap of [ADR-0014](0014-breadth-not-depth.md).
 - **One primary query; the grouping is done in the fetch command.** The query
   keeps the spans that carry an exception event, newest first. The catalog has
   a hook for this beside `Decode`, `Spec.Sample`: it names the record, the two
@@ -139,26 +139,37 @@ rest how the view uses it.
   span is keyed") is counted in one keyless last row, so the counts add up to
   the number the sample line gives.
 - **A sample line says what the rows were computed from.** It is built from
-  the same response as the rows. When nothing cut the sample it reads
-  `all 3 exception spans · last 2h`. A sample of one span has no "all"
-  (`1 exception span · last 2h`), and an empty sample that nothing cut has no
-  line. When something did cut it, the reason leads and the window trails,
-  because a narrow table cuts the line at its end: the line starts
-  `limit hit: newest 1000 exception spans, back to 11:48:19`, then says that
-  older ones are not counted, then gives the window. A sample of exactly the
-  row limit is reported as cut by it, because it cannot be told from a longer
-  one. The reasons the line names are the row limit, the result size limit,
-  Grail's scan limit and the fetch timeout. A response Grail marks as sampled
-  is not called `all`. The reach (`back to`) is given only when the row or
-  the size limit cut the sample and a span's time can be read: a loud bug can
-  fill it in seconds, and a count alone hides that. After a scan limit or a
-  timeout the spans are not known to
-  be the newest, so the line says `of what was scanned` and gives no reach. An
-  empty sample that was cut never reads as "no exceptions": it says the scan
-  gave up, or that no span fit the size limit. A group's count is the number
-  of sampled spans with its key, a count within the sample and not within the
-  timeframe. Groups are ordered by count, then by newest span, then by key, so
-  equal counts do not move between refreshes. This extends
+  the same response as the rows. When nothing cut the sample it reads `all 3
+  exception spans · last 2h`. A sample of one span has no "all" (`1 exception
+  span · last 2h`), and an empty sample that nothing cut has no line. When
+  something did cut it, the reason leads and the window trails, because a
+  narrow table cuts the line at its end: the line starts `row limit: newest
+  1000 exception spans back to 11:48:19`, then says `; any older ones are not
+  counted`, then gives the window. A sample of exactly the row limit is
+  reported as cut by it, because it cannot be told from a longer one. The
+  reasons the line names are the row limit (`row limit:`), the result size
+  limit (`size limit:`), a result Grail stopped at a consumption limit
+  (`partial result:`), Grail's scan limit (`scan limit:`) and the fetch
+  timeout. Where more than one applies the line names the gravest, a timeout
+  or a scan limit before a consumption limit, that before a size or a row
+  limit, and the footer's notice follows the same order, so the two do not
+  name different reasons. A response Grail marks as sampled is not called
+  `all`: with no other reason the line starts `sampled read:` and counts the
+  spans `in the part that was read`. The reach (`back to`) is given only when
+  the row or the size limit cut the sample and a span's time can be read: a
+  loud bug can fill it in seconds, and a count alone hides that. After a scan
+  limit or a timeout the spans are not known to be the newest, so the line
+  says `of what was scanned` and gives no reach; after a consumption limit it
+  says `of what was returned`. An empty sample that was cut never reads as "no
+  exceptions": it says that the scan gave up, that no exception span fit the
+  size limit, that `the result was cut and holds no exception spans` (row
+  limit), or `no exception spans in what was returned` (consumption limit).
+  Auto-refresh skips a tick while the view still waits for its sample, so a
+  query slower than the interval is shown and not superseded, and auto-refresh
+  pauses for as long as such a query is outstanding. A group's count is the
+  number of sampled spans with its key, a count within the sample and not
+  within the timeframe. Groups are ordered by count, then by newest span, then
+  by key, so equal counts do not move between refreshes. This extends
   [ADR-0007](0007-scope-honesty.md) from scope to completeness.
 - **Facets and search act on spans; the key is local.** A facet narrows the
   query before sampling, so it uses fields of the fetched spans, collected
@@ -167,17 +178,18 @@ rest how the view uses it.
   as a facet or sent to the server. `/` filters the visible groups and matches
   the key and the full type as well as the cells. On this view Enter keeps
   that filter local, since a server `search` would look for a key no span
-  holds, and `alt+enter` sends the text as a server search over the spans.
-  `--search` and a preset's searches stay server-side.
+  holds, and `ctrl+s` sends the text as a server search over the spans, added
+  to the terms already there; `alt+enter` replaces those terms with it, as on
+  every view. `--search` and a preset's searches stay server-side.
 - **A row opens its newest span, and the exits hand over the query.** Enter
   opens the trace of the group's newest span, and `l` the logs of that trace.
-  `y` yanks the key. `o` opens the
-  primary query in a Notebook and `c` echoes it. Both hand over the query that
-  fetched the sample, not the sample: run again it returns the spans of that
-  moment, one by one and ungrouped, because no DQL computes the key, and both
-  say so. The Notebook link holds the query text and nothing else, so neither
-  the session's segments nor the result size limit go with it. That is a
-  stated limit on the two exits of
+  `y` yanks the key. `o` opens the primary query in a Notebook and `c` echoes
+  it. Both hand over the query that fetched the sample, not the sample: run
+  again it returns the spans of that moment, one by one and ungrouped, because
+  no DQL computes the key, and both say so. The Notebook link holds the query
+  text and nothing else, so neither the session's segments nor the result size
+  limit go with it; the echo carries both, the limit as `--max-result-bytes`.
+  That is a stated limit on the two exits of
   [ADR-0012](0012-navigate-analyze-mutate.md), not a third exit and not an
   override of [ADR-0001](0001-dql-is-the-substrate.md): what is handed over is
   still DQL.
@@ -237,8 +249,11 @@ needs a further ADR:
   key version, but they are dtui's, not the tenant's: nothing in Grail can be
   filtered by one.
 - An `e1` key copied into a ticket stops matching once `e2` ships. dtui stores
-  no keys, so nothing migrates. If Grail gains a grouping key for exceptions,
-  this ADR is superseded.
+  no key of its own accord, so nothing migrates. One place keeps a key the
+  user typed: the page history stores a view's `/` filter, and a key typed
+  there is restored with the page and matches nothing after `e2`. Keeping it
+  out of the history is owed by the view. If Grail gains a grouping key for
+  exceptions, this ADR is superseded.
 - A rare exception outside the sample is absent, not counted as zero; the
   sample line says how far back the sample reaches, and narrowing the scope or
   the timeframe is how the user reaches it.
