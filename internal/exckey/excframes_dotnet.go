@@ -38,8 +38,9 @@ var (
 	// for the generated names that nest.
 	dotnetMainRe = regexp.MustCompile(`<([\p{L}\p{N}_]+)>\$`)
 	// The closure class a lambda is compiled into ("<>c.",
-	// "<>c__DisplayClass5_0`1."), which stands before the lambda's name.
-	dotnetClosureRe = regexp.MustCompile("<>c(?:__DisplayClass\\d+_\\d+)?(?:`\\d+)?\\.")
+	// "<>c__DisplayClass5_0`1.", and "<>c__5`1." in a generic method),
+	// which stands before the lambda's name.
+	dotnetClosureRe = regexp.MustCompile("<>c(?:__DisplayClass\\d+_\\d+|__\\d+)?(?:`\\d+)?\\.")
 	// A delegate compiled from an expression tree is numbered per process.
 	dotnetDelegateRe = regexp.MustCompile(`^lambda_method\d+$`)
 )
@@ -68,6 +69,11 @@ var dotnetVendorPrefixes = []string{
 var dotnetPassThrough = []string{"InvokeAsync"}
 
 const dotnetInnerEnd = "--- End of inner exception stack trace"
+
+// dotnetSibling starts the line of an AggregateException's second and
+// later inner exceptions. They stand beside the first, which is printed
+// like any inner exception, and are no cause of it or of the aggregate.
+const dotnetSibling = "---> (Inner Exception #"
 
 const (
 	// dotnetNested joins a nested type to its outer one in Mono's traces.
@@ -322,7 +328,8 @@ func countDigits(s string) int {
 // above the first frame, qualified anywhere in a line (dotnetInnerRe) or
 // without a namespace at the start of one (dotnetInnerLineRe). An inner exception thrown without a stack has no
 // frames before the line that closes it, so the frames that follow belong
-// to the exception around it.
+// to the exception around it. The frames end where a sibling of an
+// aggregate's first inner exception starts (dotnetSibling).
 func dotnetRootCause(lines []string) (frames []StackFrame, typ string, atFault bool) {
 	var inner []string // the types the arrows introduced, outermost first
 	for _, line := range lines {
@@ -333,6 +340,9 @@ func dotnetRootCause(lines []string) (frames []StackFrame, typ string, atFault b
 			}
 			inner = inner[:max(0, len(inner)-1)]
 			continue
+		}
+		if len(frames) > 0 && strings.HasPrefix(line, dotnetSibling) {
+			break
 		}
 		if f, ok := dotnetFrame(line); ok {
 			frames = append(frames, f)

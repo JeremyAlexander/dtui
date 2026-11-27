@@ -8,6 +8,7 @@ db5f196278c8cf9a	const FrameAnonymous
 23379f089f712f64	const dotnetLambdaMark, dotnetLocalMark, dotnetLocalEnd, dotnetAsyncMark, dotnetAsyncOrdinals, dotnetAsyncEnd, dotnetInterfaceDot, dotnetArity, dotnetUnwrapped
 1dbd793c56756a76	const dotnetMonoOffset
 ee2ec91e3d4628e8	const dotnetNested, dotnetGenerated
+93919b4e3cf3a7f9	const dotnetSibling
 61a640576f8dd7db	const exceptionMessageInput, ExceptionMessageMax, msgIPv6Max, msgIPv6Colons, msgIPv6WordColons, msgPlaceholderMax
 6511a88fc8d4cab7	const fingerprintKeyLen
 ba46e319ae5dae85	const goGoroutine, goFileSuffix
@@ -30,7 +31,7 @@ b29bd30168fc254b	const msgWinPathWord, msgWinPathWords
 f6b370e98019e7df	const wordBytes
 b3635d365a0f43f2	var deployHomes
 e4510216bc423701	var deployRoots
-b6b5966aec6bbe85	var dotnetClosureRe
+ffcd8606722ec0d2	var dotnetClosureRe
 605707ba2a294bee	var dotnetDelegateRe
 d593b7a1bee2f176	var dotnetFrameRe
 606a77113f7a3b69	var dotnetInnerLineRe

@@ -1709,6 +1709,30 @@ func TestDotNetInnerExceptionTypes(t *testing.T) {
 		{"a qualified type on its own line is read once", "Example.Shop.OrderException: order failed\n" +
 			" ---> Example.Shop.CartLockedException: cart 7\n   --- End of inner exception stack trace ---\n   at Example.Shop.Orders.Place()",
 			frames(StackDotNet, "Example.Shop.Orders", "Place"), ""},
+		{"three deep, the innermost without a namespace or frames", `System.Exception: outer
+ ---> MyApp.OrderException: order failed
+ ---> CartLockedException: cart 7
+   --- End of inner exception stack trace ---
+   at MyApp.Order.Submit()
+   --- End of inner exception stack trace ---
+   at MyApp.Api.Post()`, frames(StackDotNet, "MyApp.Order", "Submit"), "MyApp.OrderException"},
+		// AggregateException.ToString prints its first inner exception as
+		// any exception does, then every further one behind an arrow of
+		// its own and closed by "<---". Those are siblings of the first,
+		// not causes of it.
+		{"an aggregate whose first inner exception has no frames", `System.AggregateException: One or more errors occurred. (cart 7) (query failed)
+ ---> MyApp.CartException: cart 7
+   --- End of inner exception stack trace ---
+   at MyApp.Order.Submit()
+ ---> (Inner Exception #1) MyApp.DbException: query failed
+   at MyApp.Db.Query()<---
+`, frames(StackDotNet, "MyApp.Order", "Submit"), ""},
+		{"an aggregate that was never thrown", `System.AggregateException: One or more errors occurred. (cart 7) (query failed)
+ ---> MyApp.CartException: cart 7
+   --- End of inner exception stack trace ---
+ ---> (Inner Exception #1) MyApp.DbException: query failed
+   at MyApp.Db.Query()<---
+`, frames(StackDotNet, "MyApp.Db", "Query"), "MyApp.DbException"},
 		{"a type in another script", "Boutique.CommandeException: échec\n ---> Boutique.Panier.ÉchecException: verrouillé\n" +
 			"   at Boutique.Panier.Ajouter(String sku)\n   --- End of inner exception stack trace ---\n   at Boutique.Commande.Lancer()",
 			frames(StackDotNet, "Boutique.Panier", "Ajouter"), "Boutique.Panier.ÉchecException"},
@@ -1769,6 +1793,10 @@ func TestDotNetGeneratedNames(t *testing.T) {
 		{"at Example.Shop.Cart.<<Example-Shop-ICart-Add>b__0>d.MoveNext()", "Example.Shop.Cart.Example.Shop.ICart", "Add"},
 		// The ordinals end where the next name starts.
 		{"at Example.Shop.Cart.<Run>g__Check|1_0<Add>b__2()", "Example.Shop.Cart.Run", "CheckAdd"},
+		// The closure class of a generic method.
+		{"at MyApp.Cart.<>c__5`1.<Add>b__5_0(Item item)", "MyApp.Cart", "Add"},
+		{"at MyApp.Cart.<>c__6`1.<Add>b__6_0(Item item)", "MyApp.Cart", "Add"},
+		{"at MyApp.Cart.<>c__x.<Add>b__6_0(Item item)", "MyApp.Cart.<>c__x", "Add"},
 		// A name in any script: an ordinal behind it goes like any other.
 		{"at Boutique.Panier.<Réserver>d__12.MoveNext()", "Boutique.Panier", "Réserver"},
 		{"at Boutique.Panier.<Réserver>d__13.MoveNext()", "Boutique.Panier", "Réserver"},
