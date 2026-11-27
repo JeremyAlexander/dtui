@@ -54,12 +54,23 @@ const (
 	ProfSite          = "site"    // allocation site: the allocating frame
 	ProfCallers       = "callers" // []any of frames, innermost caller first
 	ProfAllocBytes    = "allocBytes"
-	ProfAllocPct      = "allocPct" // percent of all bytes allocated
 	ProfSurvivedBytes = "survivedBytes"
 	ProfAllocCount    = "allocCount"
 
+	// The shares the bars draw, 0..1 and unrounded, computed by the source
+	// from the counts: of all samples counted (self, total), of the focused
+	// function's total (focus rows), of all bytes allocated. They are dtui's
+	// own figures, so they are hidden from the inspector like every "__" key
+	// (ADR-0016); the percentages beside them are dtctl's, rounded to one
+	// decimal.
+	ProfSelfShare  = "__share.self"
+	ProfTotalShare = "__share.total"
+	ProfFocusShare = "__share.focus"
+	ProfAllocShare = "__share.alloc"
+
 	// ProfEntityID / ProfEntityName name the analysed process on every row, so
-	// a row can hand its process to the sibling view, the pin and the web UI.
+	// a row can hand its process to a focus drill, the pin and the o exit
+	// (the process in Smartscape).
 	// Hidden from the inspector like every "__" key (ADR-0016).
 	ProfEntityID   = "__process.id"
 	ProfEntityName = "__process.name"
@@ -72,11 +83,10 @@ const (
 	// HotspotStacksAPI reads the analysis the functions table holds, however
 	// long ago it arrived, so that the graph and the table show one analysis
 	// and opening the graph asks the environment for nothing. Only when none
-	// is held does it run one.
+	// is kept does it run one.
 	HotspotStacksAPI = "hotspot-stacks"
 	// HotspotStacksFreshAPI is the same reading as the table's refresh makes
-	// it: an analysis that arrived longer ago than it is reused for is run
-	// again.
+	// it: the analysis is run again and replaces the one kept.
 	HotspotStacksFreshAPI = "hotspot-stacks-fresh"
 )
 
@@ -264,10 +274,13 @@ func profilable(e Entity) bool {
 
 // profileEntityArg is the entity argument of the echoed command: the scoped
 // process, or a placeholder where there is none an analysis runs on, so that
-// what is copied cannot be mistaken for a command that works.
+// what is copied cannot be mistaken for a command that works. The line is
+// made to be pasted into a shell and the id comes from a row of the
+// environment or from the history file, so it is echoed only when all of it
+// is an entity id; the placeholder is no shell syntax either.
 func profileEntityArg(s Scope) string {
-	if s.Entity == nil || s.Entity.ID == "" || !profilable(*s.Entity) {
-		return "<PROCESS-id>"
+	if s.Entity == nil || !profilable(*s.Entity) || !EntityID.MatchString(s.Entity.ID) {
+		return "PROCESS-…"
 	}
 	return s.Entity.ID
 }
@@ -312,8 +325,11 @@ func profileEmpty(s Scope, summary map[string]any) string {
 			where = "with this function on the stack"
 		}
 		return fmt.Sprintf("no %s samples %s — [ and ] switch the thread state", HotspotState(s), where)
+	case "":
+		return ""
 	}
-	return ""
+	// A reason the source passed on from dtctl and this view does not know.
+	return fmt.Sprintf("the analysis has no rows to show, for a reason dtui has no words for (%s)", Str(summary, ProfSumEmpty))
 }
 
 var hotspotsSpec = &Spec{
@@ -326,10 +342,10 @@ var hotspotsSpec = &Spec{
 	Columns: []Column{
 		{Title: "SELF%", Width: 5, Right: true, Field: ProfSelfPct, Value: pctCell(ProfSelfPct)},
 		{Title: "SELF", Width: 7, Right: true, Field: ProfSelf, Value: countCell(ProfSelf)},
-		barColumn("SELF ▇", "__rel."+ProfSelfPct),
+		barColumn("SELF ▇", ProfSelfShare),
 		{Title: "TOTAL%", Width: 6, Right: true, Field: ProfTotalPct, Value: pctCell(ProfTotalPct)},
 		{Title: "TOTAL", Width: 7, Right: true, Field: ProfTotal, Value: countCell(ProfTotal)},
-		barColumn("TOTAL ▇", "__rel."+ProfTotalPct),
+		barColumn("TOTAL ▇", ProfTotalShare),
 		{Title: "PATHS", Width: 5, Right: true, Field: ProfPaths, Value: countCell(ProfPaths)},
 		frameColumn("FUNCTION", ProfFunction),
 	},
@@ -341,29 +357,21 @@ var hotspotsSpec = &Spec{
 		return []Column{
 			{Title: "RELATION", Width: 8, Field: ProfRelation},
 			{Title: "SHARE%", Width: 6, Right: true, Field: ProfShare, Value: pctCell(ProfShare)},
-			barColumn("SHARE ▇", "__rel."+ProfShare),
+			barColumn("SHARE ▇", ProfFocusShare),
 			{Title: "SAMPLES", Width: 8, Right: true, Field: ProfSamples, Value: countCell(ProfSamples)},
 			frameColumn("FUNCTION", ProfFunction),
 		}
-	},
-	Decode: func(records []map[string]any) []map[string]any {
-		// Every bar is a share of what was counted (samples, or bytes
-		// allocated), on one scale, so that equal shares draw equal bars
-		// and a flat profile looks flat.
-		for _, rec := range records {
-			for _, key := range []string{ProfSelfPct, ProfTotalPct, ProfShare, ProfAllocPct} {
-				if pct, ok := FloatValue(rec[key]); ok {
-					rec["__rel."+key] = pct / 100
-				}
-			}
-		}
-		return records
 	},
 	// The command that prints what the view holds: the analysis is asked
 	// for the waiting threads whatever the lens, and dtctl prints fewer
 	// rows than the view unless told.
 	Echo: func(s Scope, _ string) string {
 		window := profileEchoWindow(s.Timeframe)
+		if ProfileAllocations(s) && s.Arg != "" {
+			// Nothing is read for a focused function on this lens, so no
+			// command prints what the view holds.
+			return ""
+		}
 		if ProfileAllocations(s) {
 			return fmt.Sprintf("dtctl exec profiling allocations %s --limit %d %s", profileEntityArg(s), ProfileRowCap, window)
 		}
@@ -388,9 +396,9 @@ var hotspotsSpec = &Spec{
 			alloc, _ := FloatValue(summary[ProfSumAlloc])
 			survived, _ := FloatValue(summary[ProfSumSurvived])
 			segs = append(segs, fmt.Sprintf("%s allocated, %s survived* (pressure, not heap content)",
-				FormatBytes(int64(alloc)), FormatBytes(int64(survived))))
+				FormatBytes(Int64(alloc)), FormatBytes(Int64(survived))))
 			if rows, _ := FloatValue(summary[ProfSumRows]); rows > ProfileRowCap {
-				segs = append(segs, fmt.Sprintf("top %d of %s call paths by allocated bytes", ProfileRowCap, GroupInt(int64(rows))))
+				segs = append(segs, fmt.Sprintf("top %d of %s call paths by allocated bytes", ProfileRowCap, FormatCount(rows)))
 			}
 			return segs
 		}
@@ -399,17 +407,17 @@ var hotspotsSpec = &Spec{
 		rows, _ := FloatValue(summary[ProfSumRows])
 		if s.Arg != "" {
 			segs = append(segs, fmt.Sprintf("%s %s samples with the function on the stack",
-				GroupInt(int64(samples)), state))
+				FormatCount(samples), state))
 			for _, dir := range [][2]string{{ProfSumCallers, "callers"}, {ProfSumCallees, "callees"}} {
 				if n, _ := FloatValue(summary[dir[0]]); n > ProfileFocusCap {
-					segs = append(segs, fmt.Sprintf("top %d of %s %s", ProfileFocusCap, GroupInt(int64(n)), dir[1]))
+					segs = append(segs, fmt.Sprintf("top %d of %s %s", ProfileFocusCap, FormatCount(n), dir[1]))
 				}
 			}
 		} else {
 			segs = append(segs, fmt.Sprintf("%s %s samples (stacks seen, not time)",
-				GroupInt(int64(samples)), state))
+				FormatCount(samples), state))
 			if rows > ProfileRowCap {
-				segs = append(segs, fmt.Sprintf("top %d of %s functions by self samples", ProfileRowCap, GroupInt(int64(rows))))
+				segs = append(segs, fmt.Sprintf("top %d of %s functions by self samples", ProfileRowCap, FormatCount(rows)))
 			}
 		}
 		segs = append(segs, "all threads, leaf: total")
@@ -450,6 +458,8 @@ func FocusTarget(s Scope, rec map[string]any) (fn, why string) {
 		return "", ""
 	}
 	switch fn = Str(rec, ProfFunction); fn {
+	case "":
+		return "", ""
 	case profRootCaller:
 		return "", profRootCaller + " is where the stacks start, not a function"
 	case s.Arg:
@@ -466,7 +476,7 @@ const survivedCaveat = "* SURVIVED counts bytes once per GC outlived: can exceed
 var allocationColumns = []Column{
 	// "1023.9 MiB" is the widest a byte count gets.
 	{Title: "ALLOC", Width: 10, Right: true, Field: ProfAllocBytes, Value: bytesCell(ProfAllocBytes)},
-	barColumn("ALLOC ▇", "__rel."+ProfAllocPct),
+	barColumn("ALLOC ▇", ProfAllocShare),
 	{Title: "SURVIVED*", Width: 10, Right: true, Field: ProfSurvivedBytes, Value: bytesCell(ProfSurvivedBytes)},
 	{Title: "SURV/ALLOC", Width: 10, Right: true, Value: survivedRatio, Sort: func(rec map[string]any) any {
 		if r, ok := survivedRatioOf(rec); ok {
@@ -501,7 +511,7 @@ func countCell(key string) func(map[string]any) string {
 		if !ok {
 			return ""
 		}
-		return GroupInt(int64(f))
+		return FormatCount(f)
 	}
 }
 
@@ -511,11 +521,14 @@ func bytesCell(key string) func(map[string]any) string {
 		if !ok {
 			return ""
 		}
-		return FormatBytes(int64(f))
+		return FormatBytes(Int64(f))
 	}
 }
 
-// barColumn renders a 0..1 fraction stored under key as a bar.
+// barColumn renders a 0..1 fraction stored under key as a bar. Every bar of
+// the view is a share of what was counted (samples, or bytes allocated), on
+// one scale, so that equal shares draw equal bars and a flat profile looks
+// flat.
 func barColumn(title, key string) Column {
 	return Column{
 		Title: title, Width: 8, Min: 4,
@@ -576,11 +589,24 @@ func allocationPath(rec map[string]any, width int) string {
 	// The site is the row's identity: it gets the room it needs, up to
 	// two thirds, and the callers share the rest.
 	siteW := min(runewidth.StringWidth(site), max(width*2/3, 8))
-	parts := []string{ShortFrame(site, siteW)}
+	const arrow = " ← "
+	var b strings.Builder
+	site = ShortFrame(site, siteW)
+	b.WriteString(site)
+	// A path can be hundreds of frames deep and the cell is drawn for every
+	// visible row: stop once the cell overflows. The table cuts what is over
+	// and marks the cut, so a path that goes on never ends flush.
+	used := runewidth.StringWidth(site)
 	for _, c := range callers {
-		parts = append(parts, tailFrame(FormatValue(c)))
+		if used > width {
+			break
+		}
+		caller := tailFrame(FormatValue(c))
+		b.WriteString(arrow)
+		b.WriteString(caller)
+		used += runewidth.StringWidth(arrow) + runewidth.StringWidth(caller)
 	}
-	return strings.Join(parts, " ← ")
+	return b.String()
 }
 
 // tailFrame is a frame's Class.method, without its package.
@@ -596,10 +622,23 @@ func tailFrame(label string) string {
 }
 
 // splitParams cuts a frame label before its parameter list, if it has one:
-// the dots inside "(java.lang.String)" separate no package.
+// the dots inside "(java.lang.String)" separate no package. A parameter list
+// is what the label ends with, from the parenthesis that opens it. One
+// elsewhere is part of the name, as in Go's "pkg.(*Type).Method".
 func splitParams(label string) (head, params string) {
-	if i := strings.IndexByte(label, '('); i > 0 {
-		return label[:i], label[i:]
+	if !strings.HasSuffix(label, ")") {
+		return label, ""
+	}
+	depth := 0
+	for i := len(label) - 1; i > 0; i-- {
+		switch label[i] {
+		case ')':
+			depth++
+		case '(':
+			if depth--; depth == 0 {
+				return label[:i], label[i:]
+			}
+		}
 	}
 	return label, ""
 }

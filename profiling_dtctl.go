@@ -2,15 +2,18 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
-	"regexp"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync/atomic"
 
 	"github.com/Dynatrace/dtctl/pkg/resources/profiling"
+	"github.com/Dynatrace/dtctl/sdk/api/codelevelanalysis"
+	"github.com/Dynatrace/dtctl/sdk/httpclient"
 	"github.com/Dynatrace/dtctl/sdk/session"
 	"github.com/dynatrace-oss/dtui/internal/tui"
 	"github.com/dynatrace-oss/dtui/internal/tui/catalog"
@@ -66,36 +69,58 @@ func (p dtctlProfiler) Allocations(ctx context.Context, q profileQuery) (allocat
 	return dtctlAllocations{analysis}, nil
 }
 
-// entityIDRe is the shape of an entity id: TYPE-16HEX, upper case.
-var entityIDRe = regexp.MustCompile(`^[A-Z][A-Z0-9_]*-[0-9A-F]{16}$`)
-
-// checkProcessArg refuses a launch or send argument the profiling view
-// cannot analyse, where the caller still reads the reply: opened anyway it
-// would land on an error screen, or as text in the row filter.
-func checkProcessArg(view, arg string) error {
-	switch {
-	case arg == "":
-		return fmt.Errorf("%s needs the process to analyse: dtui %s PROCESS-<16 hex digits>", view, view)
-	case !entityIDRe.MatchString(arg):
-		return fmt.Errorf("%s: %q is not a process id (PROCESS-<16 hex digits>, upper case)", view, arg)
-	case !profiling.EligibleEntity(arg):
-		return fmt.Errorf("%s: %s is not a process: an analysis runs on a PROCESS, a PROCESS_GROUP_INSTANCE or a PROCESS_GROUP", view, arg)
-	}
-	return nil
-}
-
-// profilingFailure turns the failures of an analysis into dtui's reasons.
-// Anything that is not one (a failed connection, a cancelled call) passes
-// through as it is.
+// profilingFailure turns the failures of an analysis into dtui's reasons, so
+// that the view never shows the SDK's own text: that text names the task
+// token and, where no response came, the URL the result is read from. Only
+// an error that did not come from an analysis passes through as it is.
 func profilingFailure(err error, entity string) error {
 	if errors.Is(err, profiling.ErrMalformedResult) {
 		return &profileFailure{Reason: profileMalformed, Entity: entity,
 			Message: strings.TrimPrefix(err.Error(), profiling.ErrMalformedResult.Error()+": ")}
 	}
-	f, ok := profiling.ClassifyError(err)
-	if !ok {
+	if f, ok := profiling.ClassifyError(err); ok {
+		return profilingFailureOf(f, entity)
+	}
+	var run *codelevelanalysis.Error
+	if !errors.As(err, &run) {
 		return err
 	}
+	if errors.Is(err, context.Canceled) {
+		return context.Canceled
+	}
+	failure := &profileFailure{Entity: entity, Polling: run.Phase == codelevelanalysis.PhasePoll}
+	var (
+		answered *httpclient.APIError
+		sent     *url.Error
+		syntax   *json.SyntaxError
+	)
+	switch {
+	case errors.As(err, &answered):
+		failure.Reason, failure.Status = profileUnexpectedStatus, answered.StatusCode
+		if !failure.Polling {
+			// What the API says about a poll can name the task.
+			failure.Message = answered.Message
+		}
+	case errors.As(err, &sent):
+		// The cause without the request: the innermost one names no URL.
+		for inner := sent; errors.As(inner.Err, &inner); {
+			sent = inner
+		}
+		failure.Reason, failure.Message = profileUnreachable, sent.Err.Error()
+	default:
+		// The environment answered, and not with an analysis: a body that
+		// does not parse, a 202 that names no task, a status that is neither
+		// a result nor a failure.
+		failure.Reason = profileMalformed
+		if errors.As(err, &syntax) {
+			failure.Message = "it is not JSON"
+		}
+	}
+	return failure
+}
+
+// profilingFailureOf is the failure of an analysis as dtctl classified it.
+func profilingFailureOf(f profiling.Failure, entity string) error {
 	reason, ok := map[profiling.FailureReason]profileReason{
 		profiling.FailureInvalidInput: profileInvalid,
 		profiling.FailureBadRequest:   profileBadRequest,
@@ -107,7 +132,9 @@ func profilingFailure(err error, entity string) error {
 		profiling.FailureTimeout:      profileNotCompleted,
 	}[f.Reason]
 	if !ok {
-		return err // a reason dtctl added since: its own text is the best there is
+		// A reason dtctl added since. Its message was not written for
+		// display and can be the SDK's text, so only its name is shown.
+		return &profileFailure{Reason: profileOther, Entity: entity, Status: f.StatusCode, Message: string(f.Reason)}
 	}
 	return &profileFailure{Reason: reason, Entity: entity, Status: f.StatusCode, Message: f.Message}
 }

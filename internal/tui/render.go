@@ -21,9 +21,8 @@ import (
 // traversable. Classification is display-only — the raw value stays available
 // for yank.
 
-// entityIDRe matches both ID eras — Smartscape ("K8S_POD-16HEX") and classic
-// ("CLOUD_APPLICATION-16HEX") ids share the TYPE-16HEX shape.
-var entityIDRe = regexp.MustCompile(`^[A-Z][A-Z0-9_]*-[0-9A-F]{16}$`)
+// entityIDRe matches an entity id of either era (catalog.EntityID).
+var entityIDRe = catalog.EntityID
 
 // hexIDRe matches opaque hex identifiers: span ids (16) and trace ids (32).
 var hexIDRe = regexp.MustCompile(`^[0-9a-fA-F]{16}$|^[0-9a-fA-F]{32}$`)

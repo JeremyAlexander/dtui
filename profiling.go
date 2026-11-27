@@ -15,9 +15,8 @@ import (
 // dtui's own terms. Everything here is independent of dtctl: the sources below turn a
 // profiler's readings into the rows and the summary record the catalog specs
 // render, word the failures, and share one analysis between the lenses and
-// focus drills of a view. The profiler itself — dtctl's profiling package, or
-// a recorded analysis — is in profiling_dtctl.go, the only file that knows
-// dtctl's types.
+// focus drills of a view. The profiler itself, dtctl's profiling package, is in
+// profiling_dtctl.go, the only file that knows dtctl's types.
 
 // profiler runs profiling analyses of one process. Every request it sends is
 // a GET (ADR-0011): an analysis reads samples the agent already collected.
@@ -108,6 +107,10 @@ const (
 	profileServerError  profileReason = "server_error"  // 5xx
 	profileNotCompleted profileReason = "not_completed" // still running after the last poll
 	profileMalformed    profileReason = "malformed"     // the answer is not an analysis result
+	// What dtctl does not classify.
+	profileUnexpectedStatus profileReason = "unexpected_status" // a failure status with no meaning of its own here (401)
+	profileUnreachable      profileReason = "unreachable"       // no response at all
+	profileOther            profileReason = "other"             // a reason dtctl has and dtui does not know
 )
 
 // profileFailure is a failure the views word themselves, so that what the
@@ -118,8 +121,13 @@ type profileFailure struct {
 	Entity string
 	// Status is the HTTP status the environment answered with, if it did.
 	Status int
-	// Message is the API's own message, when there is one.
+	// Message is the API's own message, when there is one; for
+	// profileUnreachable why no response came, and for profileOther dtctl's
+	// name of the reason.
 	Message string
+	// Polling says the failure came while waiting for the result, not on
+	// the request that starts the analysis.
+	Polling bool
 }
 
 func (f *profileFailure) Error() string {
@@ -160,6 +168,22 @@ func (f *profileFailure) Error() string {
 		return "the analysis was still running when dtui stopped asking for its result — press r to ask again"
 	case profileMalformed:
 		return detail("the environment's answer is not an analysis result (this API is experimental and may have changed)")
+	case profileUnexpectedStatus:
+		if f.Polling {
+			return fmt.Sprintf("the environment answered with status %d while dtui waited for the analysis — press r to ask again", f.Status)
+		}
+		return detail(fmt.Sprintf("the environment answered the request for the analysis with status %d", f.Status)) + " — press r to ask again"
+	case profileUnreachable:
+		if f.Polling {
+			return detail("the environment did not answer while dtui waited for the analysis") + " — press r to ask again"
+		}
+		return detail("the environment did not answer the request for the analysis") + " — press r to ask again"
+	case profileOther:
+		reason := f.Message
+		if f.Status != 0 {
+			reason += fmt.Sprintf(", status %d", f.Status)
+		}
+		return fmt.Sprintf("the analysis failed for a reason dtui has no words for (%s) — press r to ask again", reason)
 	}
 	return f.Message
 }
@@ -185,13 +209,6 @@ func profileWindowCheck(tf catalog.Timeframe, now time.Time) error {
 	return nil
 }
 
-// profileCacheTTL is how long an analysis of a moving window ("last 2h") is
-// reused, counted from when it arrived. Switching the thread-state lens and
-// walking callers and callees read the same analysis, so within the TTL they
-// cost no request; after it, the next read (or r) analyses the window as it
-// then is.
-const profileCacheTTL = 2 * time.Minute
-
 // profileAbandonGrace is how long an analysis nobody waits for keeps running.
 // A lens switch cancels the view's call and issues the next one a moment
 // later, and that gap must not restart a minute-long analysis; for a view that
@@ -203,8 +220,11 @@ const profileAbandonGrace = 2 * time.Second
 const profileCacheSize = 4
 
 // profileRuns shares analyses between the calls of the views. A call for an
-// analysis that is cached gets it at once; one for an analysis in flight
-// joins it. The analysis is cancelled shortly after the last call waiting for
+// analysis that is kept gets it at once, however long ago it arrived: the
+// lenses, the focus drills and a return to the view read one analysis, and
+// the caption states the clock times it covers. Only a fresh read (r,
+// tui.FreshRead) replaces it. A call for an analysis in flight joins it,
+// a fresh one too. The analysis is cancelled shortly after the last call waiting for
 // it was (the view was left): dtui then stops asking for its result. No
 // request tells the environment so; what it does with an analysis nobody
 // polls is not known.
@@ -213,24 +233,28 @@ type profileRuns struct {
 	grace time.Duration
 	// after runs f once d has passed; tests fire it by hand.
 	after func(d time.Duration, f func())
+	// report hands a note of a run to the view behind a waiting call.
+	report func(ctx context.Context, text string)
 
 	mu   sync.Mutex
 	runs map[string]*profileRun
-	seq  int
+	uses int
 }
 
 type profileRun struct {
-	key    string
-	seq    int
+	key string
+	// used orders the finished analyses by when each was last read, or
+	// arrived: the one with the lowest is dropped first.
+	used   int
 	window catalog.ProfileWindow
-	pinned bool // an absolute, closed window: its analysis never goes stale
 
 	done    chan struct{}
-	at      time.Time // when the analysis arrived
 	result  any
 	err     error
 	cancel  context.CancelFunc
 	waiters map[context.Context]struct{}
+	// note is what the analysis said last, for a call that joins it.
+	note string
 	// left counts the times the last waiter left, so that the grace timer
 	// of an earlier leave can tell it was overtaken.
 	left int
@@ -239,7 +263,8 @@ type profileRun struct {
 func newProfileRuns() *profileRuns {
 	return &profileRuns{
 		now: time.Now, grace: profileAbandonGrace, runs: map[string]*profileRun{},
-		after: func(d time.Duration, f func()) { time.AfterFunc(d, f) },
+		after:  func(d time.Duration, f func()) { time.AfterFunc(d, f) },
+		report: tui.ReportProgress,
 	}
 }
 
@@ -255,8 +280,8 @@ func profileNote(ctx context.Context, text string) {
 	}
 }
 
-// get returns the analysis for key, running fetch unless it is cached or in
-// flight, and the window it covers. A call that is already cancelled starts
+// get returns the analysis for key, running fetch unless it is kept or in
+// flight, and the window it covers. A fresh read drops the kept one first. A call that is already cancelled starts
 // nothing.
 func (r *profileRuns) get(ctx context.Context, key string, tf catalog.Timeframe,
 	fetch func(ctx context.Context, w catalog.ProfileWindow) (any, error),
@@ -266,12 +291,19 @@ func (r *profileRuns) get(ctx context.Context, key string, tf catalog.Timeframe,
 	}
 	r.mu.Lock()
 	run := r.runs[key]
-	if run != nil && run.finished() && !run.pinned && r.now().Sub(run.at) > profileCacheTTL {
+	if run != nil && run.finished() && tui.FreshRead(ctx) {
 		delete(r.runs, key)
 		run = nil
 	}
-	if run == nil {
+	switch {
+	case run == nil:
 		run = r.start(key, tf, fetch)
+	case run.finished():
+		r.use(run)
+	case run.note != "":
+		// The view behind this call has heard nothing yet, and the next
+		// response of the analysis can be a minute away.
+		r.report(ctx, run.note)
 	}
 	run.waiters[ctx] = struct{}{}
 	r.mu.Unlock()
@@ -295,19 +327,6 @@ func (r *profileRuns) get(ctx context.Context, key string, tf catalog.Timeframe,
 	}
 }
 
-// held returns the analysis that arrived for key, however long ago: what a
-// view that read it is still showing. It starts nothing, and an analysis
-// that failed or is still running is not held.
-func (r *profileRuns) held(key string) (any, catalog.ProfileWindow, bool) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	run := r.runs[key]
-	if run == nil || !run.finished() || run.err != nil {
-		return nil, catalog.ProfileWindow{}, false
-	}
-	return run.result, run.window, true
-}
-
 // abandon cancels a run that nobody has waited for since the leave numbered
 // left: a later leave has a grace, and a timer, of its own.
 func (r *profileRuns) abandon(run *profileRun, left int) {
@@ -326,11 +345,9 @@ func (r *profileRuns) abandon(run *profileRun, left int) {
 func (r *profileRuns) start(key string, tf catalog.Timeframe,
 	fetch func(ctx context.Context, w catalog.ProfileWindow) (any, error),
 ) *profileRun {
-	r.seq++
 	run := &profileRun{
-		key: key, seq: r.seq,
+		key:     key,
 		window:  catalog.ProfileWindowOf(tf, r.now()),
-		pinned:  tf.Absolute() && !tf.To.IsZero(),
 		done:    make(chan struct{}),
 		waiters: map[context.Context]struct{}{},
 	}
@@ -341,8 +358,9 @@ func (r *profileRuns) start(key string, tf catalog.Timeframe,
 	runCtx = context.WithValue(runCtx, profileNoteKey{}, func(text string) {
 		r.mu.Lock()
 		defer r.mu.Unlock()
+		run.note = text
 		for waiter := range run.waiters {
-			tui.ReportProgress(waiter, text)
+			r.report(waiter, text)
 		}
 	})
 	r.runs[key] = run
@@ -350,7 +368,8 @@ func (r *profileRuns) start(key string, tf catalog.Timeframe,
 		defer cancel()
 		result, err := fetch(runCtx, run.window)
 		r.mu.Lock()
-		run.result, run.err, run.at = result, err, r.now()
+		run.result, run.err = result, err
+		r.use(run)
 		close(run.done)
 		// A failure is not kept: the next call asks again. The calls
 		// waiting for this one hold the run and read it from there.
@@ -363,18 +382,30 @@ func (r *profileRuns) start(key string, tf catalog.Timeframe,
 	return run
 }
 
-// evict drops the oldest finished analyses beyond the cache size; the caller
-// holds r.mu. One still running is never dropped, so more than the cache size
-// can be held while that many run at once.
+// use marks run as the analysis read last; the caller holds r.mu.
+func (r *profileRuns) use(run *profileRun) {
+	r.uses++
+	run.used = r.uses
+}
+
+// evict drops the finished analyses read longest ago beyond the cache size;
+// the caller holds r.mu. One still running neither counts nor is dropped: a result is
+// megabytes only once it has arrived, and counting the runs in flight would
+// drop the one result there is while four others run.
 func (r *profileRuns) evict() {
-	for len(r.runs) > profileCacheSize {
+	for {
 		var oldest *profileRun
+		finished := 0
 		for _, run := range r.runs {
-			if run.finished() && (oldest == nil || run.seq < oldest.seq) {
+			if !run.finished() {
+				continue
+			}
+			finished++
+			if oldest == nil || run.used < oldest.used {
 				oldest = run
 			}
 		}
-		if oldest == nil {
+		if finished <= profileCacheSize {
 			return
 		}
 		delete(r.runs, oldest.key)
@@ -396,8 +427,8 @@ func (run *profileRun) finished() bool {
 func profileSources(p profiler, runs *profileRuns) map[string]tui.Source {
 	return map[string]tui.Source{
 		"hotspots":                    profileSource(p, runs),
-		catalog.HotspotStacksAPI:      stacksSource(p, runs, true),
-		catalog.HotspotStacksFreshAPI: stacksSource(p, runs, false),
+		catalog.HotspotStacksAPI:      stacksSource(p, runs, false),
+		catalog.HotspotStacksFreshAPI: stacksSource(p, runs, true),
 	}
 }
 
@@ -437,33 +468,58 @@ func profileTarget(p profiler, scope catalog.Scope, now time.Time) (entity catal
 	return *scope.Entity, subject, nil
 }
 
-// profileKey names the analysis a view of the timeframe reads, so that two
-// views share one exactly when they would send the same request: the kind,
-// the process as the environment knows it, and the window. A relative
+// profileKey names the analysis a view of the timeframe reads at now, so that
+// two views share one exactly when they would send the same request: the
+// kind, the process as the environment knows it, and the window. A relative
 // timeframe is its length, capped like the request ("last 24h" and "last 7d"
-// both analyse the last 2h); an absolute one is its bounds as they are sent.
-func profileKey(kind, subject string, tf catalog.Timeframe) string {
+// both analyse the last 2h), and so is an open window that began longer ago
+// than one analysis covers; any other absolute one is its bounds as they are
+// sent.
+func profileKey(kind, subject string, tf catalog.Timeframe, now time.Time) string {
 	if !tf.Absolute() {
 		return fmt.Sprintf("%s|%s|last %s", kind, subject, min(tf.Dur, catalog.ProfileMaxWindow))
 	}
 	if tf.To.IsZero() {
+		if catalog.ProfileWindowOf(tf, now).Clamped {
+			return fmt.Sprintf("%s|%s|last %s", kind, subject, catalog.ProfileMaxWindow)
+		}
 		return fmt.Sprintf("%s|%s|from %d", kind, subject, tf.From.UnixMilli())
 	}
 	w := catalog.ProfileWindowOf(tf, tf.To)
 	return fmt.Sprintf("%s|%s|%d-%d", kind, subject, w.From.UnixMilli(), w.To.UnixMilli())
 }
 
-// profileSummary starts the record a profiling source leads its result with.
-func profileSummary(w catalog.ProfileWindow) map[string]any {
+// profileSummary starts the record a profiling source leads its result with:
+// the window the analysis covers, and whether that is less than the reader of
+// tf selected. The second is said per reader, never taken from the analysis:
+// views of different selections share one (profileKey), and each caption has
+// to be true of its own selection (ADR-0007).
+func profileSummary(tf catalog.Timeframe, w catalog.ProfileWindow) map[string]any {
 	summary := map[string]any{
 		catalog.SummaryKey:  true,
 		catalog.ProfSumFrom: w.From.UTC().Format(time.RFC3339),
 		catalog.ProfSumTo:   w.To.UTC().Format(time.RFC3339),
 	}
-	if w.Clamped {
+	// A relative selection ends where the analysis does, so it is cut exactly
+	// when it is longer than one analysis covers; an absolute one is cut when
+	// it starts before the analysis does.
+	clamped := tf.Dur > catalog.ProfileMaxWindow
+	if tf.Absolute() {
+		clamped = tf.From.Before(w.From)
+	}
+	if clamped {
 		summary[catalog.ProfSumClamped] = true
 	}
 	return summary
+}
+
+// setShare stores part of whole under key as the 0..1 share a bar draws,
+// unrounded, so that anything measured draws at least a sliver. A row with
+// nothing of the whole, or a whole of nothing, gets no share and no bar.
+func setShare(rec map[string]any, key string, part, whole float64) {
+	if part > 0 && whole > 0 {
+		rec[key] = part / whole
+	}
 }
 
 // stampProcess names the analysed process on a row (catalog.ProfEntityID).
@@ -475,33 +531,23 @@ func stampProcess(rec map[string]any, e catalog.Entity) map[string]any {
 	return rec
 }
 
-// readHotspots is the hotspots analysis of a scope and the window it covers.
-// With held set, an analysis that has arrived is read however long ago that
-// was, and nothing is asked of the environment; otherwise, and when none is
-// held, the analysis is shared, reused and run as profileRuns.get says.
-func readHotspots(ctx context.Context, p profiler, runs *profileRuns, scope catalog.Scope, held bool,
+// readHotspots is the hotspots analysis of a scope and the window it covers,
+// kept, shared and run as profileRuns.get says: the functions table and the
+// flame graph read one analysis through it.
+func readHotspots(ctx context.Context, p profiler, runs *profileRuns, scope catalog.Scope,
 ) (hotspotReading, catalog.ProfileWindow, catalog.Entity, error) {
-	entity, subject, err := profileTarget(p, scope, runs.now())
+	now := runs.now()
+	entity, subject, err := profileTarget(p, scope, now)
 	if err != nil {
 		return nil, catalog.ProfileWindow{}, entity, err
 	}
-	key := profileKey("hotspots", subject, scope.Timeframe)
-	var (
-		result any
-		window catalog.ProfileWindow
-		have   bool
-	)
-	if held {
-		result, window, have = runs.held(key)
-	}
-	if !have {
-		result, window, err = runs.get(ctx, key, scope.Timeframe,
-			func(ctx context.Context, w catalog.ProfileWindow) (any, error) {
-				return p.Hotspots(ctx, profileQuery{Entity: entity.ID, From: w.From, To: w.To})
-			})
-		if err != nil {
-			return nil, window, entity, err
-		}
+	key := profileKey("hotspots", subject, scope.Timeframe, now)
+	result, window, err := runs.get(ctx, key, scope.Timeframe,
+		func(ctx context.Context, w catalog.ProfileWindow) (any, error) {
+			return p.Hotspots(ctx, profileQuery{Entity: entity.ID, From: w.From, To: w.To})
+		})
+	if err != nil {
+		return nil, window, entity, err
 	}
 	reading, ok := result.(hotspotReading)
 	if !ok || reading == nil {
@@ -512,15 +558,21 @@ func readHotspots(ctx context.Context, p profiler, runs *profileRuns, scope cata
 
 // stacksSource serves the flame graph: every call stack of the hotspots
 // analysis, with its samples per thread state (catalog.HotspotStates), under
-// a summary that says which window they are from.
-func stacksSource(p profiler, runs *profileRuns, held bool) tui.Source {
+// a summary that says which window they are from. It reads the analysis that
+// is kept, which is the one the functions table shows, however long ago it
+// arrived; fresh is the graph's own r, which replaces it as the table's r
+// does (tui.WithFreshRead).
+func stacksSource(p profiler, runs *profileRuns, fresh bool) tui.Source {
 	return func(ctx context.Context, scope catalog.Scope, _ string) ([]map[string]any, error) {
-		reading, window, _, err := readHotspots(ctx, p, runs, scope, held)
+		if fresh {
+			ctx = tui.WithFreshRead(ctx)
+		}
+		reading, window, _, err := readHotspots(ctx, p, runs, scope)
 		if err != nil {
 			return nil, err
 		}
 		rows, empty := reading.Stacks()
-		summary := profileSummary(window)
+		summary := profileSummary(scope.Timeframe, window)
 		summary[catalog.ProfSumRows] = float64(len(rows))
 		if len(rows) == 0 {
 			summary[catalog.ProfSumEmpty] = empty
@@ -551,11 +603,11 @@ func stacksSource(p profiler, runs *profileRuns, held bool) tui.Source {
 // a function (Scope.Arg).
 func hotspotsSource(p profiler, runs *profileRuns) tui.Source {
 	return func(ctx context.Context, scope catalog.Scope, _ string) ([]map[string]any, error) {
-		reading, window, entity, err := readHotspots(ctx, p, runs, scope, false)
+		reading, window, entity, err := readHotspots(ctx, p, runs, scope)
 		if err != nil {
 			return nil, err
 		}
-		summary := profileSummary(window)
+		summary := profileSummary(scope.Timeframe, window)
 		state := catalog.HotspotState(scope)
 
 		if scope.Arg != "" {
@@ -564,6 +616,12 @@ func hotspotsSource(p profiler, runs *profileRuns) tui.Source {
 				return nil, err
 			}
 			records := []map[string]any{summary}
+			total := 0
+			for _, row := range rows {
+				if row.Relation == catalog.ProfRelTotal {
+					total = row.Samples
+				}
+			}
 			// Callers come first and a function can have hundreds, so each
 			// direction keeps its first rows, which are its largest.
 			callers, callees := 0, 0
@@ -580,12 +638,14 @@ func hotspotsSource(p profiler, runs *profileRuns) tui.Source {
 						continue
 					}
 				}
-				records = append(records, stampProcess(map[string]any{
+				rec := map[string]any{
 					catalog.ProfRelation: row.Relation,
 					catalog.ProfFunction: row.Function,
 					catalog.ProfSamples:  float64(row.Samples),
 					catalog.ProfShare:    row.Share,
-				}, entity))
+				}
+				setShare(rec, catalog.ProfFocusShare, float64(row.Samples), float64(total))
+				records = append(records, stampProcess(rec, entity))
 			}
 			summary[catalog.ProfSumCallers], summary[catalog.ProfSumCallees] = float64(callers), float64(callees)
 			if len(rows) == 0 {
@@ -609,14 +669,17 @@ func hotspotsSource(p profiler, runs *profileRuns) tui.Source {
 		records := make([]map[string]any, 0, len(rows)+1)
 		records = append(records, summary)
 		for _, row := range rows {
-			records = append(records, stampProcess(map[string]any{
+			rec := map[string]any{
 				catalog.ProfFunction: row.Function,
 				catalog.ProfSelf:     float64(row.Self),
 				catalog.ProfSelfPct:  row.SelfPct,
 				catalog.ProfTotal:    float64(row.Total),
 				catalog.ProfTotalPct: row.TotalPct,
 				catalog.ProfPaths:    float64(row.Paths),
-			}, entity))
+			}
+			setShare(rec, catalog.ProfSelfShare, float64(row.Self), float64(samples))
+			setShare(rec, catalog.ProfTotalShare, float64(row.Total), float64(samples))
+			records = append(records, stampProcess(rec, entity))
 		}
 		return records, nil
 	}
@@ -626,11 +689,12 @@ func hotspotsSource(p profiler, runs *profileRuns) tui.Source {
 // and call path.
 func allocationsSource(p profiler, runs *profileRuns) tui.Source {
 	return func(ctx context.Context, scope catalog.Scope, _ string) ([]map[string]any, error) {
-		entity, subject, err := profileTarget(p, scope, runs.now())
+		now := runs.now()
+		entity, subject, err := profileTarget(p, scope, now)
 		if err != nil {
 			return nil, err
 		}
-		result, window, err := runs.get(ctx, profileKey("allocations", subject, scope.Timeframe), scope.Timeframe,
+		result, window, err := runs.get(ctx, profileKey("allocations", subject, scope.Timeframe, now), scope.Timeframe,
 			func(ctx context.Context, w catalog.ProfileWindow) (any, error) {
 				return p.Allocations(ctx, profileQuery{Entity: entity.ID, From: w.From, To: w.To})
 			})
@@ -642,7 +706,7 @@ func allocationsSource(p profiler, runs *profileRuns) tui.Source {
 			return nil, errors.New("the allocations analysis returned nothing to read")
 		}
 		rows, allocBytes, survivedBytes, empty := reading.Paths()
-		summary := profileSummary(window)
+		summary := profileSummary(scope.Timeframe, window)
 		summary[catalog.ProfSumAlloc] = float64(allocBytes)
 		summary[catalog.ProfSumSurvived] = float64(survivedBytes)
 		summary[catalog.ProfSumRows] = float64(len(rows))
@@ -662,9 +726,7 @@ func allocationsSource(p profiler, runs *profileRuns) tui.Source {
 				catalog.ProfSurvivedBytes: float64(row.SurvivedBytes),
 				catalog.ProfAllocCount:    float64(row.AllocCount),
 			}
-			if allocBytes > 0 {
-				rec[catalog.ProfAllocPct] = float64(row.AllocBytes) / float64(allocBytes) * 100
-			}
+			setShare(rec, catalog.ProfAllocShare, float64(row.AllocBytes), float64(allocBytes))
 			records = append(records, stampProcess(rec, entity))
 		}
 		return records, nil

@@ -298,13 +298,23 @@ func resolveLaunchArg(msg *tui.NavigateMsg, arg string) error {
 			spec = catalog.Lookup("tables")
 		}
 		if spec.EntityArg {
-			if err := checkProcessArg(spec.Name, arg); err != nil {
+			if err := checkEntityArg(spec, arg); err != nil {
 				return err
 			}
 		}
 		msg.Target, msg.Filter = spec.Name, arg
 	}
 	return nil
+}
+
+// checkEntityArg refuses a launch or send argument that an EntityArg view
+// cannot take, where the caller still reads the reply: such a view shows
+// nothing without its entity, so the argument is required.
+func checkEntityArg(spec *catalog.Spec, arg string) error {
+	if arg == "" {
+		return fmt.Errorf("%s needs the process to analyse: dtui %s PROCESS-<16 hex digits>", spec.Name, spec.Name)
+	}
+	return tui.CheckEntityArg(spec, arg)
 }
 
 // checkLens rejects a lens the view does not have, naming the ones it does.

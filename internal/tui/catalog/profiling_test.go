@@ -3,6 +3,7 @@ package catalog
 import (
 	"math"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -160,7 +161,11 @@ func TestAllocationPathColumnHasText(t *testing.T) {
 	if got := col.Sort(rec); got != want {
 		t.Errorf("sort key = %q, want %q", got, want)
 	}
-	if got := col.TextAt(rec, 40); got != "c.e.s.c.ProductCache.load ← CatalogService.find ← Handler.get" {
+	if got := col.TextAt(rec, 80); got != "com.example.shop.cache.ProductCache.load ← CatalogService.find ← Handler.get" {
+		t.Errorf("drawn at 80 = %q", got)
+	}
+	// The cell is full after the first caller; the table cuts what is over.
+	if got := col.TextAt(rec, 40); got != "c.e.s.c.ProductCache.load ← CatalogService.find" {
 		t.Errorf("drawn at 40 = %q", got)
 	}
 }
@@ -276,10 +281,10 @@ func TestCaptionSaysWhatTheRowCapKept(t *testing.T) {
 // The SELF and TOTAL bars of the functions table share one scale, the share
 // of all samples: equal shares draw equal bars, and a flat profile looks flat.
 func TestHotspotBarsShareOneScale(t *testing.T) {
-	rows := hotspotsSpec.Decode([]map[string]any{
-		{ProfSelf: 40.0, ProfSelfPct: 4.0, ProfTotal: 500.0, ProfTotalPct: 50.0},
-		{ProfSelf: 20.0, ProfSelfPct: 2.0, ProfTotal: 40.0, ProfTotalPct: 4.0},
-	})
+	rows := []map[string]any{
+		{ProfSelfShare: 0.04, ProfTotalShare: 0.5},
+		{ProfSelfShare: 0.02, ProfTotalShare: 0.04},
+	}
 	selfBar, totalBar := hotspotsSpec.Columns[2], hotspotsSpec.Columns[5]
 	for _, tc := range []struct {
 		name string
@@ -433,10 +438,10 @@ func TestProfileWindowLabelReadsTheAnalysis(t *testing.T) {
 // The allocations bar is on the scale of the other bars: a share of all
 // bytes allocated, not of the largest row.
 func TestAllocationBarIsAShareOfAllBytes(t *testing.T) {
-	rows := hotspotsSpec.Decode([]map[string]any{
-		{ProfAllocBytes: 250.0, ProfAllocPct: 25.0},
-		{ProfAllocBytes: 125.0, ProfAllocPct: 12.5},
-	})
+	rows := []map[string]any{
+		{ProfAllocBytes: 250.0, ProfAllocShare: 0.25},
+		{ProfAllocBytes: 125.0, ProfAllocShare: 0.125},
+	}
 	bar := allocationColumns[1]
 	if got := bar.TextAt(rows[0], 8); got != "██" {
 		t.Errorf("a quarter of the bytes draws %q, want %q", got, "██")
@@ -471,5 +476,116 @@ func TestHotspotStates(t *testing.T) {
 		if HotspotLenses[i].Name != state {
 			t.Errorf("state %d is %s, its lens %s", i, state, HotspotLenses[i].Name)
 		}
+	}
+}
+
+// A reason for an empty result that the view does not know is named: it must
+// not read as the generic "nothing in this timeframe" of a query.
+func TestUnknownEmptyReasonIsNamed(t *testing.T) {
+	got := hotspotsSpec.Empty(Scope{}, map[string]any{ProfSumEmpty: "app_only"})
+	if want := "the analysis has no rows to show, for a reason dtui has no words for (app_only)"; got != want {
+		t.Errorf("an unknown reason reads %q, want %q", got, want)
+	}
+	if got := hotspotsSpec.Empty(Scope{}, map[string]any{}); got != "" {
+		t.Errorf("a result that gives no reason reads %q, want the view's own wording", got)
+	}
+}
+
+// A total dtctl saturated at the largest int64 is 2^63 as a float64, which
+// no int64 holds. Converted as it is, it reads as the most negative number
+// on amd64; every count and byte figure of the view must read as the largest.
+func TestSaturatedFiguresStayPositive(t *testing.T) {
+	const huge = float64(math.MaxInt64) // rounds up to 2^63
+	const count, size = "9,223,372,036,854,775,807", "8.0 EiB"
+	twoHours, _ := ParseTimeframe("2h")
+	rec := map[string]any{"n": huge}
+	for name, got := range map[string]string{
+		"a count cell": countCell("n")(rec),
+		"a bytes cell": bytesCell("n")(rec),
+		"FormatCount":  FormatCount(huge),
+		"the samples of the functions caption": strings.Join(hotspotsSpec.Caption(Scope{Timeframe: twoHours},
+			map[string]any{ProfSumSamples: huge, ProfSumRows: huge}), " · "),
+		"the samples of the focus caption": strings.Join(hotspotsSpec.Caption(Scope{Timeframe: twoHours, Arg: "a.B.c"},
+			map[string]any{ProfSumSamples: huge, ProfSumCallers: huge, ProfSumCallees: huge}), " · "),
+		"the allocations caption": strings.Join(hotspotsSpec.Caption(Scope{Timeframe: twoHours, Lens: len(HotspotLenses) - 1},
+			map[string]any{ProfSumAlloc: huge, ProfSumSurvived: huge, ProfSumRows: huge}), " · "),
+	} {
+		if strings.Contains(got, "-") || !strings.Contains(got, count) && !strings.Contains(got, size) {
+			t.Errorf("%s reads %q, want %s or %s and no negative figure", name, got, count, size)
+		}
+	}
+	for f, want := range map[float64]int64{
+		huge: math.MaxInt64, math.Inf(1): math.MaxInt64, -huge * 2: math.MinInt64, math.Inf(-1): math.MinInt64,
+		math.NaN(): 0, 1e18: 1e18, -42.9: -42, 0: 0,
+	} {
+		if got := Int64(f); got != want {
+			t.Errorf("Int64(%v) = %d, want %d", f, got, want)
+		}
+	}
+}
+
+// A parameter list is what a label ends with. A parenthesis elsewhere is part
+// of the name: a Go method keeps its receiver and its name, a path keeps its
+// directories.
+func TestShortFrameCutsOnlyATrailingParameterList(t *testing.T) {
+	for _, tc := range []struct {
+		label string
+		width int
+		want  string
+	}{
+		{"github.com/org/app/server.(*Handler).ServeHTTP", 30, "…p/server.(*Handler).ServeHTTP"},
+		{"main.(*Handler).ServeHTTP", 20, "(*Handler).ServeHTTP"},
+		{"main.(*Handler).ServeHTTP", 12, "…).ServeHTTP"},
+		{"pkg/(lambda)/index.js:handler", 20, "…a)/index.js:handler"},
+		// The last list is the parameters, whatever stands before it.
+		{"com.example.Foo.lambda$run$0(java.util.function.Function)", 20, "Foo.lambda$run$0(…)"},
+		{"com.example.Foo.bar(java.util.Map(K))", 12, "Foo.bar(…)"},
+		{"com.example.Foo.bar)", 7, "…o.bar)"},
+		{"(anonymous)", 6, "…mous)"},
+	} {
+		if got := ShortFrame(tc.label, tc.width); got != tc.want {
+			t.Errorf("ShortFrame(%q, %d) = %q, want %q", tc.label, tc.width, got, tc.want)
+		}
+	}
+	if got := tailFrame("main.(*Handler).ServeHTTP"); got != "(*Handler).ServeHTTP" {
+		t.Errorf("a caller in an allocation path reads %q, want its receiver and method", got)
+	}
+}
+
+// A row without a function name is no function to focus, and is not "the
+// function in focus" of a table that has none.
+func TestFocusTargetOfARowWithoutAFunction(t *testing.T) {
+	for _, s := range []Scope{{}, {Arg: "a.B.c"}} {
+		if fn, why := FocusTarget(s, map[string]any{}); fn != "" || why != "" {
+			t.Errorf("focus %q: a row without a function gives (%q, %q), want neither", s.Arg, fn, why)
+		}
+	}
+}
+
+// The path cell is drawn for every visible row on every frame. It names
+// callers until the cell is full and no further: the rest would be cut off.
+func TestAllocationPathStopsWhenTheCellIsFull(t *testing.T) {
+	var callers []any
+	for i := range 5000 {
+		callers = append(callers, "com.example.Layer"+strconv.Itoa(1000+i)+".call")
+	}
+	rec := map[string]any{ProfSite: "com.example.Buffer.grow", ProfCallers: callers}
+	got := allocationPath(rec, 60)
+	if want := "com.example.Buffer.grow ← Layer1000.call ← Layer1001.call ← Layer1002.call"; got != want {
+		t.Errorf("a path of 5,000 callers in 60 cells draws\n %q, want\n %q", got, want)
+	}
+	// A path that fills the cell exactly and goes on draws one caller more,
+	// so that the table's cut shows there is more.
+	if got := allocationPath(rec, 57); !strings.HasSuffix(got, "Layer1002.call") {
+		t.Errorf("a path that goes on past a full cell draws %q, want one caller past the cell", got)
+	}
+	// The arrows count toward the cell as well.
+	if got := allocationPath(rec, 52); !strings.HasSuffix(got, "Layer1001.call") {
+		t.Errorf("in 52 cells the path draws %q, want it to end after the second caller", got)
+	}
+	// One that fits is whole.
+	rec[ProfCallers] = callers[:2]
+	if want := "com.example.Buffer.grow ← Layer1000.call ← Layer1001.call"; allocationPath(rec, 60) != want {
+		t.Errorf("a path of two callers draws %q, want %q", allocationPath(rec, 60), want)
 	}
 }

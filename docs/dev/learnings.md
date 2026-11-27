@@ -1472,10 +1472,14 @@ Optional capability interfaces let the app treat them uniformly:
 - **Views mutate in place (pointer receivers) and stay alive when covered**, so
   `esc` restores them with data + cursor intact. The breadcrumb stack owns the
   lifetimes.
-- **Stale results are dropped by `(owner, seq)`, never by cancellation.** The
+- **Stale results are dropped by `(owner, seq)`, not by cancellation.** The
   DQL executor prints cancellation notices to stderr, which would tear the
   alternate screen — so in-flight queries run to completion and old results are
-  discarded on arrival. Every async query is a `tea.Cmd` goroutine.
+  discarded on arrival. Every async query is a `tea.Cmd` goroutine. The one
+  exception is the call of a spec that sets `CancelOnLeave` (the profiling
+  view, an API source and no DQL): it takes minutes, so the view cancels its
+  context when it leaves the breadcrumb trail or a newer fetch replaces it.
+  The `(owner, seq)` drop still applies to whatever such a call returns.
 - **Distinct owners disambiguate multiplexed queries on one view's seq:**
   `enrichOwner{v}`, `nameOwner{v}`, `panelOwner{v, idx}`. A view's list query,
   its enrichment query, and (home) its per-panel queries all share the view's

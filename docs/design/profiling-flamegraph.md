@@ -68,13 +68,13 @@ for it.
 
 The graph is a second reading of the analysis the table shows. Opening it
 asks the profiling source for that analysis's stacks (`hotspot-stacks`), which
-the source holds for a while after an analysis ran: one read, and no new
-analysis. When the source no longer holds it (it keeps a few, and four other
-analyses of the same process are enough to push one out), it runs a new one,
+the source keeps with the last few analyses it ran: one read, and no new
+analysis. When the source no longer keeps it (it keeps four, and four others
+read since are enough to push one out), it runs a new one,
 of a later window: the caption names the graph's own window, and the status
 line says once that the graph and the functions are now of two analyses.
-`r` asks as the table's `r` does; an answer
-that is the analysis already shown changes nothing and says so. `t` is
+`r` asks as the table's `r` does: the analysis runs again and replaces the
+one kept, and the graph is drawn anew from its root. `t` is
 another window and so another analysis. One analysis carries every thread
 state: `[` and `]` cost nothing.
 
@@ -222,14 +222,14 @@ click selects a frame, double click zooms, the wheel scrolls levels.
 | `O` | open the selected frame's source in the editor | none |
 | `P` | the details of the selected frame on or off (the preview preference) | none |
 | `d` | give the details the room, or give it back | none |
-| `r` | refresh: the analysis is asked for again; one is reused for a while, after that a new one runs | reset the view |
+| `r` | refresh: the analysis runs again and replaces the one kept, as on the table | reset the view |
 | `y` `c` `o` `t` `?` `q` | dtui's: copy the function, copy the command, open, timeframe, help, quit | `?` is a debug bar, `q` quits |
 
 Where the two differ, a dtui key keeps its meaning: `h` and `l` are drill
 letters, `f` is facets, `b` is the fleet on the views that have one, and `r`
 is refresh everywhere. So `r` does not reset the view as it does in
-flamelens: it asks for the analysis again, which can run for a minute once
-the one held is no longer reused. There is no single reset key; `esc` undoes
+flamelens: it runs the analysis again, which can take a minute. There is no
+single reset key; `esc` undoes
 the search, then the zoom, and then returns to the functions. `O`
 is the capital of `o`: `o` opens the selection in Dynatrace, `O` in the
 editor. `d` is "describe / details" on every table.

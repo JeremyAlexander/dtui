@@ -571,8 +571,8 @@ func TestFlameGraphStatesSayWhatHappened(t *testing.T) {
 	}
 }
 
-// r asks as the table's refresh does. An answer that is the analysis shown
-// changes nothing and says so; a new one is drawn from its root, with the
+// r asks as the table's refresh does: the analysis runs again, also for a
+// window that is the same, and what arrives is drawn from its root, with the
 // search searched again.
 func TestFlameGraphRefresh(t *testing.T) {
 	a, _, fv, calls := openFlame(t)
@@ -589,9 +589,10 @@ func TestFlameGraphRefresh(t *testing.T) {
 	if out := screen(a); !strings.Contains(out, "analysing the hotspots of shop-backend") || !strings.Contains(out, "█a") {
 		t.Errorf("a refresh over a graph does not show both the wait and the graph:\n%s", out)
 	}
-	answerFlame(a, fv, stackRecords("2026-07-15T12:00:00Z", flameWalk...), nil)
-	if place(fv) != before || fv.Busy() || !strings.Contains(a.status, "this is still the analysis shown") {
-		t.Errorf("the same analysis: %s (was %s), status %q", place(fv), before, a.status)
+	// The same window, analysed again, with one stack more.
+	answerFlame(a, fv, stackRecords("2026-07-15T12:00:00Z", append(flameWalk[:len(flameWalk):len(flameWalk)], "late 5,0")...), nil)
+	if got := fv.graph.Tree().Total(flame.Root, 0); got != 205 || fv.Busy() || place(fv) == before {
+		t.Errorf("the same window analysed again: %d samples, busy %v, at %s", got, fv.Busy(), place(fv))
 	}
 
 	press(a, key("r"))

@@ -47,4 +47,4 @@
   706.0 MiB  ▏          755.4 MiB       1.07×    7,711,402  com.example.shop.coupon.CouponMapper.toDto ← CouponService.load ← CouponController.get
  * SURVIVED counts bytes once per GC outlived: can exceed ALLOC, not live heap
  [ ] lens  enter inspect  / filter  J/K sort  : views  t timeframe  S segments  r refresh  ? help  q quit
- ✓ lens: allocations — allocated bytes per allocation site and call path
+ ≡ dtctl exec profiling allocations PROCESS-000000000000A001 --limit 300 --default-timeframe-start 'now()-2h'

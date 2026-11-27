@@ -38,8 +38,9 @@ narrowly:
   trace waterfall does.
 - **It is a second reading of the analysis the functions show, not a second
   analysis.** Opening it asks the profiling source for the stacks of that
-  analysis, which the source holds for a while: one read, of what the table
-  already ran. When the analysis is no longer held, the source runs a new
+  analysis, which the source keeps with the last few it ran: one read, of
+  what the table already ran. When the analysis is no longer kept, the
+  source runs a new
   one, of a later window; the graph's caption names its own window, and the
   status line says once that the two readings are now of two analyses. From
   then on every key but `r` and `t`, which ask for an analysis as they do on

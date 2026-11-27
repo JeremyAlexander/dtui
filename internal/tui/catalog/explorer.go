@@ -193,7 +193,7 @@ func FormatCount(v any) string {
 	if !ok {
 		return FormatValue(v)
 	}
-	n := int64(f)
+	n := Int64(f)
 	s := fmt.Sprintf("%d", n)
 	if n < 1000 {
 		// Also keeps the sign out of the grouping loop below (counts are

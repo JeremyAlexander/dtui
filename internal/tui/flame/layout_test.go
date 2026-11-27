@@ -2,7 +2,6 @@ package flame
 
 import (
 	"fmt"
-	"github.com/dynatrace-oss/dtui/internal/tui/catalog"
 	"math"
 	"strings"
 	"testing"
@@ -348,36 +347,15 @@ func TestLabel(t *testing.T) {
 }
 
 // Lock and Unlock of one type are two frames, and read as two in cells of
-// any width: the receiver in parentheses is not cut for a parameter list.
-//
-// One part of this is not the graph's to decide. A cell wide enough for the
-// label with its "parameters" folded to "(…)" shows what catalog.ShortFrame
-// makes of it, and ShortFrame reads a Go receiver as a parameter list until
-// catalog.splitParams is cured on the profiling view's branch. That part is
-// skipped, and named, while it does not hold in this tree.
+// any width: the receiver in parentheses is not cut for a parameter list,
+// neither by the graph's own shortening nor by catalog.ShortFrame, which a
+// wider cell shows.
 func TestLabelTellsGoMethodsOfOneTypeApart(t *testing.T) {
 	const lock, unlock = "example.com/shop/internal/guard.(*Guard).Lock", "example.com/shop/internal/guard.(*Guard).Unlock"
-	cured := strings.HasSuffix(catalog.ShortFrame("sync.(*Mutex).Lock", 12), "Lock")
-	var depends []int
 	for width := 3; width <= len(unlock)+2; width++ {
 		a, b := Label(lock, width), Label(unlock, width)
-		same := a == b || !strings.Contains(strings.ReplaceAll(a, "…", ""), "Lo") || !strings.Contains(strings.ReplaceAll(b, "…", ""), "Un")
-		if !same {
-			continue
+		if a == b || !strings.Contains(strings.ReplaceAll(a, "…", ""), "Lo") || !strings.Contains(strings.ReplaceAll(b, "…", ""), "Un") {
+			t.Errorf("at %d cells the two read %q and %q", width, a, b)
 		}
-		// Only the form ShortFrame folds is the catalog's doing.
-		folded := func(label string) bool {
-			short := catalog.ShortFrame(label, width)
-			return strings.HasSuffix(short, "(…)") && !strings.HasPrefix(short, "…")
-		}
-		if !cured && (folded(lock) || folded(unlock)) {
-			depends = append(depends, width)
-			continue
-		}
-		t.Errorf("at %d cells the two read %q and %q", width, a, b)
-	}
-	if len(depends) > 0 {
-		t.Skipf("at %d widths (%d to %d cells) a cell shows the label as catalog.ShortFrame folds it, which loses a Go method's name until catalog.splitParams stops reading a receiver as a parameter list (the profiling view's branch); every other width holds",
-			len(depends), depends[0], depends[len(depends)-1])
 	}
 }

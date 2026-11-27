@@ -63,7 +63,8 @@ Views are opened from the command bar (:) by name or alias — arguments
 narrow the jump (:pods checkout, :trace <id>). Every drill-down key
 (l logs, s traces, m metrics, p problems, v events, x relations,
 a log patterns, u sessions) opens the target pre-scoped to the selected
-entity and the active timeframe.
+entity and the active timeframe. On a :processes row, h opens the
+code-level hotspots of that process (prototype).
 '.' pins an entity as the global scope, ctrl+q reveals any view's DQL in
 an editable query, and o deep-links the selection into the Dynatrace UI.
 H opens the navigation history — every page you visited, kept across

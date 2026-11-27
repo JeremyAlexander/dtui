@@ -434,3 +434,19 @@ func TestHelpClosesWhenItCameToFitExactly(t *testing.T) {
 		t.Error("j did not close a help that is all in view")
 	}
 }
+
+// A call that was replaced may go on reporting; its notes must not reach the
+// call that replaced it.
+func TestFlameGraphProgressIsPerCall(t *testing.T) {
+	a, _, fv, _ := openFlame(t)
+	first := fv.progress
+	first.set("polling the first call")
+	press(a, key("r"))
+	if fv.progress == first || fv.progress.get() != "" {
+		t.Fatalf("the second call reads the first call's progress: %q", fv.progress.get())
+	}
+	first.set("still polling the first call")
+	if got := fv.progress.get(); got != "" {
+		t.Errorf("a note of the replaced call reached the call in flight: %q", got)
+	}
+}

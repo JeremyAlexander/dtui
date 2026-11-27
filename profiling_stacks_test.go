@@ -84,9 +84,9 @@ func TestStacksReconcileWithTheFunctionsTable(t *testing.T) {
 }
 
 // Opening the flame graph asks the environment for nothing: it reads the
-// analysis the table holds, even one older than the table would reuse. Its
-// refresh is the table's: within the reuse time nothing is asked, after it
-// the analysis runs again. Without an analysis to read, it runs one.
+// analysis the table holds, however long ago that arrived. Its refresh is
+// the table's: the analysis runs again, and the table then reads that one.
+// Without an analysis to read, opening the graph runs one.
 func TestTheFlameGraphReadsTheAnalysisTheTableHolds(t *testing.T) {
 	p := &recordingProfiler{}
 	runs := newProfileRuns()
@@ -111,18 +111,17 @@ func TestTheFlameGraphReadsTheAnalysisTheTableHolds(t *testing.T) {
 		t.Fatalf("with no analysis held, the graph asked %d times, want 1", asked())
 	}
 	read("hotspots")
-	read(catalog.HotspotStacksFreshAPI)
 	if asked() != 1 {
-		t.Fatalf("within the reuse time, the table and a refresh of the graph asked again (%d)", asked())
+		t.Fatalf("the table asked for the analysis the graph had read (%d)", asked())
 	}
-	now = now.Add(profileCacheTTL + time.Minute)
+	now = now.Add(time.Hour)
 	read(catalog.HotspotStacksAPI)
 	if asked() != 1 {
 		t.Fatalf("opening the graph on an older analysis asked again (%d)", asked())
 	}
 	read(catalog.HotspotStacksFreshAPI)
 	if asked() != 2 {
-		t.Fatalf("refreshing the graph after the reuse time asked %d times, want 2", asked())
+		t.Fatalf("refreshing the graph asked %d times, want 2", asked())
 	}
 	// The table reads what the refresh fetched.
 	read("hotspots")

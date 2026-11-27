@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -47,7 +48,9 @@ func loadProfilingScenario(t *testing.T, name string) profilingScenario {
 }
 
 // openProfiling opens a scenario's view the way the command bar does
-// (`:hotspots PROCESS-…`), in the scenario's timeframe and lens, still loading.
+// (`:hotspots PROCESS-…`), in the scenario's timeframe and lens, still
+// loading. An entity the command bar refuses arrives the way one still can:
+// as the scope of a view pushed onto the stack.
 func openProfiling(t *testing.T, sc profilingScenario) (*app, *tableView) {
 	t.Helper()
 	a := testApp(t, "home")
@@ -60,7 +63,12 @@ func openProfiling(t *testing.T, sc profilingScenario) (*app, *tableView) {
 	if sc.Entity != nil {
 		nav.Filter = sc.Entity.ID
 	}
-	_, cmd := a.Update(nav)
+	var msg tea.Msg = nav
+	if spec := catalog.Lookup(sc.View); sc.Entity != nil && CheckEntityArg(spec, sc.Entity.ID) != nil {
+		msg = pushViewMsg{spec: spec, replace: true,
+			scope: catalog.Scope{Timeframe: tf, Entity: &catalog.Entity{ID: sc.Entity.ID, Type: sc.Entity.Type}}}
+	}
+	_, cmd := a.Update(msg)
 	deliver(a, cmd)
 	tv := a.top().(*tableView)
 	if sc.Entity != nil && tv.scope.Entity != nil {
@@ -71,6 +79,9 @@ func openProfiling(t *testing.T, sc profilingScenario) (*app, *tableView) {
 			deliver(a, tv.setLens(i, false))
 		}
 	}
+	// The lens switch left its confirmation in the status line, where it
+	// stands for a few seconds. What a screen shows after that is the echo.
+	a.status = ""
 	return a, tv
 }
 
@@ -126,6 +137,7 @@ func TestSnapshotProfiling(t *testing.T) {
 // that claims rows.
 func TestProfilingStatesSayWhatHappened(t *testing.T) {
 	pinSnapshotClock(t)
+	rowCount := regexp.MustCompile(`^ *(\S+) rows\b`)
 	for name, want := range map[string][]string{
 		"hotspots-lock":   {"hotspots·lock (shop-backend)", "last 2h of the selected 24h (10:00–12:00 UTC)", "11,353 lock samples", "LockSupport.parkNanos"},
 		"no-data":         {"0 rows", "∅ no samples in this window — the process may have been idle or restarted"},
@@ -150,8 +162,72 @@ func TestProfilingStatesSayWhatHappened(t *testing.T) {
 			if lines := strings.Count(out, "\n") + 1; lines != size.h {
 				t.Errorf("%s at %dx%d is %d lines tall", name, size.w, size.h, lines)
 			}
+			if name == "hotspots-lock" {
+				continue // the one state here that has rows
+			}
+			// The chrome that claims rows: a count other than 0, and for a
+			// failure also the column titles and the caption of a reading.
+			for _, line := range strings.Split(out, "\n") {
+				if m := rowCount.FindStringSubmatch(line); m != nil && m[1] != "0" {
+					t.Errorf("%s at %dx%d counts %s rows", name, size.w, size.h, m[1])
+				}
+			}
+			if strings.HasPrefix(want[0], "✗") {
+				for _, chrome := range []string{"SELF%", "FUNCTION", "samples (stacks seen", "0 rows ·"} {
+					if strings.Contains(out, chrome) {
+						t.Errorf("%s at %dx%d is a failure and still draws %q:\n%s", name, size.w, size.h, chrome, out)
+					}
+				}
+			}
 		}
 	}
+}
+
+// Restoring a page from the history replaces the stack, and the facet an
+// inspector asks for cuts it down to the list beneath. Either way a profiling
+// view that was on the trail has left it, and its analysis is no longer
+// waited for.
+func TestProfilingLeavesTheTrailWithItsStack(t *testing.T) {
+	t.Run("history restore", func(t *testing.T) {
+		a, tv, calls, _ := profilingCalls(t)
+		deliver(a, a.restoreEntry(historyEntry{
+			Stack: []pageRef{{Kind: "table", View: "pods", Crumb: "pods"}}, Context: "test", Visited: time.Now(),
+		}))
+		if a.top() == viewModel(tv) {
+			t.Fatal("the restore did not replace the stack")
+		}
+		if len(*calls) != 1 || (*calls)[0].Err() == nil || !tv.parked {
+			t.Errorf("after a history restore: %d calls, cancelled=%v, parked=%v; want the one call cancelled and the view parked",
+				len(*calls), (*calls)[0].Err() != nil, tv.parked)
+		}
+	})
+	t.Run("facet on the list beneath", func(t *testing.T) {
+		a := testApp(t, "logs")
+		seedRows(t, a, []map[string]any{{"content": "c", "status": "ERROR"}})
+		logs := a.top().(*tableView)
+		var call context.Context
+		a.ds.sources = map[string]Source{
+			"hotspots": func(ctx context.Context, _ catalog.Scope, _ string) ([]map[string]any, error) {
+				call = ctx
+				return nil, nil
+			},
+		}
+		_, cmd := a.Update(pushViewMsg{spec: catalog.Lookup("hotspots"), scope: catalog.Scope{
+			Timeframe: a.tf, Entity: &catalog.Entity{ID: "PROCESS-000000000000A001", Type: "PROCESS"},
+		}})
+		deliver(a, cmd)
+		tv := a.top().(*tableView)
+		if len(a.stack) != 2 || a.stack[0] != viewModel(logs) || call == nil {
+			t.Fatalf("stack of %d, want logs with hotspots over it", len(a.stack))
+		}
+		a.applyFacetBelow(applyFacetMsg{field: "status", value: "ERROR"})
+		if a.top() != viewModel(logs) {
+			t.Fatal("the facet did not return to the list")
+		}
+		if call.Err() == nil || !tv.parked {
+			t.Errorf("after the facet cut the stack: cancelled=%v, parked=%v", call.Err() != nil, tv.parked)
+		}
+	})
 }
 
 // An analysis takes minutes: the view says what it waits for and for how
@@ -333,6 +409,17 @@ func TestEnterOnAnAllocationPathInspects(t *testing.T) {
 	if _, ok := a.top().(*tableView); ok {
 		t.Fatalf("enter on an allocation path left the table on top (%T)", a.top())
 	}
+	// The record is what the analysis returned: nothing dtui computed for
+	// its own bars is listed beside it (ADR-0016).
+	out := screen(a)
+	if !strings.Contains(out, catalog.ProfAllocBytes) {
+		t.Fatalf("the inspector does not list %s:\n%s", catalog.ProfAllocBytes, out)
+	}
+	for _, own := range []string{"allocPct", "share", "__"} {
+		if strings.Contains(out, own) {
+			t.Errorf("the inspector lists %q, a value dtui computed:\n%s", own, out)
+		}
+	}
 }
 
 // hintFor is the label the footer gives a key on the view, "" if none.
@@ -345,7 +432,10 @@ func hintFor(v *tableView, k string) string {
 	return ""
 }
 
-// `:hotspots PROCESS-…` scopes the view; any other argument filters it.
+// `:hotspots PROCESS-…` scopes the view. Its argument is the process and
+// nothing else: one that is no id of a process opens nothing, wherever it
+// comes from, so it is never a row filter on a view that has no rows without
+// its process, and a pinned process never stands in for it.
 func TestProfilingArgumentIsTheProcess(t *testing.T) {
 	a := testApp(t, "home")
 	_, cmd := a.Update(NavigateMsg{Target: "hotspots", Filter: "PROCESS-000000000000A001"})
@@ -354,10 +444,43 @@ func TestProfilingArgumentIsTheProcess(t *testing.T) {
 	if tv.scope.Entity == nil || tv.scope.Entity.ID != "PROCESS-000000000000A001" || tv.filter != "" {
 		t.Fatalf("entity %+v, filter %q", tv.scope.Entity, tv.filter)
 	}
-	_, cmd = a.Update(NavigateMsg{Target: "hotspots", Filter: "jackson"})
-	deliver(a, cmd)
-	if tv := a.top().(*tableView); tv.scope.Entity != nil || tv.filter != "jackson" {
-		t.Fatalf("a word is a filter: entity %+v, filter %q", tv.scope.Entity, tv.filter)
+	pinned := &catalog.Entity{ID: "PROCESS-000000000000A001", Name: "shop-backend", Type: "PROCESS"}
+	for arg, want := range map[string]string{
+		"jackson":                  `hotspots: "jackson" is not an entity id (TYPE-<16 hex digits>, upper case)`,
+		"process-000000000000b002": `hotspots: "process-000000000000b002" is not an entity id (TYPE-<16 hex digits>, upper case)`,
+		"PROCESS-$(id)":            `hotspots: "PROCESS-$(id)" is not an entity id (TYPE-<16 hex digits>, upper case)`,
+		"SERVICE-000000000000B001": "hotspots does not take a SERVICE (SERVICE-000000000000B001)",
+	} {
+		for _, pin := range []*catalog.Entity{nil, pinned} {
+			// From the command bar.
+			a := testApp(t, "home")
+			calls := 0
+			a.ds.sources = map[string]Source{"hotspots": func(context.Context, catalog.Scope, string) ([]map[string]any, error) {
+				calls++
+				return nil, nil
+			}}
+			a.pin = pin
+			home := a.top()
+			deliver(a, a.jumpTo("hotspots", arg))
+			if a.top() != home || calls != 0 || a.status != want {
+				t.Errorf(":hotspots %s (pin %v): opened %T, %d source calls, status %q; want nothing opened and %q",
+					arg, pin != nil, a.top(), calls, a.status, want)
+			}
+			// As a page request: a deep link, and one an agent sent, whose
+			// reply must name the error (ADR-0019).
+			a.status = ""
+			_, cmd := a.Update(NavigateMsg{Target: "hotspots", Filter: arg})
+			deliver(a, cmd)
+			if a.top() != home || calls != 0 || a.status != "navigate: "+want {
+				t.Errorf("a deep link to hotspots %s: opened %T, %d source calls, status %q", arg, a.top(), calls, a.status)
+			}
+			for _, open := range []bool{true, false} {
+				r := remoteDo(t, a, RemoteRequest{Page: NavigateMsg{Target: "hotspots", Filter: arg}, Open: open, SaveAs: map[bool]string{false: "p"}[open]})
+				if r.err == nil || r.err.Error() != want || r.res.Page != "" || a.top() != home || calls != 0 {
+					t.Errorf("a sent page hotspots %s (open=%v): reply %+v, opened %T, %d source calls; want the error %q", arg, open, r, a.top(), calls, want)
+				}
+			}
+		}
 	}
 	// Other views keep reading an entity id as filter text.
 	_, cmd = a.Update(NavigateMsg{Target: "processes", Filter: "PROCESS-000000000000A001"})
@@ -442,8 +565,8 @@ func TestProfilingEcho(t *testing.T) {
 		"hotspots-lock":    "dtctl exec profiling hotspots PROCESS-000000000000A001 --view functions --state lock --show-waiting --limit 300 --default-timeframe-start 'now()-2h'",
 		"hotspots-focus":   "dtctl exec profiling hotspots PROCESS-000000000000A001 --focus 'com.fasterxml.jackson.core.json.UTF8JsonGenerator.writeString' --state running --show-waiting --limit 25 --default-timeframe-start 'now()-2h'",
 		"allocations":      "dtctl exec profiling allocations PROCESS-000000000000A001 --limit 300 --default-timeframe-start 'now()-2h'",
-		"no-process":       "dtctl exec profiling hotspots <PROCESS-id> --view functions --state running --show-waiting --limit 300 --default-timeframe-start 'now()-2h'",
-		"service-refused":  "dtctl exec profiling hotspots <PROCESS-id> --view functions --state running --show-waiting --limit 300 --default-timeframe-start 'now()-2h'",
+		"no-process":       "dtctl exec profiling hotspots PROCESS-… --view functions --state running --show-waiting --limit 300 --default-timeframe-start 'now()-2h'",
+		"service-refused":  "dtctl exec profiling hotspots PROCESS-… --view functions --state running --show-waiting --limit 300 --default-timeframe-start 'now()-2h'",
 	} {
 		if got := renderProfiling(t, name).top().(*tableView).Echo(); got != want {
 			t.Errorf("%s echo:\n got %s\nwant %s", name, got, want)
@@ -519,23 +642,70 @@ func TestProfilingFailedRefreshLeavesNoRows(t *testing.T) {
 	}
 }
 
-// The wait is counted from when the view started waiting, and what the source
-// said last stays: a lens switch replaces the call, not the analysis. Another
-// window is another analysis and starts the count again.
-func TestProfilingWaitSurvivesALensSwitch(t *testing.T) {
+// A lens or a window is another reading, and the view cannot tell whether it
+// is another analysis too (allocations is, a thread state is not). So the
+// wait is counted from the switch, and every call has a progress line of its
+// own: the source says again what a running analysis said last, and a call
+// that was replaced, which its analysis may still report to, reaches no
+// line that is shown.
+func TestProfilingWaitIsOfTheCallInFlight(t *testing.T) {
 	pinSnapshotClock(t)
-	a, tv := openProfiling(t, loadProfilingScenario(t, "hotspots-running"))
-	tv.started = catalog.Now().Add(-41 * time.Second)
-	tv.progress.set("the environment accepted the analysis")
-	press(a, key("]"))
+	a, tv, calls, _ := profilingCalls(t)
+	tv.scope.Entity.Name = "shop-backend"
+	tv.started = catalog.Now().Add(-90 * time.Second)
+	ReportProgress((*calls)[0], "the environment accepted the analysis")
 	if got, want := strings.Join(tv.loadingText(), "|"),
-		"analysing the hotspots of shop-backend, which can take minutes — 41s|the environment accepted the analysis"; got != want {
-		t.Errorf("after a lens switch the view says\n %q, want\n %q", got, want)
+		"analysing the hotspots of shop-backend, which can take minutes — 1m|the environment accepted the analysis"; got != want {
+		t.Fatalf("while waiting the view says\n %q, want\n %q", got, want)
+	}
+	for i, l := range tv.spec.Lenses {
+		if l.Name == "allocations" {
+			deliver(a, tv.setLens(i, true))
+		}
+	}
+	if len(*calls) != 2 {
+		t.Fatalf("%d calls after the lens switch, want 2", len(*calls))
+	}
+	const want = "analysing the allocations of shop-backend, which can take minutes — 0s"
+	if got := strings.Join(tv.loadingText(), "|"); got != want {
+		t.Errorf("after the switch to allocations the view says\n %q, want\n %q", got, want)
+	}
+	// The hotspots analysis is still running and reports to the call it
+	// was asked by, cancelled or not.
+	ReportProgress((*calls)[0], "hotspots: still running")
+	if got := strings.Join(tv.loadingText(), "|"); got != want {
+		t.Errorf("a note for the replaced call reached the view:\n %q", got)
+	}
+	ReportProgress((*calls)[1], "allocations: accepted")
+	if got := strings.Join(tv.loadingText(), "|"); got != want+"|allocations: accepted" {
+		t.Errorf("the note of the call in flight is not shown:\n %q", got)
 	}
 	deliver(a, a.setTimeframe(catalog.Timeframe{Label: "30m", Dur: 30 * time.Minute}))
-	if got, want := strings.Join(tv.loadingText(), "|"),
-		"analysing the hotspots of shop-backend, which can take minutes — 0s"; got != want {
+	if got := strings.Join(tv.loadingText(), "|"); got != want {
 		t.Errorf("after a timeframe switch the view says\n %q, want\n %q", got, want)
+	}
+}
+
+// The head line's duration is of the rows under it. A reading that was
+// dropped for the next one takes it along: "0 rows · 38s" named a wait that
+// was over.
+func TestProfilingDroppedReadingTakesItsDuration(t *testing.T) {
+	pinSnapshotClock(t)
+	sc := loadProfilingScenario(t, "hotspots-running")
+	a, tv := openProfiling(t, sc)
+	sc.answer(tv)
+	a.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	if tv.elapsed == "" {
+		t.Fatal("an answered view states no duration")
+	}
+	head := func() string { return strings.Split(ansi.Strip(tv.View(120, 30)), "\n")[0] }
+	answered := head()
+	if !strings.Contains(answered, " · "+tv.elapsed) {
+		t.Fatalf("the answered head line reads %q, want the duration %s in it", answered, tv.elapsed)
+	}
+	press(a, key("]"))
+	if got := strings.TrimSpace(head()); !strings.HasSuffix(got, "0 rows") {
+		t.Errorf("after a lens switch the head line reads %q, want it to end at the row count", got)
 	}
 }
 
@@ -872,6 +1042,13 @@ func TestHostileFunctionNameStaysInItsCell(t *testing.T) {
 	if echo := focus.Echo(); !strings.Contains(echo, hostile) {
 		t.Errorf("the copied command lost the name as it is: %q", echo)
 	}
+	// The confirmation of c repeats the command it copied, on the same
+	// line. The key itself is not pressed: it writes to the clipboard of the
+	// terminal the tests run in.
+	a.status = "copied: " + focus.Echo()
+	check("after copying the command")
+	a.status, a.statusErr = "failed: "+hostile, true
+	check("with an error in the status line")
 }
 
 // At the 80 column minimum the lines under and over the rows still say all
@@ -905,5 +1082,64 @@ func TestProfilingChromeFitsEightyColumns(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("the focus caption lost %q:\n%s", want, out)
 		}
+	}
+}
+
+// r asks the source for a new reading; nothing else does. A lens switch
+// reads what the source holds.
+func TestOnlyRAsksForAFreshRead(t *testing.T) {
+	a, tv, calls, _ := profilingCalls(t)
+	fresh := func() []bool {
+		out := make([]bool, len(*calls))
+		for i, ctx := range *calls {
+			out[i] = FreshRead(ctx)
+		}
+		return out
+	}
+	tv.Update(dataMsg{owner: tv, seq: tv.seq, records: []map[string]any{{catalog.ProfFunction: "com.example.Main.run"}}})
+	press(a, key("]"))
+	tv.Update(dataMsg{owner: tv, seq: tv.seq, records: []map[string]any{{catalog.ProfFunction: "com.example.Main.run"}}})
+	press(a, key("r"))
+	press(a, key("]"))
+	if got, want := fmt.Sprint(fresh()), "[false false true false]"; got != want {
+		t.Errorf("open, ], r, ] read fresh: %s, want %s", got, want)
+	}
+
+	// On an ordinary API view r is a plain refetch, marked the same way.
+	var slos []bool
+	a.ds.sources["slos"] = func(ctx context.Context, _ catalog.Scope, _ string) ([]map[string]any, error) {
+		slos = append(slos, FreshRead(ctx))
+		return nil, nil
+	}
+	_, cmd := a.Update(NavigateMsg{Target: "slos"})
+	deliver(a, cmd)
+	press(a, key("r"))
+	if got, want := fmt.Sprint(slos), "[false true]"; got != want {
+		t.Errorf("slos open and r read fresh: %s, want %s", got, want)
+	}
+}
+
+// Workspace primary tags are fields of Grail records. An API-backed view has
+// none of them, so it gets no tag columns: on the profiling view three empty
+// ones took the room of the function name.
+func TestAPIViewsGetNoPrimaryTagColumns(t *testing.T) {
+	titles := func(v *tableView) string {
+		var out []string
+		for _, c := range v.columns() {
+			out = append(out, c.Title)
+		}
+		return strings.Join(out, "|")
+	}
+	a, tv, _, _ := profilingCalls(t)
+	plain := titles(tv)
+	a.ds.primaryTags = []string{"team", "env", "stage"}
+	if got := titles(tv); got != plain {
+		t.Errorf("hotspots with three primary tags has the columns\n %s, want\n %s", got, plain)
+	}
+	// A view over Grail records still shows them.
+	logs := testApp(t, "logs")
+	logs.ds.primaryTags = []string{"team"}
+	if got := titles(logs.top().(*tableView)); !strings.Contains(got, "TEAM") {
+		t.Errorf("logs with a primary tag has the columns %s, want TEAM among them", got)
 	}
 }

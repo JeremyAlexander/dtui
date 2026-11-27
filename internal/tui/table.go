@@ -40,14 +40,17 @@ type tableView struct {
 	cancel      context.CancelFunc
 	parked      bool
 	interrupted bool
-	// started is when the view began to wait, and progress what the source
-	// said last about the call in flight. Both last as long as the wait does,
-	// through every fetch that replaces the call (Refresh).
+	// started is when the view began to wait for the reading it shows next:
+	// it lasts through a fetch that replaces the call (Refresh) and starts
+	// again when the reading is dropped (dropReading). progress is what the
+	// source said last about the call in flight, and each call has its own.
 	progress *callProgress
 	started  time.Time
-	seq      int
-	dql      string
-	elapsed  string
+	// fresh marks the next API call as a fresh read (Reload).
+	fresh   bool
+	seq     int
+	dql     string
+	elapsed string
 
 	sortCol  int // -1 = fetch order
 	sortDesc bool
@@ -186,9 +189,11 @@ func (v *tableView) baseColumns() []catalog.Column {
 // primaryTagColumns builds one catalog.Column per active primary_tags.* key.
 // Field is set to the raw "primary_tags.<key>" path; Title is the uppercased
 // key name. No Enrich — these are flat fields already present in the record.
+// They are fields of Grail records, so an API-backed view, whose rows are its
+// source's own, gets none: the columns could only be empty.
 func (v *tableView) primaryTagColumns() []catalog.Column {
 	keys := v.ds.primaryTags
-	if len(keys) == 0 {
+	if len(keys) == 0 || v.spec.API != "" {
 		return nil
 	}
 	cols := make([]catalog.Column, 0, len(keys))
@@ -340,6 +345,14 @@ func (v *tableView) composeRosterDQL() string {
 	return v.spec.Query(s)
 }
 
+// Reload is r: a refresh the user asked for. An API source that keeps its
+// results (the profiling view's analyses) is told so and answers with a new
+// one; a query runs again either way.
+func (v *tableView) Reload() tea.Cmd {
+	v.fresh = true
+	return v.Refresh()
+}
+
 func (v *tableView) Refresh() tea.Cmd {
 	if v.parked {
 		// Nobody watches a view that is off the trail: it fetches when it
@@ -350,7 +363,7 @@ func (v *tableView) Refresh() tea.Cmd {
 	v.interrupted = false
 	v.seq++
 	if !v.loading {
-		v.started, v.progress = catalog.Now(), &callProgress{}
+		v.started = catalog.Now()
 	}
 	v.loading = true
 	v.err = nil
@@ -429,6 +442,12 @@ func (v *tableView) fetch() tea.Cmd {
 			}
 			ctx, v.cancel = context.WithCancel(ctx)
 		}
+		if v.fresh {
+			ctx, v.fresh = WithFreshRead(ctx), false
+		}
+		// A line of its own for every call: a source may go on reporting to
+		// a call that was replaced, and that must not reach this one's.
+		v.progress = &callProgress{}
 		return v.ds.call(withProgress(ctx, v.progress), v, v.seq, v.spec.API, v.scope, v.dql)
 	}
 	if v.spec.RecordCap > 0 {
@@ -483,8 +502,8 @@ func (v *tableView) Returned() tea.Cmd {
 
 // AutoRefreshes reports whether the periodic refresh ('R') applies to the
 // view. It does not where a fetch is an analysis the view cancels on leaving:
-// a tick would replace the call in flight every interval, and submit a new
-// analysis each time the source's cached one expired.
+// a tick would replace the call in flight every interval, and read again
+// what the source already holds. Only r (Reload) asks for a new analysis.
 func (v *tableView) AutoRefreshes() bool { return !v.spec.CancelOnLeave }
 
 func (v *tableView) SetTimeframe(tf catalog.Timeframe) tea.Cmd {
@@ -506,6 +525,9 @@ func (v *tableView) dropReading() bool {
 	}
 	v.all, v.rows, v.summary = nil, nil, nil
 	v.cursor, v.offset = 0, 0
+	// The duration was of those rows, and the wait for the next ones starts
+	// here: whether they are another analysis only the source knows.
+	v.elapsed, v.started = "", catalog.Now()
 	return true
 }
 
@@ -560,14 +582,42 @@ func (v *tableView) Crumb() string {
 }
 
 // setArg applies a command-bar or launch argument: the entity to analyse on
-// an EntityArg spec when it is shaped like an entity id, the incremental
-// filter otherwise.
-func (v *tableView) setArg(arg string) {
-	if v.spec.EntityArg && entityIDRe.MatchString(arg) {
-		v.scope.Entity = entityFromID(arg)
-		return
+// an EntityArg spec, the incremental filter on every other. An EntityArg
+// view has no rows without its entity, so an argument that names none is
+// refused (entityArg) and never becomes a filter.
+func (v *tableView) setArg(arg string) error {
+	if !v.spec.EntityArg {
+		v.setFilter(arg)
+		return nil
 	}
-	v.setFilter(arg)
+	e, err := entityArg(v.spec, arg)
+	if err != nil {
+		return err
+	}
+	v.scope.Entity = e
+	return nil
+}
+
+// entityArg reads the argument of an EntityArg view: the id of an entity the
+// spec can scope to (Spec.Scopable).
+func entityArg(spec *catalog.Spec, arg string) (*catalog.Entity, error) {
+	if !entityIDRe.MatchString(arg) {
+		return nil, fmt.Errorf("%s: %q is not an entity id (TYPE-<16 hex digits>, upper case)", spec.Name, arg)
+	}
+	e := entityFromID(arg)
+	if spec.Scopable != nil && !spec.Scopable(*e) {
+		return nil, fmt.Errorf("%s does not take a %s (%s)", spec.Name, e.Type, arg)
+	}
+	return e, nil
+}
+
+// CheckEntityArg reports why arg cannot be the argument of the EntityArg
+// view spec (nil: it can), for a caller that still has someone to tell: the
+// command line of a launch or a send. A page request is checked again when
+// it opens.
+func CheckEntityArg(spec *catalog.Spec, arg string) error {
+	_, err := entityArg(spec, arg)
+	return err
 }
 
 // setFilter pre-fills the incremental filter (command-bar args, home jumps).
@@ -1233,6 +1283,33 @@ func (v *tableView) loadingText() []string {
 	return lines
 }
 
+// errorLines lays an error text out in width cells and at most limit lines.
+// An error keeps the lines it came with, blank ones and indentation
+// included: dtctl's query errors are paragraphs with indented examples. Each
+// line may repeat tenant data, so each is made safe on its own (oneLine), and
+// one too long wraps under its own indentation. A text that does not fit ends
+// in a line that says so.
+func errorLines(text string, width, limit int) []string {
+	var out []string
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimRight(strings.ReplaceAll(line, "\t", "    "), " ")
+		body := strings.TrimLeft(line, " ")
+		// An indentation the width cannot afford is cut, not the text.
+		indent := strings.Repeat(" ", min(len(line)-len(body), max(width/2, 0)))
+		if body = oneLine(body); body == "" {
+			out = append(out, "")
+			continue
+		}
+		for _, part := range wrapLines(body, width-len(indent)) {
+			out = append(out, indent+part)
+		}
+	}
+	if limit > 0 && len(out) > limit {
+		out = append(out[:limit-1], "…")
+	}
+	return out
+}
+
 // placeNote centres a dim line in a body of the given width. One wider than
 // the body wraps instead: wrapping pads to the wrap width, which would push a
 // short line to the left margin.
@@ -1298,10 +1375,12 @@ func (v *tableView) renderTable(width, height int) string {
 	}
 
 	if v.err != nil {
-		// The text continues under itself, not under the mark; it may
-		// repeat tenant data, so it is made one safe line before wrapping.
-		text := strings.ReplaceAll(wrap(oneLine(v.err.Error()), width-2), "\n", "\n  ")
-		b.WriteString("\n" + theme.Error.Render("✗ "+text))
+		// The text continues under itself, not under the mark, on as many
+		// lines as the body has left.
+		b.WriteString("\n")
+		room := max(height-strings.Count(b.String(), "\n"), 1)
+		text := strings.Join(errorLines(v.err.Error(), width-2, room), "\n  ")
+		b.WriteString(theme.Error.Render("✗ " + text))
 		return b.String()
 	}
 	for _, line := range v.captionLines(width) {

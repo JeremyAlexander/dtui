@@ -277,14 +277,31 @@ func withProgress(ctx context.Context, p *callProgress) context.Context {
 	return context.WithValue(ctx, progressKey{}, p)
 }
 
-// ReportProgress lets a Source say how a slow call is going ("throttled —
-// retrying in 10s"). The view that issued the call shows the latest text next
+// ReportProgress lets a Source say how a slow call is going ("the analysis is
+// still running on the server"). The view that issued the call shows the latest text next
 // to its loading line; a call nobody watches drops it. Exported because
 // sources live in the main package.
 func ReportProgress(ctx context.Context, text string) {
 	if p, ok := ctx.Value(progressKey{}).(*callProgress); ok && p != nil {
 		p.set(text)
 	}
+}
+
+type freshReadKey struct{}
+
+// WithFreshRead marks a call as one the user asked for with r, on a view
+// whose rows are already there: a Source that keeps results answers it with
+// a new one. Every other call (a lens, a drill, a return to the view) reads
+// what the source holds.
+func WithFreshRead(ctx context.Context) context.Context {
+	return context.WithValue(ctx, freshReadKey{}, true)
+}
+
+// FreshRead reports whether the call was marked by WithFreshRead. Exported,
+// like ReportProgress, because sources live in the main package.
+func FreshRead(ctx context.Context) bool {
+	fresh, _ := ctx.Value(freshReadKey{}).(bool)
+	return fresh
 }
 
 // query runs a DQL query asynchronously. In-flight queries are never

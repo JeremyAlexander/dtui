@@ -134,6 +134,7 @@ credential store. Details in [docs/design/tui.md](docs/design/tui.md) and the
 | `/` | Quick search in the current view (enter: server search; jumps restore that view's last filter; `F` / esc forgets it) |
 | `enter` | Open the detail page |
 | `l` `s` `m` `p` `v` `u` | Logs, traces, metrics, problems, events, SLOs, pre-scoped to the selection |
+| `h` | Code-level hotspots of the selected process (prototype; on a `:processes` row) |
 | `x` | Related entities (topology hop) |
 | `d` / `o` | Describe as YAML / open in the browser |
 | `c` | Copy the equivalent `dtctl` command |

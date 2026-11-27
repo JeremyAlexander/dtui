@@ -310,8 +310,8 @@ func (v *flameView) Init() tea.Cmd {
 	return v.fetch(catalog.HotspotStacksAPI)
 }
 
-// Refresh asks for the analysis as the table's refresh does: one that
-// arrived a moment ago is reused, an older one is run again.
+// Refresh asks for the analysis as the table's refresh does: it is run
+// again and replaces the one kept, for the table too.
 func (v *flameView) Refresh() tea.Cmd {
 	v.awaited = "" // the reader asks for an analysis of the graph's own
 	if v.parked {
@@ -330,8 +330,12 @@ func (v *flameView) fetch(api string) tea.Cmd {
 	ctx, cancel := context.WithCancel(context.Background())
 	v.cancel = cancel
 	if !v.loading {
-		v.started, v.progress = catalog.Now(), &callProgress{}
+		v.started = catalog.Now()
 	}
+	// A progress line of its own for every call, as on the table: a source
+	// may go on reporting to a call that was replaced, and that must not
+	// reach this one's.
+	v.progress = &callProgress{}
 	v.loading, v.building, v.err = true, false, nil
 	return v.ds.call(withProgress(ctx, v.progress), v, v.seq, api, v.scope, "")
 }
@@ -494,11 +498,6 @@ func (v *flameView) arrived(msg dataMsg) tea.Cmd {
 		return nil
 	}
 	summary, rows := catalog.SplitSummary(msg.records)
-	if v.graph != nil && profileWindowOf(summary) == profileWindowOf(v.summary) {
-		// A refresh inside the time an analysis is reused for: nothing new
-		// to draw, and the reader's place in the graph is kept.
-		return status("this is still the analysis shown: one is reused for a while after it arrives ")
-	}
 	// Building the tree is the one step whose cost grows with the analysis,
 	// so it runs off the update loop and comes back as a message.
 	v.building = true

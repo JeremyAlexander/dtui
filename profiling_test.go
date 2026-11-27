@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -101,7 +102,8 @@ func profilerOver(t *testing.T, env http.RoundTripper) dtctlProfiler {
 // recordedProfiler is the dtctl-backed profiler over the recording: each
 // analysis is answered with the result recorded for its kind, whatever
 // process and window it asks about, so a recording is read by exactly the
-// code a live result is.
+// code a live result is. The hotspots recording holds the waiting threads,
+// so it answers only a request that asks for them.
 func recordedProfiler(t *testing.T) dtctlProfiler {
 	t.Helper()
 	result := func(file string) string {
@@ -121,6 +123,9 @@ func recordedProfiler(t *testing.T) dtctlProfiler {
 	return profilerOver(t, roundTrip(func(r *http.Request) (*http.Response, error) {
 		switch {
 		case strings.Contains(r.URL.Path, "/methodhotspots/"):
+			if r.URL.Query().Get("showWaiting") != "true" {
+				return answering(400, nil, `{"error":{"code":400,"message":"the recording was taken with showWaiting=true"}}`)(r)
+			}
 			return answering(200, nil, hotspots)(r)
 		case strings.Contains(r.URL.Path, "/memoryallocation/"):
 			return answering(200, nil, allocations)(r)
@@ -366,12 +371,14 @@ func TestProfilingFailuresAreClassified(t *testing.T) {
 			t.Errorf("403 wording lacks %q: %s", want, msg)
 		}
 	}
-	// A status that says nothing about an analysis is shown as the API put it.
+	// A status that says nothing about an analysis is named, with what the
+	// API said about the request.
 	hotspots, _ := sourcesAt(profilerOver(t, answering(401, nil, `{"error":{"code":401,"message":"token expired"}}`)))
 	_, err := hotspots(context.Background(), scope, "")
 	var f *profileFailure
-	if err == nil || errors.As(err, &f) || !strings.Contains(err.Error(), "API error (401): token expired") {
-		t.Errorf("HTTP 401: got %v, want the API's own error", err)
+	const want = "the environment answered the request for the analysis with status 401: token expired — press r to ask again"
+	if !errors.As(err, &f) || f.Reason != profileUnexpectedStatus || err.Error() != want {
+		t.Errorf("HTTP 401 reads\n %v, want\n %s", err, want)
 	}
 }
 
@@ -733,72 +740,89 @@ func cachedRuns(runs *profileRuns) int {
 	return len(runs.runs)
 }
 
-// An analysis is reused for two minutes from when it arrived, however long it
-// took: one that ran for 90s is not already stale 30s later.
-func TestProfilingCacheAgesFromCompletion(t *testing.T) {
-	p := &blockingProfiler{release: make(chan struct{}), finished: make(chan error, 4)}
+// A finished analysis answers every read of its window (a lens, a focused
+// function, a return to the view) however long ago it arrived: reading a
+// table for ten minutes and pressing enter must not cost a second analysis.
+// Only a fresh read (r) replaces it, a closed window's included, and a fresh
+// read of an analysis still running joins it.
+func TestProfilingKeepsAnAnalysisUntilAFreshRead(t *testing.T) {
 	now := scenarioNow
 	var clock sync.Mutex
-	runs := newProfileRuns()
-	runs.now = func() time.Time {
-		clock.Lock()
-		defer clock.Unlock()
-		return now
+	newRuns := func() *profileRuns {
+		runs := newProfileRuns()
+		runs.now = func() time.Time {
+			clock.Lock()
+			defer clock.Unlock()
+			return now
+		}
+		return runs
 	}
 	advance := func(d time.Duration) {
 		clock.Lock()
 		now = now.Add(d)
 		clock.Unlock()
 	}
+	closedWindow := catalog.Timeframe{From: scenarioNow.Add(-3 * time.Hour), To: scenarioNow.Add(-2 * time.Hour), Dur: time.Hour}
+
+	for _, tf := range []catalog.Timeframe{timeframe(t, "2h"), closedWindow} {
+		p := &recordingProfiler{}
+		hotspots := hotspotsSource(p, newRuns())
+		read := func(ctx context.Context, arg string, want int, what string) map[string]any {
+			t.Helper()
+			records, err := hotspots(ctx, catalog.Scope{Entity: shopProcess, Timeframe: tf, Arg: arg}, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := p.asked(); got != want {
+				t.Fatalf("%s: %d analyses, want %d", what, got, want)
+			}
+			summary, _ := catalog.SplitSummary(records)
+			return summary
+		}
+		first := read(context.Background(), "", 1, "the first read")
+		advance(10 * time.Minute)
+		if got := read(context.Background(), "com.example.Main.run", 1, "a focus drill ten minutes later"); got[catalog.ProfSumTo] != first[catalog.ProfSumTo] {
+			t.Errorf("the focus drill reads a window up to %v, the table one up to %v", got[catalog.ProfSumTo], first[catalog.ProfSumTo])
+		}
+		advance(6 * time.Hour)
+		read(context.Background(), "", 1, "a return six hours later")
+		read(tui.WithFreshRead(context.Background()), "", 2, "a fresh read")
+		read(context.Background(), "", 2, "a read after the fresh one")
+	}
+
+	// A fresh read of an analysis in flight joins it.
+	p := &blockingProfiler{release: make(chan struct{}), finished: make(chan error, 2)}
+	runs := newRuns()
 	hotspots := hotspotsSource(p, runs)
-	scope := catalog.Scope{Entity: shopProcess, Timeframe: timeframe(t, "2h")}
-	read := func() map[string]any {
-		t.Helper()
-		records, err := hotspots(context.Background(), scope, "")
-		if err != nil {
+	done := make(chan error, 2)
+	for i, ctx := range []context.Context{context.Background(), tui.WithFreshRead(context.Background())} {
+		go func() {
+			_, err := hotspots(ctx, catalog.Scope{Entity: shopProcess, Timeframe: timeframe(t, "2h")}, "")
+			done <- err
+		}()
+		for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(time.Millisecond) {
+			runs.mu.Lock()
+			waiting := 0
+			for _, run := range runs.runs {
+				waiting += len(run.waiters)
+			}
+			runs.mu.Unlock()
+			if waiting == i+1 {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("%d calls wait for the analysis, want %d", waiting, i+1)
+			}
+		}
+	}
+	close(p.release)
+	for range 2 {
+		if err := <-done; err != nil {
 			t.Fatal(err)
 		}
-		summary, _ := catalog.SplitSummary(records)
-		return summary
 	}
-	started := func() int {
-		p.mu.Lock()
-		defer p.mu.Unlock()
-		return p.started
-	}
-
-	first := make(chan map[string]any, 1)
-	go func() { first <- read() }()
-	for started() == 0 {
-		time.Sleep(time.Millisecond)
-	}
-	advance(90 * time.Second) // the analysis takes 90s
-	p.release <- struct{}{}
-	if got := (<-first)[catalog.ProfSumTo]; got != "2026-07-15T12:00:00Z" {
-		t.Fatalf("the first reading covers up to %v", got)
-	}
-
-	// A read that the cache does not answer starts an analysis, which the
-	// test has to release: within reports whether one was needed.
-	within := func() (map[string]any, bool) {
-		t.Helper()
-		got := make(chan map[string]any, 1)
-		go func() { got <- read() }()
-		select {
-		case summary := <-got:
-			return summary, false
-		case p.release <- struct{}{}:
-			return <-got, true
-		}
-	}
-	advance(119 * time.Second)
-	if summary, fresh := within(); fresh || summary[catalog.ProfSumTo] != "2026-07-15T12:00:00Z" {
-		t.Fatalf("119s after it arrived: a new analysis=%v, window to %v; want the first one reused", fresh, summary[catalog.ProfSumTo])
-	}
-	advance(2 * time.Second)
-	if summary, fresh := within(); !fresh || summary[catalog.ProfSumTo] != "2026-07-15T12:03:31Z" || started() != 2 {
-		t.Errorf("121s after it arrived: a new analysis=%v, window to %v, %d analyses; want a second one up to 12:03:31",
-			fresh, summary[catalog.ProfSumTo], started())
+	if p.started != 1 {
+		t.Errorf("a fresh read of an analysis in flight started number %d", p.started)
 	}
 }
 
@@ -972,6 +996,63 @@ func TestProfilingFailureWording(t *testing.T) {
 		}
 	}
 
+	// What dtctl does not classify is worded all the same: its text is the
+	// SDK's, with the task token and, when no response came, the result URL.
+	const token = "t-4711-MARKER"
+	resultURL := "https://env.example.invalid/platform/x/result?token=" + token + "&serverId=1"
+	refused := &url.Error{Op: "Get", URL: resultURL, Err: errors.New("dial tcp: connection refused")}
+	submit := func(err error) error {
+		return profilingFailure(&codelevelanalysis.Error{Phase: codelevelanalysis.PhaseSubmit, Err: err}, shopProcess.ID)
+	}
+	for _, tc := range []struct {
+		name   string
+		err    error
+		reason profileReason
+		want   string
+	}{
+		{"a poll answered with 401",
+			poll(fmt.Errorf("codelevelanalysis: poll (token %s): %w", token, httpclient.NewAPIError(401, "Unauthorized "+token, ""))),
+			profileUnexpectedStatus,
+			"the environment answered with status 401 while dtui waited for the analysis — press r to ask again"},
+		{"a submit answered with 418",
+			submit(fmt.Errorf("codelevelanalysis: submit: %w", httpclient.NewAPIError(418, "teapot", ""))),
+			profileUnexpectedStatus,
+			"the environment answered the request for the analysis with status 418: teapot — press r to ask again"},
+		{"a poll answered with a status that is no failure",
+			poll(fmt.Errorf("codelevelanalysis: poll (token %s): unexpected status 302", token)),
+			profileMalformed,
+			"the environment's answer is not an analysis result (this API is experimental and may have changed)"},
+		{"polls that got no response",
+			poll(fmt.Errorf("codelevelanalysis: poll failed 5 times in a row (token %s): %w", token, refused)),
+			profileUnreachable,
+			"the environment did not answer while dtui waited for the analysis: dial tcp: connection refused — press r to ask again"},
+		{"a submit that got no response",
+			submit(fmt.Errorf("codelevelanalysis: submit: %w", refused)),
+			profileUnreachable,
+			"the environment did not answer the request for the analysis: dial tcp: connection refused — press r to ask again"},
+		{"a reason dtctl adds later",
+			profilingFailureOf(profiling.Failure{Reason: profiling.FailureReason("quota_" + token[:6]), StatusCode: 402, Message: "see " + resultURL}, shopProcess.ID),
+			profileOther,
+			"the analysis failed for a reason dtui has no words for (quota_t-4711, status 402) — press r to ask again"},
+	} {
+		var f *profileFailure
+		if !errors.As(tc.err, &f) || f.Reason != tc.reason {
+			t.Errorf("%s: got %v, want reason %s", tc.name, tc.err, tc.reason)
+			continue
+		}
+		if got := tc.err.Error(); got != tc.want || strings.Contains(got, "MARKER") {
+			t.Errorf("%s reads\n %q, want\n %q", tc.name, got, tc.want)
+		}
+		// Nor does the failure carry the token for a later wording to show.
+		if strings.Contains(fmt.Sprintf("%+v", *f), "MARKER") {
+			t.Errorf("%s keeps the task token: %+v", tc.name, *f)
+		}
+	}
+	// A cancelled analysis is the cancellation and nothing of the request.
+	if got := submit(fmt.Errorf("codelevelanalysis: submit: %w", &url.Error{Op: "Get", URL: resultURL, Err: context.Canceled})); got != context.Canceled {
+		t.Errorf("a cancelled analysis reads %q", got)
+	}
+
 	// A failure that is not one of an analysis keeps its own text.
 	plain := errors.New("dial tcp: connection refused")
 	if got := profilingFailure(plain, shopProcess.ID); got != plain {
@@ -1036,6 +1117,9 @@ func TestProfilingRefusesAWindowInTheFuture(t *testing.T) {
 		{"closed, all of it ahead", catalog.Timeframe{From: scenarioNow.Add(time.Hour), To: scenarioNow.Add(2 * time.Hour), Dur: time.Hour},
 			"the selected window starts in the future: there is nothing to analyse yet — t picks another window"},
 		{"open, starting ahead", catalog.Timeframe{From: scenarioNow.Add(time.Hour), Dur: time.Hour},
+			"the selected window starts in the future: there is nothing to analyse yet — t picks another window"},
+		// A window that starts now holds no past time either.
+		{"open, starting now", catalog.Timeframe{From: scenarioNow},
 			"the selected window starts in the future: there is nothing to analyse yet — t picks another window"},
 		{"closed, ending ahead", catalog.Timeframe{From: scenarioNow.Add(-time.Hour), To: scenarioNow.Add(time.Hour), Dur: 2 * time.Hour},
 			"the selected window ends in the future: an analysis covers past time only — t picks another window"},
@@ -1196,9 +1280,9 @@ func TestLaunchingProfilingNeedsAProcessID(t *testing.T) {
 		{"hot", "PROCESS_GROUP_INSTANCE-000000000000A001", ""},
 		{"hotspots", "PROCESS_GROUP-000000000000A001", ""},
 		{"hotspots", "", "hotspots needs the process to analyse: dtui hotspots PROCESS-<16 hex digits>"},
-		{"hotspots", "process-000000000000a001", `hotspots: "process-000000000000a001" is not a process id (PROCESS-<16 hex digits>, upper case)`},
-		{"hotspots", "checkout", `hotspots: "checkout" is not a process id (PROCESS-<16 hex digits>, upper case)`},
-		{"hotspots", "SERVICE-000000000000B001", "hotspots: SERVICE-000000000000B001 is not a process: an analysis runs on a PROCESS, a PROCESS_GROUP_INSTANCE or a PROCESS_GROUP"},
+		{"hotspots", "process-000000000000a001", `hotspots: "process-000000000000a001" is not an entity id (TYPE-<16 hex digits>, upper case)`},
+		{"hotspots", "checkout", `hotspots: "checkout" is not an entity id (TYPE-<16 hex digits>, upper case)`},
+		{"hotspots", "SERVICE-000000000000B001", "hotspots does not take a SERVICE (SERVICE-000000000000B001)"},
 	} {
 		msg := tui.NavigateMsg{Target: tc.view}
 		err := resolveLaunchArg(&msg, tc.arg)
@@ -1227,8 +1311,13 @@ func echoArgs(t *testing.T, line string) []string {
 	var args []string
 	var cur strings.Builder
 	quoted, open := false, false
+	// A quote inside a quoted argument is written '\'': close, an escaped
+	// quote, open again.
+	line = strings.ReplaceAll(line, `'\''`, "\x00")
 	for _, r := range line {
 		switch {
+		case r == 0:
+			cur.WriteByte('\'')
 		case r == '\'':
 			quoted, open = !quoted, true
 		case r == ' ' && !quoted:
@@ -1282,6 +1371,7 @@ func TestProfilingEchoReproducesTheRequest(t *testing.T) {
 			{"running", "", 300},
 			{"lock", "", 300},
 			{"wait", "com.example.shop.CartService.total", 25},
+			{"running", "it's a 'name' $(id) `x`", 25},
 			{"allocations", "", 300},
 		} {
 			p := &recordingProfiler{}
@@ -1345,8 +1435,26 @@ func TestProfilingEchoReproducesTheRequest(t *testing.T) {
 
 	// An entity no analysis runs on is not echoed as if it could be pasted.
 	service := catalog.Scope{Timeframe: timeframe(t, "2h"), Entity: &catalog.Entity{ID: "SERVICE-000000000000B001", Type: "SERVICE"}}
-	if got := echoArgs(t, spec.Echo(service, ""))[4]; got != "<PROCESS-id>" {
+	if got := echoArgs(t, spec.Echo(service, ""))[4]; got != "PROCESS-…" {
 		t.Errorf("a service scope echoes %s, want the placeholder", got)
+	}
+	// Nor is an id that is more than an id: it comes from a row of the
+	// environment or from the history file, and the line is made to be pasted
+	// into a shell. The placeholder itself is no shell syntax either.
+	for _, id := range []string{"PROCESS-$(id)", "PROCESS-000000000000A001;id", "PROCESS-000000000000A001 x", "PROCESS-000000000000a001"} {
+		for _, lens := range []string{"running", "allocations"} {
+			echo := spec.Echo(catalog.Scope{Timeframe: timeframe(t, "2h"), Lens: lensIndex(t, lens), Entity: &catalog.Entity{ID: id, Type: "PROCESS"}}, "")
+			if got := echoArgs(t, echo)[4]; got != "PROCESS-…" || strings.ContainsAny(echo, "<>;$") {
+				t.Errorf("the id %q is echoed as %s in\n%s", id, got, echo)
+			}
+		}
+	}
+	// The allocations lens of a focused function reads nothing, so there is
+	// no command that prints it: a whole-process one would print another
+	// table.
+	focused := catalog.Scope{Timeframe: timeframe(t, "2h"), Entity: shopProcess, Lens: lensIndex(t, "allocations"), Arg: "com.example.X.run"}
+	if got := spec.Echo(focused, ""); got != "" {
+		t.Errorf("the allocations lens of a focused function echoes %s, want nothing", got)
 	}
 }
 
@@ -1382,8 +1490,522 @@ func TestProfilingAllocationRowsCarryTheirShare(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, rows := catalog.SplitSummary(records)
-	pct, ok := catalog.FloatValue(rows[0][catalog.ProfAllocPct])
-	if got := fmt.Sprintf("%.2f", pct); !ok || got != "13.27" {
-		t.Errorf("the top path is %s%% of the bytes (set=%v), want 13.27", got, ok)
+	share, ok := catalog.FloatValue(rows[0][catalog.ProfAllocShare])
+	if got := fmt.Sprintf("%.4f", share); !ok || got != "0.1327" {
+		t.Errorf("the top path is %s of the bytes (set=%v), want 0.1327", got, ok)
+	}
+}
+
+// The bars are drawn from shares the source computes from the counts. The
+// percentages dtctl hands over are rounded to one decimal, so one sample of
+// ten thousand is 0.0% there, and a bar drawn from that would be empty for a
+// function that was measured.
+func TestProfilingBarsAreSharesOfTheCounts(t *testing.T) {
+	const tree = `{"dataRootNodeId":"1","dataNodes":[
+		{"id":"1","classPath":"com.example","className":"Main","methodName":"main","samples":{},"childIds":["2","3"]},
+		{"id":"2","classPath":"com.example","className":"Hot","methodName":"spin","samples":{"RUNNING":9999},"childIds":[]},
+		{"id":"3","classPath":"com.example","className":"Rare","methodName":"once","samples":{"RUNNING":1},"childIds":[]}]}`
+	hotspots, _ := sourcesAt(profilerOver(t, answering(200, nil, tree)))
+	read := func(arg string) map[string]map[string]any {
+		t.Helper()
+		records, err := hotspots(context.Background(), catalog.Scope{Entity: shopProcess, Timeframe: timeframe(t, "2h"), Arg: arg}, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, rows := catalog.SplitSummary(records)
+		by := map[string]map[string]any{}
+		for _, row := range rows {
+			by[catalog.Str(row, catalog.ProfRelation)+" "+catalog.Str(row, catalog.ProfFunction)] = row
+		}
+		return by
+	}
+	spec := catalog.Lookup("hotspots")
+
+	rare := read("")[" com.example.Rare.once"]
+	if rare[catalog.ProfSelfPct] != 0.0 || rare[catalog.ProfSelfShare] != 0.0001 || rare[catalog.ProfTotalShare] != 0.0001 {
+		t.Errorf("one sample of 10,000: %v%% as dtctl rounds it, self share %v, total share %v; want 0, 0.0001, 0.0001",
+			rare[catalog.ProfSelfPct], rare[catalog.ProfSelfShare], rare[catalog.ProfTotalShare])
+	}
+	if bar := spec.Columns[2].TextAt(rare, 8); bar != "▏" {
+		t.Errorf("its SELF bar is %q, want a sliver", bar)
+	}
+	if main := read("")[" com.example.Main.main"]; main[catalog.ProfTotalShare] != 1.0 || main[catalog.ProfSelfShare] != nil {
+		t.Errorf("the root: total share %v, self share %v; want 1 and none for no samples", main[catalog.ProfTotalShare], main[catalog.ProfSelfShare])
+	}
+
+	// A focused function's rows are shares of its own total.
+	focus := read("com.example.Main.main")
+	if got := focus["callee com.example.Rare.once"][catalog.ProfFocusShare]; got != 0.0001 {
+		t.Errorf("a callee with one of the function's 10,000 samples has share %v, want 0.0001", got)
+	}
+	if got := focus["total com.example.Main.main"][catalog.ProfFocusShare]; got != 1.0 {
+		t.Errorf("the function's total row has share %v, want 1", got)
+	}
+}
+
+// The caption words the reader's own selection, whoever started the analysis
+// it reads: a two hour run that a longer selection shares says it is only the
+// end of that selection, and a two hour selection that reads a run started by
+// a longer one is not called cut (ADR-0007).
+func TestProfilingCaptionWordsTheReadersSelection(t *testing.T) {
+	prev := catalog.Now
+	catalog.Now = func() time.Time { return scenarioNow }
+	t.Cleanup(func() { catalog.Now = prev })
+	spec := catalog.Lookup("hotspots")
+	at := func(hour int) time.Time { return time.Date(2026, 7, 15, hour, 0, 0, 0, time.UTC) }
+	closed := func(from, to int) catalog.Timeframe {
+		return catalog.Timeframe{From: at(from), To: at(to), Dur: at(to).Sub(at(from))}
+	}
+	open := func(from int) catalog.Timeframe { return catalog.Timeframe{From: at(from)} }
+
+	const clock = " (10:00–12:00 UTC)"
+	for _, tc := range []struct {
+		name string
+		// selections read in this order, and the window label each is shown
+		selections []catalog.Timeframe
+		want       []string
+		analyses   int
+	}{
+		{"2h, then 24h",
+			[]catalog.Timeframe{timeframe(t, "2h"), timeframe(t, "24h")},
+			[]string{"last 2h" + clock, "last 2h of the selected 24h" + clock}, 1},
+		{"24h, then 2h",
+			[]catalog.Timeframe{timeframe(t, "24h"), timeframe(t, "2h")},
+			[]string{"last 2h of the selected 24h" + clock, "last 2h" + clock}, 1},
+		{"a closed two hours, then five closed hours with the same end",
+			[]catalog.Timeframe{closed(10, 12), closed(7, 12)},
+			[]string{"selected window" + clock, "last 2h of the selected window" + clock}, 1},
+		{"five closed hours, then their last two",
+			[]catalog.Timeframe{closed(7, 12), closed(10, 12)},
+			[]string{"last 2h of the selected window" + clock, "selected window" + clock}, 1},
+		{"an open window that starts where the analysis does",
+			[]catalog.Timeframe{open(10), open(10)},
+			[]string{"selected window" + clock, "selected window" + clock}, 1},
+		{"an open window of five hours, then the last 2h",
+			[]catalog.Timeframe{open(7), timeframe(t, "2h")},
+			[]string{"last 2h of the selected window" + clock, "last 2h" + clock}, 1},
+	} {
+		p := &recordingProfiler{}
+		hotspots, _ := sourcesAt(p)
+		for i, tf := range tc.selections {
+			scope := catalog.Scope{Entity: shopProcess, Timeframe: tf}
+			records, err := hotspots(context.Background(), scope, "")
+			if err != nil {
+				t.Fatalf("%s: %v", tc.name, err)
+			}
+			summary, _ := catalog.SplitSummary(records)
+			if got := spec.Caption(scope, summary)[0]; got != tc.want[i] {
+				t.Errorf("%s: selection %d is captioned %q, want %q", tc.name, i+1, got, tc.want[i])
+			}
+		}
+		if got := p.asked(); got != tc.analyses {
+			t.Errorf("%s: %d analyses, want %d", tc.name, got, tc.analyses)
+		}
+	}
+}
+
+// gatedProfiler holds the analyses of the processes in held open until
+// release is closed and answers every other at once, recording all of them.
+type gatedProfiler struct {
+	recordingProfiler
+	held    map[string]bool
+	release chan struct{}
+}
+
+func (p *gatedProfiler) Hotspots(ctx context.Context, q profileQuery) (hotspotReading, error) {
+	reading, err := p.recordingProfiler.Hotspots(ctx, q)
+	if p.held[q.Entity] {
+		select {
+		case <-p.release:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	return reading, err
+}
+
+// The four kept analyses are four finished ones. Those still running do not
+// count, or the only result there is would be dropped the moment it arrived
+// and the next lens of its view would run it again.
+func TestProfilingRunsInFlightDoNotEvictAResult(t *testing.T) {
+	process := func(i int) *catalog.Entity {
+		return &catalog.Entity{ID: fmt.Sprintf("PROCESS-00000000000000%02d", i), Type: "PROCESS"}
+	}
+	p := &gatedProfiler{held: map[string]bool{}, release: make(chan struct{})}
+	runs := newProfileRuns()
+	runs.now = func() time.Time { return scenarioNow }
+	hotspots := hotspotsSource(p, runs)
+	read := func(i int) {
+		// A context of its own, as every call of a view has: the waiters of
+		// an analysis are told apart by it.
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		if _, err := hotspots(ctx, catalog.Scope{Entity: process(i), Timeframe: timeframe(t, "2h")}, ""); err != nil {
+			t.Error(err)
+		}
+	}
+
+	for i := range profileCacheSize {
+		p.held[process(i).ID] = true
+	}
+	var wg sync.WaitGroup
+	for i := range profileCacheSize {
+		wg.Go(func() { read(i) })
+	}
+	for p.asked() != profileCacheSize {
+		time.Sleep(time.Millisecond)
+	}
+	read(profileCacheSize)
+	read(profileCacheSize)
+	if got := p.asked(); got != profileCacheSize+1 {
+		t.Errorf("%d analyses with %d in flight and one more process read twice, want %d: its result must be kept",
+			got, profileCacheSize, profileCacheSize+1)
+	}
+	// Nor is one in flight dropped to make room: a second view of its
+	// process joins it.
+	wg.Go(func() { read(0) })
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(time.Millisecond) {
+		runs.mu.Lock()
+		waiting := 0
+		for _, run := range runs.runs {
+			waiting += len(run.waiters)
+		}
+		runs.mu.Unlock()
+		if waiting == profileCacheSize+1 || p.asked() > profileCacheSize+1 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%d calls wait on the analyses in flight, want %d", waiting, profileCacheSize+1)
+		}
+	}
+	close(p.release)
+	wg.Wait()
+	if got := p.asked(); got != profileCacheSize+1 {
+		t.Errorf("%d analyses after a second view joined one in flight, want %d", got, profileCacheSize+1)
+	}
+	if got := cachedRuns(runs); got != profileCacheSize {
+		t.Fatalf("%d analyses kept once all had finished, want %d", got, profileCacheSize)
+	}
+	// An analysis counts as read when it arrives: the four that arrived
+	// last are the four kept, and the one read before them is dropped.
+	read(profileCacheSize)
+	if got := p.asked(); got != profileCacheSize+2 {
+		t.Errorf("%d analyses, want %d: the result read before the other four arrived is the one to drop", got, profileCacheSize+2)
+	}
+}
+
+// An open window that began more than two hours ago is analysed for its last
+// two hours, which is what "last 2h" asks for: one request, not two.
+func TestProfilingOpenWindowSharesTheLastTwoHours(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		start time.Duration // of the open window, before now
+		want  int
+	}{
+		{"an open window of five hours", 5 * time.Hour, 1},
+		{"an open window of exactly two hours", 2 * time.Hour, 2},
+		{"an open window of one hour", time.Hour, 2},
+	} {
+		p := &recordingProfiler{}
+		hotspots, _ := sourcesAt(p)
+		for _, tf := range []catalog.Timeframe{{From: scenarioNow.Add(-tc.start)}, timeframe(t, "2h")} {
+			if _, err := hotspots(context.Background(), catalog.Scope{Entity: shopProcess, Timeframe: tf}, ""); err != nil {
+				t.Fatalf("%s: %v", tc.name, err)
+			}
+		}
+		if got := p.asked(); got != tc.want {
+			t.Errorf("%s, then the last 2h: %d analyses, want %d", tc.name, got, tc.want)
+		}
+	}
+}
+
+// The analysis dropped to make room is the one read longest ago, not the one
+// started first: a result a view just read again stays.
+func TestProfilingEvictsTheAnalysisReadLongestAgo(t *testing.T) {
+	process := func(i int) *catalog.Entity {
+		return &catalog.Entity{ID: fmt.Sprintf("PROCESS-00000000000000%02d", i), Type: "PROCESS"}
+	}
+	p := &recordingProfiler{}
+	hotspots, _ := sourcesAt(p)
+	read := func(i, want int, what string) {
+		t.Helper()
+		if _, err := hotspots(context.Background(), catalog.Scope{Entity: process(i), Timeframe: timeframe(t, "2h")}, ""); err != nil {
+			t.Fatal(err)
+		}
+		if got := p.asked(); got != want {
+			t.Fatalf("%s: %d analyses so far, want %d", what, got, want)
+		}
+	}
+	for i := range profileCacheSize {
+		read(i, i+1, "a first read")
+	}
+	read(0, profileCacheSize, "the first analysis read again")
+	read(profileCacheSize, profileCacheSize+1, "a fifth process")
+	read(0, profileCacheSize+1, "the first analysis, read before the fifth arrived, must be kept")
+	read(1, profileCacheSize+2, "the second analysis, read longest ago, must be the one dropped")
+}
+
+// What the adapter asks the environment for is what the view shows: the
+// process as the API knows it, the window to the millisecond, and for the
+// hotspots the waiting threads, which four of the five thread-state lenses
+// read.
+func TestProfilingRequestsWhatTheViewShows(t *testing.T) {
+	var asked []*http.Request
+	p := profilerOver(t, roundTrip(func(r *http.Request) (*http.Response, error) {
+		asked = append(asked, r)
+		return answering(200, nil, `{"dataNodes":[]}`)(r)
+	}))
+	q := profileQuery{Entity: shopProcess.ID, From: scenarioNow.Add(-90*time.Minute + 125*time.Millisecond), To: scenarioNow.Add(-250 * time.Millisecond)}
+	if _, err := p.Hotspots(context.Background(), q); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.Allocations(context.Background(), q); err != nil {
+		t.Fatal(err)
+	}
+	if len(asked) != 2 {
+		t.Fatalf("%d requests, want one per analysis", len(asked))
+	}
+	from, to := fmt.Sprintf("from=%d", q.From.UnixMilli()), fmt.Sprintf("to=%d", q.To.UnixMilli())
+	for i, want := range []struct{ path, query string }{
+		{"/methodhotspots/PROCESS_GROUP_INSTANCE-000000000000A001", from + "&showWaiting=true&" + to},
+		{"/memoryallocation/PROCESS_GROUP_INSTANCE-000000000000A001", from + "&" + to},
+	} {
+		if got := asked[i].URL; !strings.HasSuffix(got.Path, want.path) || got.Query().Encode() != want.query {
+			t.Errorf("request %d is %s?%s, want …%s?%s", i+1, got.Path, got.Query().Encode(), want.path, want.query)
+		}
+	}
+}
+
+// An answer that is not an analysis says so, in dtui's words: a 200 that is
+// not JSON, and a 202 that names no task to wait for.
+func TestProfilingAnswerThatIsNoAnalysis(t *testing.T) {
+	scope := catalog.Scope{Entity: shopProcess, Timeframe: timeframe(t, "2h")}
+	const worded = "the environment's answer is not an analysis result (this API is experimental and may have changed)"
+	for _, tc := range []struct {
+		name   string
+		status int
+		body   string
+		want   string
+	}{
+		{"a page of HTML", 200, "<html><body>sign in</body></html>", worded + ": it is not JSON"},
+		{"a 202 without a task", 202, "{}", worded},
+	} {
+		hotspots, _ := sourcesAt(profilerOver(t, answering(tc.status, nil, tc.body)))
+		_, err := hotspots(context.Background(), scope, "")
+		var f *profileFailure
+		if !errors.As(err, &f) || f.Reason != profileMalformed || err.Error() != tc.want {
+			t.Errorf("%s reads\n %v, want\n %s", tc.name, err, tc.want)
+		}
+	}
+}
+
+// The catalog cannot import dtctl, so it spells out what dtctl's profiling
+// package defines: the longest window, the thread states, the caller of an
+// outermost frame, and what an analysis runs on. They have to agree.
+func TestProfilingCatalogAgreesWithDtctl(t *testing.T) {
+	if catalog.ProfileMaxWindow != profiling.MaxWindow {
+		t.Errorf("the view analyses at most %s, dtctl at most %s", catalog.ProfileMaxWindow, profiling.MaxWindow)
+	}
+	var states []string
+	for _, l := range catalog.HotspotLenses[:len(catalog.HotspotLenses)-1] {
+		states = append(states, l.Name)
+	}
+	want := []string{string(profiling.StateRunning), string(profiling.StateLock), string(profiling.StateNetIO),
+		string(profiling.StateDiskIO), string(profiling.StateWait)}
+	if strings.Join(states, " ") != strings.Join(want, " ") {
+		t.Errorf("the thread-state lenses are %v, dtctl's states %v", states, want)
+	}
+	if fn, why := catalog.FocusTarget(catalog.Scope{}, map[string]any{catalog.ProfFunction: profiling.RootCaller}); fn != "" || why == "" {
+		t.Errorf("dtctl's root caller %q is offered as a function to focus (%q, %q)", profiling.RootCaller, fn, why)
+	}
+	spec := catalog.Lookup("hotspots")
+	for _, typ := range []string{"PROCESS", "PROCESS_GROUP_INSTANCE", "PROCESS_GROUP", "SERVICE", "HOST", "CONTAINER_GROUP_INSTANCE"} {
+		id := typ + "-000000000000A001"
+		if got, want := spec.Scopable(catalog.Entity{ID: id, Type: typ}), profiling.EligibleEntity(id); got != want {
+			t.Errorf("%s: the view offers an analysis=%v, dtctl runs one=%v", typ, got, want)
+		}
+	}
+}
+
+// A call that joins an analysis in flight is told at once what the analysis
+// said last. Every call of a view has a progress line of its own, so without
+// this a lens switch would blank the note until the next response, which can
+// be a minute away.
+func TestProfilingJoinerHearsTheLastNote(t *testing.T) {
+	runs := newProfileRuns()
+	runs.now = func() time.Time { return scenarioNow }
+	var mu sync.Mutex
+	heard := map[string][]string{}
+	type who struct{}
+	runs.report = func(ctx context.Context, text string) {
+		mu.Lock()
+		defer mu.Unlock()
+		name, _ := ctx.Value(who{}).(string)
+		heard[name] = append(heard[name], text)
+	}
+	said := func(name string) string {
+		mu.Lock()
+		defer mu.Unlock()
+		return strings.Join(heard[name], "|")
+	}
+	note, told, release := make(chan string), make(chan struct{}), make(chan struct{})
+	fetch := func(ctx context.Context, _ catalog.ProfileWindow) (any, error) {
+		for text := range note {
+			profileNote(ctx, text)
+			told <- struct{}{}
+		}
+		<-release
+		return "result", nil
+	}
+	var wg sync.WaitGroup
+	join := func(name string) context.CancelFunc {
+		ctx, cancel := context.WithCancel(context.WithValue(context.Background(), who{}, name))
+		before := waiters(runs)
+		wg.Go(func() { _, _, _ = runs.get(ctx, "k", timeframe(t, "2h"), fetch) })
+		for deadline := time.Now().Add(5 * time.Second); waiters(runs) != before+1; time.Sleep(time.Millisecond) {
+			if time.Now().After(deadline) {
+				t.Fatalf("%s did not join", name)
+			}
+		}
+		return cancel
+	}
+	defer join("first")()
+	if got := said("first"); got != "" {
+		t.Errorf("before any note the first call heard %q", got)
+	}
+	for _, text := range []string{"accepted", "still running"} {
+		note <- text
+		<-told
+	}
+	close(note)
+	defer join("second")()
+	if got := said("second"); got != "still running" {
+		t.Errorf("the joining call heard %q, want the last note and only it", got)
+	}
+	if got := said("first"); got != "accepted|still running" {
+		t.Errorf("the first call heard %q", got)
+	}
+	close(release)
+	wg.Wait()
+	// A finished analysis says nothing to the call that reads it.
+	ctx := context.WithValue(context.Background(), who{}, "third")
+	if got, _, err := runs.get(ctx, "k", timeframe(t, "2h"), fetch); got != "result" || err != nil {
+		t.Fatalf("the kept analysis reads %v, %v", got, err)
+	}
+	if got := said("third"); got != "" {
+		t.Errorf("a call for a finished analysis heard %q", got)
+	}
+}
+
+// waiters counts the calls waiting on the analyses of runs.
+func waiters(runs *profileRuns) int {
+	runs.mu.Lock()
+	defer runs.mu.Unlock()
+	n := 0
+	for _, run := range runs.runs {
+		n += len(run.waiters)
+	}
+	return n
+}
+
+// longReading is an analysis with more rows than a view shows: n functions,
+// n allocation paths, and for any function n callers and n callees.
+type longReading struct{ n int }
+
+func (r longReading) Functions(string) ([]functionRow, int, string, error) {
+	rows := make([]functionRow, r.n)
+	for i := range rows {
+		rows[i] = functionRow{Function: fmt.Sprintf("com.example.F%04d.run", i), Self: r.n - i, Total: r.n - i}
+	}
+	return rows, r.n * r.n, "", nil
+}
+
+func (r longReading) Focus(_, function string) ([]focusRow, string, error) {
+	rows := []focusRow{
+		{Relation: catalog.ProfRelTotal, Function: function, Samples: r.n},
+		{Relation: "self", Function: function, Samples: 1},
+	}
+	for _, rel := range []string{catalog.ProfRelCaller, catalog.ProfRelCallee} {
+		for i := range r.n {
+			rows = append(rows, focusRow{Relation: rel, Function: fmt.Sprintf("com.example.%s%04d.run", rel, i), Samples: r.n - i})
+		}
+	}
+	return rows, "", nil
+}
+
+// Stacks has nothing to say: the caps are the table's, the graph has its own.
+func (r longReading) Stacks() ([]stackRow, string) { return nil, catalog.ProfEmptyNoSamples }
+
+func (r longReading) Paths() ([]allocationRow, int64, int64, string) {
+	rows := make([]allocationRow, r.n)
+	for i := range rows {
+		rows[i] = allocationRow{Site: fmt.Sprintf("com.example.S%04d.make", i), AllocBytes: int64(r.n - i), AllocCount: 1}
+	}
+	return rows, int64(r.n * r.n), 0, ""
+}
+
+type longProfiler struct {
+	recordingProfiler
+	n int
+}
+
+func (p *longProfiler) Hotspots(context.Context, profileQuery) (hotspotReading, error) {
+	return longReading{p.n}, nil
+}
+
+func (p *longProfiler) Allocations(context.Context, profileQuery) (allocationReading, error) {
+	return longReading{p.n}, nil
+}
+
+// A view shows the first 300 rows of a reading and 25 callers and 25 callees
+// of a focused function, the largest of each, and its summary keeps the
+// number there were. The recording stays under these caps, so the readings
+// here are built to pass them by one.
+func TestProfilingReadingsAreCapped(t *testing.T) {
+	const rowCap, focusCap = 300, 25 // what the view states; not read from the code under test
+	scope := catalog.Scope{Entity: shopProcess, Timeframe: timeframe(t, "2h")}
+	read := func(n int, lens, arg string) (map[string]any, []map[string]any) {
+		t.Helper()
+		hotspots, allocations := sourcesAt(&longProfiler{n: n})
+		src, s := hotspots, scope
+		if lens == "allocations" {
+			src = allocations
+		}
+		s.Arg = arg
+		records, err := src(context.Background(), s, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return catalog.SplitSummary(records)
+	}
+	for _, lens := range []string{"running", "allocations"} {
+		first := catalog.ProfFunction
+		if lens == "allocations" {
+			first = catalog.ProfSite
+		}
+		for _, n := range []int{rowCap, rowCap + 1} {
+			summary, rows := read(n, lens, "")
+			if len(rows) != rowCap || summary[catalog.ProfSumRows] != float64(n) {
+				t.Errorf("%s with %d rows: %d shown, summary says %v; want %d shown of %d",
+					lens, n, len(rows), summary[catalog.ProfSumRows], rowCap, n)
+			}
+			if got := catalog.Str(rows[0], first); !strings.Contains(got, "0000") {
+				t.Errorf("%s: the first row is %s, want the largest", lens, got)
+			}
+		}
+	}
+	for _, n := range []int{focusCap, focusCap + 1} {
+		summary, rows := read(n, "running", "com.example.Hub.run")
+		count := map[string]int{}
+		for _, row := range rows {
+			count[catalog.Str(row, catalog.ProfRelation)]++
+		}
+		if count[catalog.ProfRelCaller] != focusCap || count[catalog.ProfRelCallee] != focusCap || len(rows) != 2*focusCap+2 {
+			t.Errorf("focus with %d each way: rows by relation %v, want %d callers, %d callees, total and self", n, count, focusCap, focusCap)
+		}
+		if summary[catalog.ProfSumCallers] != float64(n) || summary[catalog.ProfSumCallees] != float64(n) {
+			t.Errorf("focus with %d each way: summary says %v callers and %v callees",
+				n, summary[catalog.ProfSumCallers], summary[catalog.ProfSumCallees])
+		}
 	}
 }

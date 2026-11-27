@@ -66,6 +66,7 @@ belongs in a shared file; a third copy is a bug.
 | Tenant text on one line of chrome (crumb, caption, footer) | `catalog.OneLine` (`internal/tui/catalog/format.go`); `oneLine` (`internal/tui/table.go`) calls it |
 | Fit a frame label (`package.Class.method`) into a width | `catalog.ShortFrame` (`internal/tui/catalog/profiling.go`) |
 | Centre or wrap a message in a table body | `placeNote` (`internal/tui/table.go`) |
+| Float to `int64` without overflow; "is this an entity id" | `catalog.Int64`, `catalog.EntityID` (`internal/tui/catalog/format.go`) |
 | Severity colors | `internal/tui/catalog/severity.go` |
 | Sparklines | `internal/tui/catalog/spark.go` |
 | Render typed values (ids, timestamps, durations, JSON) | `internal/tui/render.go` |

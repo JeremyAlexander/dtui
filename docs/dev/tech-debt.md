@@ -35,12 +35,12 @@ keeps growing, split section 1 (DQL facts) by data object.
 ## Profiling analyses outlive a host that keeps running
 
 A profiling view cancels its analysis when it leaves the breadcrumb trail,
-but quitting or switching the context does not (`internal/tui/app.go`,
-`handleCtxSwitched` and the quit path). The native binary exits, so nothing
-is left running. The browser host does not exit; it answers the view with
-"not available" today (`cmd/web/sources.go`). Fix: cancel every
-`CancelOnLeave` view when the stacks are dropped, in the change that wires
-the profiling source into `cmd/web`.
+and a context switch does that too (`handleCtxSwitched` navigates home).
+Quitting does not (the quit path in `internal/tui/app.go`). The native
+binary exits, so nothing is left running. The browser host does not exit; it
+answers the view with "not available" today (`cmd/web/sources.go`). Fix:
+cancel every `CancelOnLeave` view on quit, in the change that wires the
+profiling source into `cmd/web`.
 
 ## A deferred navigation can land after a context switch
 
@@ -53,11 +53,11 @@ sequence and drop the stale ones in `app.Update`.
 
 ## Wrapped error text is laid out per view
 
-A table view makes its error one safe line and continues it under its own
-text (`renderTable` in `internal/tui/table.go`). Seven other views wrap the
-raw text with the continuation under the mark: `metrics.go`, `inspector.go`,
-`reader.go`, `navrender.go`, `timeline.go`, `relations.go`, `waterfall.go`.
-Fix: one `errorBlock(err, width)` helper, used by all eight.
+A table view lays its error out with `errorLines` (`internal/tui/table.go`):
+each line safe and wrapped on its own, under its own text, within the body.
+Seven other views wrap the raw text with the continuation under the mark:
+`metrics.go`, `inspector.go`, `reader.go`, `navrender.go`, `timeline.go`,
+`relations.go`, `waterfall.go`. Fix: use `errorLines` in all eight.
 
 ## Profiling view: unmeasured per-key work
 
@@ -188,9 +188,9 @@ defined in `shop/reports/__init__.py` is not found. Fix: add the package's
 
 The functions table and its graph ask the source separately and each keep
 what they got, so the two can come to show two analyses (the graph says so
-when it happens), `r` inside the time an analysis is reused for builds every
-stack row only to find it unchanged, and every table that opened a graph
-keeps a tree of its own. Fix: one immutable result of an analysis that both
+when it happens; `r` on either replaces the analysis for both and only the
+one that asked draws it), and every table that opened a graph keeps a tree
+of its own. Fix: one immutable result of an analysis that both
 views hold, with the tree built once from it.
 
 ## Flame graph: a paint formats before it cuts
@@ -213,14 +213,11 @@ A trail restored from the history ends at the functions table: the graph on
 top of it is not recorded. Fix: a history entry for the graph (its thread
 state, zoom path and search), restored once its analysis arrives.
 
-## Profiling: defects of the functions view seen from the graph
+## A link is handed to the system by a process nobody waits for
 
-Three belong to the profiling view, not the graph, and are for its owner:
-`o` hands a process group's id to a link that knows no such type; the
-echoed command does not quote the entity id; and some failures of dtctl
-pass `profilingFailure` unworded. And one is older than both:
-`openBrowser` (`links.go`) starts a process and never waits for it, which
-`o` has always done and `O` now does too.
+`openBrowser` (`links.go`) starts the system's opener and never waits for
+it. `o` has always done so, and `O` on the flame graph now does too. Fix:
+wait for it off the update loop, and say when it failed.
 
 ## Flame graph: the editor is named by the environment only
 
@@ -253,3 +250,56 @@ stops with "no license file" and leaves both files truncated. Fix: when
 the `replace` lines go and `go.mod` requires a dtctl release that has the
 profiling package, run `make third-party-licenses` (it downloads the
 released modules) and commit the result. Do not edit the files by hand.
+
+## History restores a trail on one window, and can merge two inspectors
+
+A history entry keeps one window, so the covered pages of a restored trail
+come back on the top page's window; its identity omits the lens, and two
+inspectors of allocation rows are told apart by fields those rows do not
+have (`internal/tui/history.go`). True for every view. On the profiling view
+a wrong window costs an analysis of minutes. Fix: store the window and the
+lens per page, and give an API row an identity its spec names.
+
+## Tenant text reaches the screen unsanitised outside the table
+
+`catalog.SafeText` and `oneLine` cover cells, crumbs, captions, the footer
+echo, the status line and a table's error. Not covered, in every view: the
+pin label (`internal/tui/app.go`), the inspector title
+(`internal/tui/inspector.go`) and the history picker, which draws a stored
+trail through `pad` only and so replays a raw name from the history file
+(`internal/tui/history.go`). `SafeText` itself handles C0 and C1 controls
+and lets bidirectional override characters through, which matters most for
+an echo that is copied as it is. Other echoes are not safe to paste either:
+`internal/tui/datasource.go` wraps the DQL in single quotes without escaping
+one inside it and appends segment ids bare, and
+`internal/tui/catalog/livedebugger.go` interpolates an argument bare. Fix:
+pass the three labels through `oneLine`, add the bidirectional controls to
+`SafeText`, and quote every echoed value with `shellSingleQuote`
+(`internal/tui/catalog/patterns.go`).
+
+## Frame labels are fitted before they are made safe
+
+`shortFrame` and `cutLeft` (`internal/tui/catalog/profiling.go`) fit a label
+to its cell by rune and by cell width, and `SafeText` runs afterwards. A
+control character then widens the fitted text, `cutLeft` can split a
+combining sequence and leave the mark on the ellipsis, and an empty package
+segment loses a dot. Hostile or malformed labels only. Fix: make the label
+safe first and cut by grapheme cluster.
+
+## Nothing is tested below 24 lines
+
+80x24 is the smallest supported size (`docs/design/tui.md`). Under it the
+profiling view keeps its five lines of chrome and gives up rows: at 80x10
+it shows one row and no footnote. A review saw the column header with no
+row at that size on an earlier commit. Fix: decide what a table gives up
+first below 24 lines (the lens strip, the caption, the footnote) and add a
+snapshot at 80x12.
+
+## A profiling answer of another shape reads as an idle process
+
+dtctl's `checkResult` accepts any JSON object as a finished analysis, so an
+answer such as `{"unrelated":1}` reaches the view as "no samples" and is
+kept. The cure is in dtctl. Owed here once dtctl refuses such an answer: a
+test in `profiling_test.go` that sends it through the recorded transport
+and expects `profileMalformed`; `TestProfilingAnswerThatIsNoAnalysis` is
+the place.
