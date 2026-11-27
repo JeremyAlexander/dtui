@@ -36,26 +36,25 @@ rest how the view uses it.
   message rules. Until that release `e1` may be repinned. Two golden files
   make the step a conscious one: the `e1` keys of a corpus, and one digest per
   declaration the key is computed from (a `const` block is one). The digests
-  cover declarations; the code of a function is covered by the corpus and the tests
-  alone. The readers and the corpus are
-  the specification; this record names the rules and does not replace them.
-  One vector for another implementation: an event with the type `é` and
-  nothing else hashes the bytes `1:42:é` to `e1:c7bd5892e50a`.
+  cover declarations; the code of a function is covered by the corpus and the
+  tests alone. The readers and the corpus are the specification; this record
+  names the rules and does not replace them. One vector for another
+  implementation: an event with the type `é` and nothing else hashes the bytes
+  `1:42:é` to `e1:c7bd5892e50a`.
 - **One event per span is keyed.** Of a span's exception events that give a
   type, a message that is not empty once parameterised, or a frame a reader
   can use, take the last one flagged `exception.is_caused_by_root`, else the
   last one. Stack text no reader can use does not make an event count, and
   neither does a Go stack that is not a panic's, nor a message of which
   parameterising leaves nothing, such as one of control characters only. A
-  span with no such event has no key. Where that event's stack
-  text holds a whole chain (`Caused by:` in Java, an inner exception in .NET,
-  an earlier traceback in Python, the first member of a Python exception
-  group that is itself the first exception), the frames are the root cause's, read from
-  the text, and so is the type where the text names one. A cause whose type
-  cannot be read keeps the event's type, and a cause without frames is not
-  the root: the nearest exception with frames is. A JavaScript `[cause]`
-  chain is not split; its frames are read as one stack under the event's
-  type.
+  span with no such event has no key. Where that event's stack text holds a
+  whole chain (`Caused by:` in Java, an inner exception in .NET, an earlier
+  traceback in Python, the first member of a Python exception group that is
+  itself the first exception), the frames are the root cause's, read from the
+  text, and so is the type where the text names one. A cause whose type cannot
+  be read keeps the event's type, and a cause without frames is not the root:
+  the nearest exception with frames is. A JavaScript `[cause]` chain is not
+  split; its frames are read as one stack under the event's type.
 - **A fallback ladder picks what is hashed.** In order:
   1. *app frames*: the type, the throw-site frame, and the application's
      frames below it that are not pass-through, until five frames that count
@@ -68,7 +67,12 @@ rest how the view uses it.
   2. *frames*, when no application frame counts: the type, the throw site and
      up to four frames below it, whatever they are.
   3. *message*, when no frame was read: the type and the parameterised
-     message.
+     message. Parameterising replaces the values in a message and keeps the
+     codes that name the failure: a `SQLSTATE`, an Oracle-style code, and a
+     number of up to five digits that follows HTTP, status or errno wording,
+     or `code` behind the word that says whose it is (`error code`, `exit
+     code`). So a 404 and a 500 stay apart on this rung, and a bare
+     `code 12345` is a value.
   4. *type*: the type alone.
 
   Every row shows the rung that produced it, so a coarse group is visibly
@@ -80,8 +84,10 @@ rest how the view uses it.
 - **The throw site is always in a frame key, and pass-through frames do not
   count among the application's.** Filter chains, middleware continuations,
   interceptors and decorator wrappers are shared by every error that passes
-  through them; keyed on those alone, unrelated errors of one type merge (see
-  "Observed so far"). They are skipped on the app-frames rung only. On the
+  through them; keyed on those alone, unrelated errors of one type merge. On
+  one environment the top application frames of an error sent with a servlet
+  `sendError` were two filter `doFilter` frames, not the throw site. They are
+  skipped on the app-frames rung only. On the
   frames rung nothing is skipped, because there a handler's or a filter's own
   frame may be all that tells it from the next. A pass-through frame that is
   the throw site stays in the key, and an application's pass-through throw
@@ -263,31 +269,3 @@ needs a further ADR:
   by the scan limit and by a timeout, each named as that; an empty cut sample;
   typing a key, pressing Enter and asserting that no DQL holds it; the facet
   picker's fields taken from the spans; the layout at four sizes.
-
-## Observed so far
-
-Checked against exception events on one small live environment. These are
-facts about that environment, not about every tenant kind.
-
-- The events carried `exception.type`, `exception.message`,
-  `exception.stack_trace`, `exception.id`, `exception.is_caused_by_root`,
-  `exception.escaped`, `exception.file.full` and `exception.line_number`.
-  `exception.caused_by_id` was on no event, so the key does not read it: the
-  root is the flagged event, else the last one.
-- OneAgent-captured Java stacks use the notation
-  `pkg.Class.method (File.java:123)`, with no `at ` prefix. The Java reader
-  reads that form as well as the JVM's own.
-- Pass-through frames are a known weakness of "top N in-app frames". For an
-  error sent with a servlet `sendError`, the top in-app frames were two filter
-  `doFilter` frames, not the throw site. Every error that passes through the
-  same filters would share those frames, so unrelated errors of one type would
-  merge into one issue. This is why the throw site is in the key and
-  pass-through frames are skipped.
-- A status code in a message (`HTTP 404 ...`) carries meaning. The message
-  rule keeps a `SQLSTATE`, an Oracle-style code, and a number that follows
-  HTTP, status or errno wording or `code` behind the word that says whose it
-  is (`error code`, `exit code`), so a 404 and a 500 stay apart on the message
-  rung; a bare `code 12345` is a value.
-- A projected span was about 5 KB there, most of it stack text, and the
-  projection halved the result. The environment had very few exception spans,
-  which says nothing yet about a busy one.
