@@ -41,8 +41,9 @@ var extensions = map[string]bool{
 }
 
 // Index is the source files under one directory, found by one walk. Every
-// path it hands out is one the walk saw: a frame's text selects among them
-// and never forms a path of its own.
+// path it hands out is one the walk saw, and still the file it was then as
+// far as a path can tell (Abs): a frame's text selects among them and never
+// forms a path of its own.
 type Index struct {
 	root string
 	// byName holds the root-relative, slash-separated paths by file name,
@@ -53,7 +54,6 @@ type Index struct {
 	Partial string
 }
 
-// Root is the directory frames are looked up in: the repository dir is in,
 // The refusals of Root: a repository is found, and it is no place to look
 // for an application's source. Each reads on after "dtui was started in".
 var (
@@ -61,6 +61,7 @@ var (
 	ErrVolumeRoot    = errors.New("the repository here is a whole volume, which is not searched: start dtui inside the application's checkout")
 )
 
+// Root is the directory frames are looked up in: the repository dir is in,
 // which is the nearest directory at or above it that holds a .git entry.
 // Outside a repository it is "": there is nothing to say where an
 // application's source ends, and a home directory is not walked for being
@@ -98,7 +99,6 @@ func rootIn(dir, home string, exists func(path string) bool) (string, error) {
 	}
 }
 
-// Scan walks root and indexes its source files. Symbolic links are not
 // sameDir reports whether two paths name one directory, however each is
 // spelled; "" names none.
 func sameDir(a, b string) bool {
@@ -116,6 +116,7 @@ func sameDir(a, b string) bool {
 	return err == nil && os.SameFile(ia, ib)
 }
 
+// Scan walks root and indexes its source files. Symbolic links are not
 // followed and not kept, so nothing outside root is ever in the index.
 func Scan(ctx context.Context, root string, lim Limits) (*Index, error) {
 	root, err := filepath.Abs(root)
@@ -184,9 +185,11 @@ func (ix *Index) Root() string { return ix.root }
 func (ix *Index) Len() int { return len(ix.known) }
 
 // Abs is the absolute path of a file of the index. It refuses a path the
-// walk did not see, one that no longer resolves to a place inside the root
-// (a file can have become a symbolic link since) and one that is no longer a
-// regular file: a named pipe or a directory is not handed to an editor.
+// walk did not see, one that is no longer the file the walk saw (the file,
+// or a directory on the way to it, can have become a symbolic link since,
+// and what a link leads to was never indexed, inside the root or out of it)
+// and one that is no longer a regular file: a named pipe or a directory is
+// not handed to an editor.
 func (ix *Index) Abs(rel string) (string, error) {
 	if !ix.known[rel] {
 		return "", fmt.Errorf("%q is not a file of %s", rel, ix.root)
@@ -196,13 +199,15 @@ func (ix *Index) Abs(rel string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if !strings.HasPrefix(resolved, ix.root+string(filepath.Separator)) {
-		return "", fmt.Errorf("%q leads outside %s", rel, ix.root)
+	// The root has its links resolved and the walk followed none, so the
+	// path of a file the walk saw resolves to itself.
+	if resolved != abs {
+		return "", fmt.Errorf("%q is %w", rel, errNotSeen)
 	}
-	if info, err := os.Lstat(resolved); err != nil {
+	if info, err := os.Lstat(abs); err != nil {
 		return "", err
 	} else if !info.Mode().IsRegular() {
 		return "", fmt.Errorf("%q is %w", rel, errNotRegular)
 	}
-	return resolved, nil
+	return abs, nil
 }

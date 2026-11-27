@@ -52,10 +52,10 @@ func TestResolveDoesNotReadADirectory(t *testing.T) {
 	}
 }
 
-// A symbolic link that took a file's place after the walk is read only
-// where it leads to a regular file inside the root. One that leads out of
-// the root is counted as not read; one that leads nowhere, like a file that
-// was removed, is no candidate any more.
+// A symbolic link that took a file's place after the walk is not read,
+// wherever it leads: what it leads to is not a file the walk saw, also when
+// it is inside the root. It is counted as not read. One that leads nowhere,
+// like a file that was removed, is no candidate any more.
 func TestResolveAfterAFileBecameALink(t *testing.T) {
 	outside := tree(t, map[string]string{"CartService.java": "class CartService {\n  private String total(Item item) {}\n}\n"})
 	for _, tc := range []struct {
@@ -71,20 +71,41 @@ func TestResolveAfterAFileBecameALink(t *testing.T) {
 		{"removed", nil, 0, 0},
 		{"to a file in the root", func(p string) error {
 			return os.Symlink(filepath.Join(filepath.Dir(filepath.Dir(p)), "other", "CartService.java"), p)
-		}, 1, 0},
+		}, 0, 1},
 	} {
 		ix := swapped(t, cartJava, tc.put)
 		got, unread, late := parts(ix.Resolve(context.Background(), Parse(cartFrame)))
 		if len(got) != tc.matches || unread != tc.unread || late {
 			t.Errorf("%s: %+v, %d unread, late %v; want %d matches and %d unread", tc.name, got, unread, late, tc.matches, tc.unread)
 		}
-		for _, m := range got {
-			// The link's target declares the type and no total: the match
-			// is the path the walk saw, with the line found in the target.
-			if m != (Match{Path: cartJava, Line: 2, How: TypeOnly}) {
-				t.Errorf("%s: matched %+v", tc.name, m)
-			}
+		if abs, err := ix.Abs(cartJava); err == nil && tc.put != nil {
+			t.Errorf("%s: a link is handed out as the file %q", tc.name, abs)
 		}
+	}
+}
+
+// A directory on the way to a file can become a link as well. The path then
+// still names a regular file, and not the one the walk saw: it is refused,
+// also when the link stays inside the root.
+func TestAbsRefusesAFileBehindADirectoryThatBecameALink(t *testing.T) {
+	root := tree(t, shop)
+	ix := scan(t, root)
+	dir := filepath.Join(root, filepath.FromSlash(filepath.Dir(cartJava)))
+	if err := os.RemoveAll(dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(filepath.Dir(dir), "other"), dir); err != nil {
+		t.Skip("no symbolic links here:", err)
+	}
+	if info, err := os.Lstat(filepath.Join(root, filepath.FromSlash(cartJava))); err != nil || !info.Mode().IsRegular() {
+		t.Fatalf("the path is to name a regular file through the link: %v", err)
+	}
+	if abs, err := ix.Abs(cartJava); !errors.Is(err, errNotSeen) {
+		t.Errorf("a file behind a linked directory is handed out as %q (%v)", abs, err)
+	}
+	got, unread, late := parts(ix.Resolve(context.Background(), Parse(cartFrame)))
+	if len(got) != 0 || unread != 1 || late {
+		t.Errorf("%+v, %d unread, late %v; want no match and 1 unread", got, unread, late)
 	}
 }
 
@@ -151,8 +172,7 @@ func TestOpenRegularLooksBeforeItOpens(t *testing.T) {
 	if file, err := openRegular(recording, filepath.Join(root, "missing.go")); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("a missing file: %v, %v", file, err)
 	}
-	// A link is refused for what it is, wherever it leads: Abs hands out the
-	// place a link leads to, never the link.
+	// A link is refused for what it is, wherever it leads; Abs hands none out.
 	link := filepath.Join(root, "link.go")
 	if err := os.Symlink(a, link); err != nil {
 		t.Log("no symbolic link here:", err)

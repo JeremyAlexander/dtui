@@ -13,6 +13,11 @@ import (
 // took its place after the walk. Reading one can wait forever or never end.
 var errNotRegular = errors.New("not a regular file any more")
 
+// errNotSeen is the refusal of a path that is in the index and now leads
+// somewhere else: it, or a directory on the way to it, became a symbolic
+// link after the walk.
+var errNotSeen = errors.New("a symbolic link now, and no longer the file that was found")
+
 // opener opens the file at a path for reading. A lookup opens with
 // openNoWait; the type is there so that the look before the open can be
 // tested with an open that waits, as it does where no flag keeps it from it.
@@ -24,11 +29,16 @@ func openNoWait(abs string) (*os.File, error) { return os.OpenFile(abs, openFlag
 
 // openRegular opens the regular file at abs for reading, and nothing else.
 // The path is looked at without following a link and is opened only when it
-// names a regular file; the opened file is then looked at again: what is
-// read is the regular file that was seen, also when the path was swapped in
-// between. The first look is the one that holds on every platform. Where
-// open cannot be told not to wait, it is all that keeps a lookup from a
-// named pipe.
+// names a regular file; the opened file is then compared with what was seen.
+//
+// What the comparison holds for depends on the platform. On Unix the look
+// keeps the file's device and inode, so a path swapped between the look and
+// the open, for a link or for another regular file, is refused. On Windows
+// the look keeps the path and the file's identity is read through it only
+// when the two are compared, which is after the open: a swap for a link is
+// still refused, a swap for another regular file is not seen. The first
+// look is the one that holds on every platform. Where open cannot be told
+// not to wait, it is all that keeps a lookup from a named pipe.
 func openRegular(open opener, abs string) (*os.File, error) {
 	seen, err := os.Lstat(abs)
 	if err != nil {
