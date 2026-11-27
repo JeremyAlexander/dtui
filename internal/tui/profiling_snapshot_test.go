@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -78,6 +79,9 @@ func openProfiling(t *testing.T, sc profilingScenario) (*app, *tableView) {
 			deliver(a, tv.setLens(i, false))
 		}
 	}
+	// The lens switch left its confirmation in the status line, where it
+	// stands for a few seconds. What a screen shows after that is the echo.
+	a.status = ""
 	return a, tv
 }
 
@@ -133,6 +137,7 @@ func TestSnapshotProfiling(t *testing.T) {
 // that claims rows.
 func TestProfilingStatesSayWhatHappened(t *testing.T) {
 	pinSnapshotClock(t)
+	rowCount := regexp.MustCompile(`^ *(\S+) rows\b`)
 	for name, want := range map[string][]string{
 		"hotspots-lock":   {"hotspots·lock (shop-backend)", "last 2h of the selected 24h (10:00–12:00 UTC)", "11,353 lock samples", "LockSupport.parkNanos"},
 		"no-data":         {"0 rows", "∅ no samples in this window — the process may have been idle or restarted"},
@@ -157,8 +162,72 @@ func TestProfilingStatesSayWhatHappened(t *testing.T) {
 			if lines := strings.Count(out, "\n") + 1; lines != size.h {
 				t.Errorf("%s at %dx%d is %d lines tall", name, size.w, size.h, lines)
 			}
+			if name == "hotspots-lock" {
+				continue // the one state here that has rows
+			}
+			// The chrome that claims rows: a count other than 0, and for a
+			// failure also the column titles and the caption of a reading.
+			for _, line := range strings.Split(out, "\n") {
+				if m := rowCount.FindStringSubmatch(line); m != nil && m[1] != "0" {
+					t.Errorf("%s at %dx%d counts %s rows", name, size.w, size.h, m[1])
+				}
+			}
+			if strings.HasPrefix(want[0], "✗") {
+				for _, chrome := range []string{"SELF%", "FUNCTION", "samples (stacks seen", "0 rows ·"} {
+					if strings.Contains(out, chrome) {
+						t.Errorf("%s at %dx%d is a failure and still draws %q:\n%s", name, size.w, size.h, chrome, out)
+					}
+				}
+			}
 		}
 	}
+}
+
+// Restoring a page from the history replaces the stack, and the facet an
+// inspector asks for cuts it down to the list beneath. Either way a profiling
+// view that was on the trail has left it, and its analysis is no longer
+// waited for.
+func TestProfilingLeavesTheTrailWithItsStack(t *testing.T) {
+	t.Run("history restore", func(t *testing.T) {
+		a, tv, calls, _ := profilingCalls(t)
+		deliver(a, a.restoreEntry(historyEntry{
+			Stack: []pageRef{{Kind: "table", View: "pods", Crumb: "pods"}}, Context: "test", Visited: time.Now(),
+		}))
+		if a.top() == viewModel(tv) {
+			t.Fatal("the restore did not replace the stack")
+		}
+		if len(*calls) != 1 || (*calls)[0].Err() == nil || !tv.parked {
+			t.Errorf("after a history restore: %d calls, cancelled=%v, parked=%v; want the one call cancelled and the view parked",
+				len(*calls), (*calls)[0].Err() != nil, tv.parked)
+		}
+	})
+	t.Run("facet on the list beneath", func(t *testing.T) {
+		a := testApp(t, "logs")
+		seedRows(t, a, []map[string]any{{"content": "c", "status": "ERROR"}})
+		logs := a.top().(*tableView)
+		var call context.Context
+		a.ds.sources = map[string]Source{
+			"hotspots": func(ctx context.Context, _ catalog.Scope, _ string) ([]map[string]any, error) {
+				call = ctx
+				return nil, nil
+			},
+		}
+		_, cmd := a.Update(pushViewMsg{spec: catalog.Lookup("hotspots"), scope: catalog.Scope{
+			Timeframe: a.tf, Entity: &catalog.Entity{ID: "PROCESS-000000000000A001", Type: "PROCESS"},
+		}})
+		deliver(a, cmd)
+		tv := a.top().(*tableView)
+		if len(a.stack) != 2 || a.stack[0] != viewModel(logs) || call == nil {
+			t.Fatalf("stack of %d, want logs with hotspots over it", len(a.stack))
+		}
+		a.applyFacetBelow(applyFacetMsg{field: "status", value: "ERROR"})
+		if a.top() != viewModel(logs) {
+			t.Fatal("the facet did not return to the list")
+		}
+		if call.Err() == nil || !tv.parked {
+			t.Errorf("after the facet cut the stack: cancelled=%v, parked=%v", call.Err() != nil, tv.parked)
+		}
+	})
 }
 
 // An analysis takes minutes: the view says what it waits for and for how
