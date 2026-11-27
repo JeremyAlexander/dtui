@@ -105,20 +105,28 @@ var (
 	//
 	//  1. a SQLSTATE, five digits or upper-case letters, and an Oracle-style
 	//     code ("ORA-00942"). Kept: they name the failure.
-	//  2. a number after the wording of a code: an HTTP status, a status, an
-	//     errno, or "code" behind what says whose it is (exit, error,
-	//     response, return, result, SQL). Kept where it is at most
-	//     msgCodeDigits digits and nothing else, since 404 and 500 are
-	//     different failures; "code" alone names a value ("promo code
+	//  2. a number after the wording of a code: an HTTP status ("HTTP 404",
+	//     "HTTP Error 404"), a status, an errno, or "code" behind what says
+	//     whose it is (exit, error, response, return, result, SQL). Kept
+	//     where it is at most msgCodeDigits digits and nothing else but a
+	//     minus sign before them ("error code -32601"), since 404 and 500
+	//     are different failures; "code" alone names a value ("promo code
 	//     12345"), and "status: 12.5ms" is a duration.
+	//
+	//     The wording is matched without regard to case, which in a regular
+	//     expression also takes "ſ" for s and the kelvin sign for k:
+	//     replaceNumbers takes wording beyond ASCII for none.
 	//  3. a number (msgNumberText) and, after the start, a space or one of
 	//     msgNumberLeads, a minus sign before it ("Index -1").
 	msgNumberRe = regexp.MustCompile(
-		`(?i:\bSQLSTATE)[ :=#\[(]{1,3}(?:\d{1,5}|[0-9A-Z]{5})\b` +
+		`(?i:\bSQLSTATE)[ :=#\[(]{1,3}(\d{1,5}|[0-9A-Z]{5})\b` +
 			`|\b(?:ORA|PLS|TNS)-\d{5}\b` +
-			`|(?i:\b(?:HTTP(?:/\d(?:\.\d)?)?(?: status)?|(?:(?:http|exit|response)[ _-]?)?status(?:[ _-]?code)?` +
-			`|(?:error|err|exit|response|return|result|sql)[ _-]?code|errno)[ :=#\[(]{1,3})(` + msgNumberText + `)\b` +
+			`|(?i:\b(?:HTTP(?:/\d(?:\.\d)?)?(?: status| error)?|(?:(?:http|exit|response)[ _-]?)?status(?:[ _-]?code)?` +
+			`|(?:error|err|exit|response|return|result|sql)[ _-]?code|errno)[ :=#\[(]{1,3})(-?` + msgNumberText + `)\b` +
 			`|(?:(?:^|[\s=:(\[,;])-)?\b` + msgNumberText + `\b`)
+	// A SQLSTATE in quotes ("SQLSTATE '23505'"), which is the code and no
+	// value: the quotes go, so that the rule for quoted values leaves it.
+	msgQuotedStateRe = regexp.MustCompile(`((?i:\bSQLSTATE)[ :=#\[(]{1,3})(?:'([0-9A-Z]{5})'|"([0-9A-Z]{5})")`)
 	// A CSI sequence (a colour, a cursor move), or any other control
 	// character but the white space collapseSpaces handles.
 	msgControlRe = regexp.MustCompile(`\x1b\[[0-?]*[ -/]*[@-~]|[\x00-\x08\x0b\x0e-\x1f\x7f]`)
@@ -149,14 +157,24 @@ type messageRule struct {
 	apply   func(string) string
 }
 
-// messageRules run in this order, and the order is part of the result:
-// quoted values go first because they may hold anything, URLs before the
+// messageRules run in this order, and the order is part of the result: a
+// quoted SQLSTATE loses its quotes before quoted values go, which go next
+// because they may hold anything, URLs before the
 // paths and numbers inside them, UUIDs before the hex runs and numbers they
 // are made of, IPs before dates (three groups of an IPv6 address read as a
 // clock time) and before numbers, dates before the paths that hold one, and
 // paths before the ids in their segments. A digit run is a number however
 // long it is, so hex needs a letter. Changing the order changes fingerprints.
 var messageRules = []messageRule{
+	{"sqlstate", func(s string) bool { return strings.ContainsAny(s, "\"'") && len(s) > msgCodeDigits }, func(s string) string {
+		return msgQuotedStateRe.ReplaceAllStringFunc(s, func(m string) string {
+			parts := msgQuotedStateRe.FindStringSubmatch(m)
+			if !isASCII(parts[1]) {
+				return m
+			}
+			return parts[1] + parts[2] + parts[3]
+		})
+	}},
 	{"quoted", func(s string) bool { return strings.ContainsAny(s, "\"'`") }, func(s string) string {
 		s = msgDoubleQuotedRe.ReplaceAllString(s, msgQuoted)
 		s = msgSingleQuotedRe.ReplaceAllString(s, msgQuoted)
@@ -236,17 +254,23 @@ func replaceFilePath(m string) string {
 
 // replaceNumbers decides what each msgNumberRe match becomes: a number is
 // replaced, and the character a minus sign followed is kept; a number after
-// the wording of a code is replaced behind the wording unless it is a code;
-// any other match is a code and stays as it is.
+// the wording of a code is replaced behind the wording unless it is a code
+// and the wording is ASCII; any other match is a code and stays as it is.
 func replaceNumbers(s string) string {
 	var b strings.Builder
 	last := 0
 	for _, m := range msgNumberRe.FindAllStringSubmatchIndex(s, -1) {
-		start, end, code := m[0], m[1], m[2]
+		start, end, state, code := m[0], m[1], m[2], m[4]
 		keep := start
 		switch c := s[start]; {
+		case state >= 0:
+			if isASCII(s[start:state]) || !hasDigit(s[state:end]) {
+				continue
+			}
+			keep = state
 		case code >= 0:
-			if value := s[code:end]; len(value) <= msgCodeDigits && strings.Trim(value, digits) == "" {
+			value := strings.TrimPrefix(s[code:end], "-")
+			if isASCII(s[start:code]) && len(value) <= msgCodeDigits && strings.Trim(value, digits) == "" {
 				continue
 			}
 			keep = code
@@ -408,6 +432,15 @@ func isIPv6(s string) bool {
 	}
 	addr, err := netip.ParseAddr(s)
 	return err == nil && addr.Is6()
+}
+
+func isASCII(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] >= utf8.RuneSelf {
+			return false
+		}
+	}
+	return true
 }
 
 func hasDigit(s string) bool {

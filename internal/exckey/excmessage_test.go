@@ -117,7 +117,27 @@ func TestParameterizeMessageReplacesEachKind(t *testing.T) {
 		{"a decimal after status wording", "status: 12.5ms", "status: <n>"},
 		{"a status ends a sentence", "upstream answered HTTP 404.", "upstream answered HTTP 404."},
 		{"sqlstate in lower case letters is no code", "sqlstate error on row 7", "sqlstate error on row <n>"},
-		{"a long s is no s", "a\u017ftatus 404", "a\u017ftatus 404"},
+		{"a long s is no s", "a\u017ftatus 404", "a\u017ftatus <n>"},
+		{"a long s inside the wording", "HTTP \u017ftatus 404", "HTTP \u017ftatus <n>"},
+		{"http error wording", "HTTP Error 404: upstream failure", "HTTP Error 404: upstream failure"},
+		{"http error wording, another status", "HTTP Error 500: upstream failure", "HTTP Error 500: upstream failure"},
+		{"http error wording in lower case", "http error 503", "http error 503"},
+		{"http error with a duration", "HTTP error 12.5ms", "HTTP error <n>"},
+		{"a negative exit code", "exit code -1", "exit code -1"},
+		{"a negative errno", "connect failed: errno -111", "connect failed: errno -111"},
+		{"a negative error code", "error code -32601", "error code -32601"},
+		{"another negative error code", "error code -32600", "error code -32600"},
+		{"a negative code of six digits is a value", "error code -326011", "error code <n>"},
+		{"a negative duration after status wording", "status: -12.5ms", "status: <n>"},
+		{"a hyphen after code wording is no sign", "status-404", "status-<n>"},
+		{"a long s before a sqlstate", "a\u017fQLSTATE 23505", "a\u017fQLSTATE <n>"},
+		{"a long s before a sqlstate of letters", "a\u017fQLSTATE ABCDE", "a\u017fQLSTATE ABCDE"},
+		{"a long s before a quoted sqlstate", "a\u017fQLSTATE '23505'", "a\u017fQLSTATE <q>"},
+		{"a quoted sqlstate", "SQLSTATE '23505' dup", "SQLSTATE 23505 dup"},
+		{"another quoted sqlstate", `SQLSTATE "40001" dup`, "SQLSTATE 40001 dup"},
+		{"a quoted sqlstate with a letter", "sqlstate: '2200G'", "sqlstate: 2200G"},
+		{"a quoted word after sqlstate is a value", "SQLSTATE 'unknown' dup", "SQLSTATE <q> dup"},
+		{"a quoted code elsewhere is a value", "state '23505' dup", "state <q> dup"},
 		{"a kelvin sign is no k", "to\u212aen 42", "to\u212aen <n>"},
 
 		{"a compound duration", "timeout after 1m0s", "timeout after <n>"},
@@ -158,7 +178,7 @@ func TestParameterizeMessageReplacesEachKind(t *testing.T) {
 
 // The rule order is part of the fingerprint: reordering changes keys.
 func TestParameterizeMessageRuleOrder(t *testing.T) {
-	want := []string{"quoted", "url", "uuid", "ip", "date", "path", "hex", "id", "number"}
+	want := []string{"sqlstate", "quoted", "url", "uuid", "ip", "date", "path", "hex", "id", "number"}
 	if len(messageRules) != len(want) {
 		t.Fatalf("rules = %d, want %d", len(messageRules), len(want))
 	}
