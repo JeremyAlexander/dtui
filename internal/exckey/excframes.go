@@ -68,6 +68,9 @@ type stackNotation struct {
 	// whether the frames lead to where the exception arose. They always do
 	// where the runtime throws, since it records the stack at the throw.
 	rootCause func(lines []string) (frames []StackFrame, typ string, atFault bool)
+	// atFault, where a notation has traces that are not at fault, is what
+	// rootCause reports as atFault, found without reading the frames.
+	atFault func(lines []string) bool
 	// inApp reports whether a frame is application code rather than the
 	// runtime's or a framework's.
 	inApp func(f StackFrame) bool
@@ -93,7 +96,7 @@ var stackNotations = [...]stackNotation{
 		passThrough: jsPassThrough},
 	StackPython: {frame: pythonFrame, owns: pythonOwns, rootCause: pythonRootCause, inApp: pythonInApp,
 		passThrough: pythonPassThrough},
-	StackGo: {frame: goFrame, owns: goOwns, rootCause: goRootCause, inApp: goInApp,
+	StackGo: {frame: goFrame, owns: goOwns, rootCause: goRootCause, atFault: goAtFault, inApp: goInApp,
 		passThrough: goPassThrough},
 }
 
@@ -120,6 +123,23 @@ func parseStack(stack string) (frames []StackFrame, typ string, atFault bool) {
 	}
 	frames, typ, atFault = notation.rootCause(lines)
 	return collapseFrames(frames), typ, atFault
+}
+
+// faultStack is what a key takes of a trace: the frames and the type
+// parseStack gives where the trace is at fault, and nothing where it is
+// not. A trace that is known not to be at fault before its frames are read
+// (stackNotation.atFault) is not read.
+func faultStack(stack string) (frames []StackFrame, typ string) {
+	lines := stackLines(stack)
+	notation := stackNotationOf(lines)
+	if notation == nil || notation.atFault != nil && !notation.atFault(lines) {
+		return nil, ""
+	}
+	frames, typ, atFault := notation.rootCause(lines)
+	if !atFault {
+		return nil, ""
+	}
+	return collapseFrames(frames), typ
 }
 
 // stackNotationOf picks the notation a trace is written in: the one with

@@ -179,6 +179,43 @@ func goRootCause(lines []string) (frames []StackFrame, typ string, atFault bool)
 	return goThrowSite(frames), "", atFault
 }
 
+// goAtFault is what goRootCause reports as atFault, without the frames:
+// most Go traces are no panic's (an error logged with debug.Stack), and
+// their frames go into no key. Up to the first frame every line is read as
+// goGoroutineFrames reads it. Below it only a line that can be a panic
+// entry is: one that holds what such a frame's name is made of
+// (goPanicMarks).
+func goAtFault(lines []string) bool {
+	framed, headed := false, false
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if !headed && !framed && hasAnyPrefix(line, goPanicHeaders) {
+			return true
+		}
+		if framed && !containsAny(line, goPanicMarks) {
+			continue
+		}
+		if f, ok := goFrame(line); ok {
+			if isGoPanic(f) {
+				return true
+			}
+			framed = true
+		} else if strings.HasPrefix(line, goGoroutine) && goGoroutineRe.MatchString(line) {
+			if framed {
+				return false
+			}
+			headed = true
+		}
+	}
+	return false
+}
+
+// goPanicMarks are what the line of a panic entry holds, one of them
+// (isGoPanic): the word, the runtime's package, or the bracket of type
+// arguments, which are cut from a name before it is read. The header of a
+// goroutine holds a bracket too.
+var goPanicMarks = []string{"panic", goRuntimePackage, "["}
+
 // goPanicHeaders start the first line of a crash: a panic, or an error the
 // runtime does not let a program recover from.
 var goPanicHeaders = []string{"panic: ", "fatal error: "}

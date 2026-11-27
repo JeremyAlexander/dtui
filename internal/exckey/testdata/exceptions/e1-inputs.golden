@@ -52,6 +52,7 @@ ba92428f151a8647	var goFileSuffixes
 d28d2de98dfd7427	var goGoroutineRe
 bd5cb2dab2295a66	var goNameRe
 8f88eb56f7b20fc0	var goPanicHeaders
+6c1987a00e232377	var goPanicMarks
 666dc50d3004d22e	var goPanicRe
 aa2cb485bca0e74c	var goPassThrough
 1440cacf7e5eca7e	var goReceiver
@@ -120,5 +121,5 @@ e7b9e14863d4ee69	var sourceOriginRe
 bef23350b86138dd	var stackEscapedBreaks
 22927b021a6b5970	var stackIndents
 704a98aa602e3514	var stackLineBreaks
-48f59f1e4c5c4708	var stackNotations
+c0c52276f3fde78f	var stackNotations
 dc1f643623587f2c	var stackWindowsPathRe

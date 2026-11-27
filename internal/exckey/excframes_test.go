@@ -1071,6 +1071,17 @@ func FuzzParseStackFrames(f *testing.F) {
 		if again := ParseStackFrames(in); !reflect.DeepEqual(got, again) {
 			t.Fatalf("not deterministic for %q", in)
 		}
+		// What a key takes of a trace is what the trace gives where it
+		// is at fault, and nothing where it is not.
+		lines := stackLines(in)
+		_, typ, atFault := parseStack(in)
+		if _, _, goFault := goRootCause(lines); goAtFault(lines) != goFault {
+			t.Fatalf("goAtFault disagrees with the frames for %q", in)
+		}
+		faultFrames, faultType := faultStack(in)
+		if atFault && (!reflect.DeepEqual(faultFrames, got) || faultType != typ) || !atFault && (faultFrames != nil || faultType != "") {
+			t.Fatalf("faultStack gives %+v (%q) for %q, at fault %v", faultFrames, faultType, in, atFault)
+		}
 		for i, fr := range got {
 			if fr.Function == "" {
 				t.Fatalf("empty function in frame %d for %q", i, in)
@@ -2409,6 +2420,68 @@ func TestCommonLibrariesAreNotTheApplication(t *testing.T) {
 	} {
 		if !frameInApp(f) {
 			t.Errorf("%s does not count as the application's", f.Module)
+		}
+	}
+}
+
+// A Go trace that is not a panic's gives no frames to a key, which is the
+// common case: an error logged with debug.Stack. That is known before its
+// frames are read (goAtFault), and they are not read.
+func TestGoTraceNotAtFaultIsNotParsed(t *testing.T) {
+	var dump strings.Builder
+	dump.WriteString("goroutine 1 [running]:\n")
+	for i := range 70 {
+		fmt.Fprintf(&dump, "shop.example.invalid/cart.(*Service).Step%d(0xc000012345, {0xc00001a0c0, 0x6})\n\t/app/cart/service.go:%d +0x1d\n", i, 40+i)
+	}
+	seen, crash := dump.String(), "panic: bad state\n\n"+dump.String()
+	if frames, typ := faultStack(seen); frames != nil || typ != "" {
+		t.Errorf("a trace that is no panic's: %d frames, type %q", len(frames), typ)
+	}
+	if frames, _ := faultStack(crash); len(frames) != 70 {
+		t.Errorf("a panic's trace: %d frames, want 70", len(frames))
+	}
+	allocs := func(stack string) float64 {
+		return testing.AllocsPerRun(20, func() { FingerprintExceptions([]Event{{Type: "E", StackTrace: stack}}) })
+	}
+	if a, b := allocs(seen), allocs(crash); a*4 > b {
+		t.Errorf("%v allocations for a trace that is no panic's, %v for the panic's: its frames were read", a, b)
+	}
+}
+
+// The test before the frames gives the answer the frames give.
+func TestGoAtFaultAgreesWithTheFrames(t *testing.T) {
+	const (
+		head  = "goroutine 1 [running]:\n"
+		frame = "main.process(0xc000012345)\n\t/app/main.go:42 +0x1d\n"
+		main  = "main.main()\n\t/app/main.go:12 +0x25\n"
+	)
+	for stack, want := range map[string]bool{
+		head + frame + main: false,
+		frame + main:        false,
+		"panic: bad state\n\n" + head + frame + main:                                                           true,
+		"fatal error: all goroutines are asleep\n\n" + head + frame:                                            true,
+		"panic: bad state\n" + frame:                                                                           true,
+		head + "panic: bad state\n" + frame:                                                                    false,
+		frame + "panic: bad state\n" + main:                                                                    false,
+		head + "panic({0x1, 0x2})\n\t/usr/local/go/src/runtime/panic.go:770 +0x132\n" + frame:                  true,
+		head + frame + "runtime.gopanic({0x1, 0x2})\n\t/usr/local/go/src/runtime/panic.go:770 +0x132\n" + main: true,
+		head + "runtime.goPanicIndex(0x5, 0x3)\n\t/usr/local/go/src/runtime/panic.go:115 +0x74\n" + frame:      true,
+		head + "runtime.sigpanic()\n\t/usr/local/go/src/runtime/signal_unix.go:917 +0x35b\n" + frame:           true,
+		head + "runtime.throw({0x1, 0x2})\n\t/usr/local/go/src/runtime/panic.go:1101 +0x48\n" + frame:          true,
+		head + frame + "runtime.throw({0x1, 0x2})\n\t/usr/local/go/src/runtime/panic.go:1101 +0x48\n" + main:   true,
+		head + "runtime.Gosched()\n\t/usr/local/go/src/runtime/proc.go:1 +0x1\n" + frame:                       false,
+		head + "shop/vendor/runtime.gopanic(0x1)\n\t/app/x.go:1 +0x1\n" + frame:                                true,
+		head + "shop.example.invalid/panic.Recover(0x1)\n\t/app/x.go:1 +0x1\n" + frame:                         false,
+		head + "shop.example.invalid/cart.panicIfLocked(0x1)\n\t/app/x.go:1 +0x1\n" + frame:                    false,
+		// The panic of another goroutine of the dump is not this one's.
+		head + frame + "\ngoroutine 7 [running]:\npanic({0x1, 0x2})\n\t/usr/local/go/src/runtime/panic.go:770 +0x132\n" + main: false,
+		head + "\ngoroutine 7 [running]:\npanic({0x1, 0x2})\n\t/usr/local/go/src/runtime/panic.go:770 +0x132\n" + main:         true,
+		"": false,
+	} {
+		lines := stackLines(stack)
+		_, _, atFault := goRootCause(lines)
+		if got := goAtFault(lines); got != atFault || got != want {
+			t.Errorf("%q: goAtFault %v, the frames say %v, want %v", stack, got, atFault, want)
 		}
 	}
 }

@@ -235,9 +235,7 @@ type exceptionReading struct {
 
 func readException(ex Event) exceptionReading {
 	r := exceptionReading{typ: strings.TrimSpace(ex.Type), message: ParameterizeMessage(ex.Message)}
-	if frames, rootType, atFault := parseStack(ex.StackTrace); atFault {
-		r.frames, r.rootType = frames, rootType
-	}
+	r.frames, r.rootType = faultStack(ex.StackTrace)
 	return r
 }
 
