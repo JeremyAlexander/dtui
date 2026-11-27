@@ -22,7 +22,7 @@ d4727ff604b5e9d7	const javaUnknownSource, javaNotInFile
 9ba37082d5b0fd6f	const msgNumberText, msgNumberLeads, msgCodeDigits, msgEscape
 3326b310fbb605a5	const msgQuoted, msgURL, msgUUID, msgDate, msgIP, msgPath, msgHex, msgID, msgNumber
 b29bd30168fc254b	const msgWinPathWord, msgWinPathWords
-f3be678cfc5108c2	const pythonFramePrefix, pythonTraceback, pythonGutter, pythonIndent
+4337c2001b4d77fc	const pythonFramePrefix, pythonGutter, pythonIndent
 14ebf31c1d78cb21	const pythonStdlibDir
 38572dbe18bb2fa5	const sourceCurrentDir, sourceURL, sourceFileScheme
 405ee81cc12fde3e	const stackVoteLines, stackTextMax, stackLineMax
@@ -102,8 +102,9 @@ a231b8c2c60d6c9c	var pythonFrameRe
 4fa9e3e2d46bd00e	var pythonGroupRuleRe
 4ab2df08053537fa	var pythonPackageDirs
 1ffcdc6c270080d6	var pythonPassThrough
-0969bc88494cb98a	var pythonRaisedRe
+6f58f72e6a2f5011	var pythonRaisedRe
 9c3a15b4780e8f93	var pythonStdlibRe
+91496667064e0825	var pythonTracebacks
 e7b9e14863d4ee69	var sourceOriginRe
 9d184dbfc6ed0efb	var sourceReleaseDirs
 41f8ad2b4552e120	var sourceReleaseRe

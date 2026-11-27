@@ -1522,6 +1522,141 @@ ValueError: locked
 	}
 }
 
+// The traces below are CPython 3.14's, of a script deployed under /srv.
+
+// pythonGroup is a group whose only member is a group that was never
+// raised, so the outer group's traceback is all there is.
+func pythonGroup(fn, line string) string {
+	return `  + Exception Group Traceback (most recent call last):
+  |   File "/srv/app/shop.py", line 50, in <module>
+  |     fn()
+  |     ~~^^
+  |   File "/srv/app/shop.py", line ` + line + `, in ` + fn + `
+  |     raise ExceptionGroup("batch", [ExceptionGroup("part", [ValueError("missing")])])
+  | ExceptionGroup: batch (1 sub-exception)
+  +-+---------------- 1 ----------------
+    | ExceptionGroup: part (1 sub-exception)
+    +-+---------------- 1 ----------------
+      | ValueError: missing
+      +------------------------------------
+`
+}
+
+// pythonChain is an exception raised in fn and wrapped in a RuntimeError.
+func pythonChain(fn, raise, raised string) string {
+	return pythonRaised(fn, raise, raised) + `
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/srv/app/shop.py", line 50, in <module>
+    fn()
+    ~~^^
+  File "/srv/app/shop.py", line 24, in chain
+    raise RuntimeError("wrapped") from e
+RuntimeError: wrapped
+`
+}
+
+func pythonRaised(fn, raise, raised string) string {
+	return `Traceback (most recent call last):
+  File "/srv/app/shop.py", line 22, in chain
+    f()
+    ~^^
+  File "/srv/app/shop.py", line 12, in ` + fn + `
+    ` + raise + `
+` + raised + `
+`
+}
+
+// A group whose first member has no traceback keeps its own as the root,
+// also where that member is a group itself.
+func TestPythonNestedGroupKeepsTheOuterTraceback(t *testing.T) {
+	alpha := mustFingerprint(t, Event{Type: "ExceptionGroup", Message: "batch (1 sub-exception)", StackTrace: pythonGroup("alpha", "4")})
+	beta := mustFingerprint(t, Event{Type: "ExceptionGroup", Message: "batch (1 sub-exception)", StackTrace: pythonGroup("beta", "7")})
+	if want := frames(StackPython, "app/shop.py", "alpha", "app/shop.py", "<module>"); alpha.Rung != RungAppFrames ||
+		!reflect.DeepEqual(alpha.Frames, want) || alpha.Type != "ExceptionGroup" {
+		t.Errorf("rung %v, type %q, frames %+v, want %+v", alpha.Rung, alpha.Type, alpha.Frames, want)
+	}
+	if beta.Rung != RungAppFrames || alpha.Key == beta.Key {
+		t.Errorf("two throw sites: %s on rung %v and %s on rung %v", alpha.Key, alpha.Rung, beta.Key, beta.Rung)
+	}
+}
+
+// What was raised is named as Python names a class: in any script, and
+// with the function it is local to.
+func TestPythonRaisedTypeNames(t *testing.T) {
+	for _, tc := range []struct{ fn, raise, raised, typ string }{
+		{"op", `raise Failure("local failure")`, "op.<locals>.Failure: local failure", "op.<locals>.Failure"},
+		{"echec", `raise Échec("raté")`, "Échec: raté", "Échec"},
+		{"quoted", `raise ValueError("saw Traceback (most recent call last) in output")`,
+			"ValueError: saw Traceback (most recent call last) in output", "ValueError"},
+		{"quoted", `raise ValueError(log)`, "ValueError: the log says: Traceback (most recent call last):", "ValueError"},
+		{"bare", "raise shop.errors.Échec2", "shop.errors.Échec2", "shop.errors.Échec2"},
+	} {
+		chain := mustFingerprint(t, Event{Type: "RuntimeError", StackTrace: pythonChain(tc.fn, tc.raise, tc.raised)})
+		alone := mustFingerprint(t, Event{Type: tc.typ, StackTrace: pythonRaised(tc.fn, tc.raise, tc.raised)})
+		if chain.Type != tc.typ || chain.Key != alone.Key {
+			t.Errorf("%s: the chain is %s (%s), its root alone %s (%s)", tc.fn, chain.Key, chain.Type, alone.Key, alone.Type)
+		}
+	}
+	// Where the indentation was stripped the line after a frame is its
+	// source text, and the first line after that which reads like a name is
+	// what was raised. That holds in any script, for the type and for the
+	// second source line of a statement, which is then taken for it.
+	strip := func(stack string) string {
+		lines := strings.Split(stack, "\n")
+		for i, line := range lines {
+			lines[i] = strings.TrimSpace(line)
+		}
+		return strings.Join(lines, "\n")
+	}
+	if _, typ, _ := parseStack(strip(pythonChain("echec", `raise Échec("raté")`, "Échec: raté"))); typ != "Échec" {
+		t.Errorf("stripped: type %q", typ)
+	}
+	if _, typ, _ := parseStack(strip(pythonChain("echec", "raise Échec(\n    détail", "Échec: raté"))); typ != "détail" {
+		t.Errorf("stripped, a second source line: type %q; if it is the raised type now, say so in the package's known gaps", typ)
+	}
+}
+
+// An exception that is handled by raising a group is still the root: the
+// group's header starts another traceback, however deep it is indented.
+func TestPythonGroupRaisedWhileHandling(t *testing.T) {
+	const root = `Traceback (most recent call last):
+  File "/srv/app/shop.py", line 34, in wrap
+    root()
+    ~~~~^^
+  File "/srv/app/shop.py", line 27, in root
+    raise ValueError("no stock")
+ValueError: no stock
+`
+	const handled = root + `
+During handling of the above exception, another exception occurred:
+
+  + Exception Group Traceback (most recent call last):
+  |   File "/srv/app/shop.py", line 50, in <module>
+  |     fn()
+  |     ~~^^
+  |   File "/srv/app/shop.py", line 41, in wrap
+  |     raise ExceptionGroup("cleanup failed", errs)
+  | ExceptionGroup: cleanup failed (1 sub-exception)
+  +-+---------------- 1 ----------------
+    | Traceback (most recent call last):
+    |   File "/srv/app/shop.py", line 38, in wrap
+    |     sub1()
+    |     ~~~~^^
+    |   File "/srv/app/shop.py", line 30, in sub1
+    |     raise KeyError("sku")
+    | KeyError: 'sku'
+    +------------------------------------
+`
+	alone := mustFingerprint(t, Event{Type: "ValueError", StackTrace: root})
+	group := mustFingerprint(t, Event{Type: "ExceptionGroup", StackTrace: handled})
+	if want := frames(StackPython, "app/shop.py", "root", "app/shop.py", "wrap"); group.Type != "ValueError" ||
+		!reflect.DeepEqual(group.Frames, want) || group.Key != alone.Key {
+		t.Errorf("handled by a group: %s (%s) %+v, the root alone %s", group.Key, group.Type, group.Frames, alone.Key)
+	}
+}
+
 // An arrow introduces an inner exception only where a qualified type and a
 // colon, or the end of the line, follow it; and an inner exception without
 // frames is not the one the frames under it belong to.
