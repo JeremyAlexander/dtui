@@ -29,12 +29,25 @@ need a new YAML field and a restore path in `applyNamedPreset`. Fix: add
 ## The exceptions view's sample caps are not measured
 
 `ExceptionSampleRows` (1000) and `ExceptionSampleBytes` (8 MB) in
-`internal/tui/catalog/excissues.go` were set from the size of single spans:
-the only live tenant at hand held four exception spans, so no full sample
-was ever fetched, and the grouping was checked on synthetic spans only. It
-matters because the view's opening time and memory are these two numbers.
-Fix: open `:exceptions` on a tenant that fills the sample, time it, and
-settle both; record the result in `learnings.md` §1.11d.
+`internal/tui/catalog/excissues.go` are unmeasured on a busy environment.
+They were set from the size of single spans: the only live environment at
+hand held four exception spans, so no full sample was ever fetched, no
+response cut by either limit was ever seen with its real notices, and the
+grouping was checked on synthetic spans only. The view's opening time and
+memory are these two numbers. ADR-0022 requires the measurement before
+merge and stays Proposed until then. What to measure on an environment
+that fills the sample:
+
+- bytes scanned, bytes returned and the time to rows for 24 hours, 7 days
+  and 30 days;
+- one response cut by the row limit and one cut by the size limit, with the
+  notices Grail sends for each;
+- the grouping time per runtime, not for Java alone: 1000 spans of one
+  70-frame stack take about 17 ms for a Java stack and about 200 ms for a
+  JavaScript one; .NET and Go stacks are not measured;
+- the browser build, where the grouping shares the one thread that draws.
+
+Then settle both limits and record the result in `learnings.md` §1.11d.
 
 ## The exceptions view computes each span's message for the key
 
@@ -49,8 +62,11 @@ and compute it once per group.
 
 `dataSource.echoQuery` folds a query's whitespace and quotes neither the
 query nor a segment id; `echoQueryExact` (the exceptions view) goes through
-`catalog.EchoCommand`. Fix: route `echoQuery` through `EchoCommand` and
-delete `echoQueryExact`.
+`catalog.EchoCommand`. The snapshots echo in
+`internal/tui/catalog/livedebugger.go` formats its argument into the
+command the same unquoted way. Fix: route
+`echoQuery` and the snapshots echo through `EchoCommand` and delete
+`echoQueryExact`.
 
 ## A superseded result still sets the footer notice
 
@@ -59,17 +75,41 @@ the top view owns, before the view drops a result whose sequence number is
 stale: a slow clean answer to an earlier refresh clears the warning about
 the cut result on screen, and a slow cut one warns about a clean result.
 On the exceptions view the line above the table stays right, because its
-facts travel with its rows. Fix: let the view say whether it accepted the
-result and take the notice only then.
+facts travel with its rows. Two more paths leave the footer wrong: `esc`
+clears the notice and the view it returns to does not get its own back, and
+`-` carries the notice of the view it leaves over to the other one. Fix: let
+the view say whether it accepted the result and take the notice only then,
+and keep the notice with the view it belongs to.
 
 ## The exceptions view offers no bucket facet
 
 The view's projection (`SampleSpec.Fields`) drops `dt.system.bucket`, so
 `composeDQL` does not project the bucket on a sampled view and
 `orderCandidates` does not pin it, though a bucket filter in front of the
-sort would narrow the scan before sampling. Fix: offer the facet on a
-sampled view without projecting the field, once a bucket-filtered sample
-was checked on a live environment.
+sort would narrow the scan before sampling. A bucket facet that reaches
+the view another way (typed in the facet manager, or from a preset) is
+composed as a late filter for the same reason, not as the `bucket:`
+parameter; what scan pruning that loses is unmeasured. Fix: offer the facet
+on a sampled view without projecting the field, once a bucket-filtered
+sample was checked on a live environment.
+
+## The value picker's counts on a sampled view are not the table's
+
+The picker's top values come from a `fieldsSummary` query that runs before
+the sample's limit, so on `:exceptions` its counts are matching spans in
+the whole timeframe, beside a table that counts the newest 1000. Nothing
+labels them. The picker is shared by every view. Fix: say in the picker
+what its counts are counts of.
+
+## A facet from another view is refused for a field the projection drops
+
+A facet sent from a span inspector onto `:exceptions` is accepted only for
+a field the sampled records carry (`hasField`). The projection keeps few,
+so a facet on `k8s.namespace.name` is refused with "exceptions rows carry
+no k8s.namespace.name field", though the filter would land before the
+projection and work. The guard cannot know which fields a span has without
+the full record. Fix: on a sampled view accept any field and let an empty
+result speak, or ask the source for the field's presence.
 
 ## An exception issue has no detail page
 
@@ -77,6 +117,60 @@ was checked on a live environment.
 (the newest span's ids and start time); what the key was built from is in
 the preview pane only, which narrow or short terminals hide. Fix: a detail
 view of the issue, or a `KeyFacts`-style block in the inspector.
+
+## A failed refresh leaves the previous result live
+
+When a refresh fails, a table shows the error and keeps the rows of the
+last good result with their count, elapsed time, preview pane and row
+actions, on every table view. Nothing marks them as older than the error.
+Fix: mark the kept rows as stale, or drop the count and the elapsed time
+with the result they described.
+
+## A handoff does not carry everything the session queries under
+
+The copied command (`c`) and the Notebook link (`o`) carry the query and,
+for the command, the segment ids. Neither carries the session's context
+name or the variable bindings of a segment, and the Notebook link carries
+no segment at all, on every view, so the handoff can address another
+population than the screen. dtctl has `--context` and `-V` for the first
+two. Fix: add them to the echo, and say next to the Notebook link what it
+leaves out.
+
+## Clock times are local beside a window labelled in UTC
+
+`FormatTime` prints local time, while a custom timeframe's label is in
+UTC, so the exceptions sample line can read "back to 11:48:19" before a
+window "10:00→12:00 UTC" that does not contain it, and every table has the
+same pair in its header and cells. Fix: one zone for both, app-wide.
+
+## A superseded query is never cancelled
+
+A refresh that a newer one supersedes, and a query of a view that left the
+stack, run to their end: on `:exceptions` up to 8 MB still downloads, is
+grouped and held until the result is dropped, and the client waits up to
+two minutes for the execute and five for the poll. The comment in
+`datasource.go` gives as the reason that the executor prints a
+cancellation notice to stderr; since dtctl v0.45.0 `DQLExecutor.WithStreams`
+can keep that off the screen, and the sdk cancels the backend query when
+the context ends. Fix: `WithStreams(io.Discard, io.Discard)` on the
+executor and a context per view, cancelled when a newer refresh starts or
+the view leaves the stack.
+
+## dtui ignores the query limits configured for dtctl
+
+dtctl applies the limits a user configured (`EffectiveQueryLimits`: scan
+limit, result bytes) in its own command only; dtui reads none of them, on
+any view. Fix: read them where the executor options are built
+(`dataSource.execOpts`), below the limits a view sets itself.
+
+## An empty waterfall under segments is fetched twice
+
+A waterfall whose first fetch is empty without a partial notice widens once:
+to 12 hours either side of its anchor, or to 24 hours without one
+(`waterfall.go`, `Update`). Segments ride on both queries, so a trace the
+active segments exclude costs a second, far wider span scan for a result
+that stays empty. Fix: do not widen when the first query ran under
+segments, or retry without them and say so.
 
 ## learnings.md is one long file
 
