@@ -6,6 +6,21 @@
 //
 // The package imports nothing of this module. A caller hands it the fields
 // of its events (Event) and gets the key and what it was computed from.
+//
+// What the readers were built on: the corpus under testdata/exceptions is
+// written after what each runtime prints, and holds one trace per runtime
+// that a throwaway program produced on OpenJDK 21, CPython 3.14, Node 24
+// and Go 1.26 (the "real:" cases; the directory the program ran in is
+// replaced by /srv/shop). No .NET runtime was at hand, so every .NET input,
+// in the corpus and in the tests, is written by hand from the runtime's
+// source and documentation. Traces from production will show forms nobody
+// wrote down: the first raise of ExceptionKeyVersion is expected once they
+// are seen.
+//
+// A known limit of the message rung: a value is replaced by its form (a
+// quoted value, a UUID, a hex run of seven characters or more, a number, an
+// id behind a lower-case prefix). An id of another form ("A1B2C3",
+// "req-8Hk2Lm9Q", "12ab") is kept, and such a message has a key per value.
 package exckey
 
 import (
