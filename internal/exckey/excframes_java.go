@@ -14,7 +14,8 @@ import (
 var (
 	javaMoreRe = regexp.MustCompile(`^\.\.\. (\d+) (?:more|common frames omitted)`)
 	// The type a "Caused by:" line names, before its message. Words that no
-	// colon follows are prose ("Caused by: connection reset by peer").
+	// colon follows are prose ("Caused by: connection reset by peer"): no
+	// type, and above the frames of a section a line of its message.
 	javaCauseRe = regexp.MustCompile(`^Caused by: ([\p{L}\p{N}_.$]+)(?::|$)`)
 
 	// Classes generated at run time are named after the class they stand in
@@ -63,11 +64,17 @@ var javaVendorPrefixes = []string{
 // application's own invoke is as often where the work is done.
 var javaPassThrough = []string{"doFilter", "doFilterInternal", "intercept", "proceed"}
 
-// javaNoSource are the JVM's words for code without a source file, and
-// what CGLIB writes for a class it generated. javaUnknownSource is the one
-// that may carry a line all the same ("Unknown Source:12", after
-// obfuscation).
-var javaNoSource = []string{"Native Method", javaUnknownSource, "Compiled Code", "<generated>"}
+// javaNoSource are the JVM's words for code without a source file, what
+// CGLIB writes for a class it generated, and the file name an obfuscator
+// leaves, which stands alone where it dropped the line tables too.
+// javaUnknownSource is the one that may carry a line all the same
+// ("Unknown Source:12", after obfuscation).
+var javaNoSource = []string{"Native Method", javaUnknownSource, "Compiled Code", "<generated>", "SourceFile"}
+
+// javaSourceExtensions end the source files of the JVM's languages. A file
+// with one of them is Java's even where it stands alone, as it does for a
+// class compiled without line tables.
+var javaSourceExtensions = []string{".java", ".kt", ".kts", ".scala", ".groovy", ".clj"}
 
 const (
 	javaUnknownSource = "Unknown Source"
@@ -75,6 +82,9 @@ const (
 	// parentheses, a path separator, a second colon.
 	javaNotInFile = " \t\f():/\\"
 )
+
+// javaCausePrefix is what javaCauseRe starts with.
+const javaCausePrefix = "Caused by:"
 
 // javaLogArchives start what a logger appends to a frame: the archive the
 // class was loaded from (" ~[shop.jar:1.4]").
@@ -150,12 +160,24 @@ func javaFrameParts(line string) (name, location string, ok bool) {
 	return name, location, true
 }
 
-// javaOwns: a frame whose location has a line or is one of the JVM's words.
-// A file alone ("(Cart.java)") reads the same as a .NET parameter
+// javaOwns: a frame whose location has a line, is one of the JVM's words,
+// or is a source file of a JVM language (javaSourceExtensions). Any other
+// file alone ("(cart.html)") reads the same as a .NET parameter
 // ("(System.String)") and as an argument in a line of source text.
 func javaOwns(line string) bool {
 	_, location, ok := javaFrameParts(line)
-	return ok && (strings.Contains(location, ":") || !strings.Contains(location, "."))
+	if !ok {
+		return false
+	}
+	if strings.Contains(location, ":") || !strings.Contains(location, ".") {
+		return true
+	}
+	for _, ext := range javaSourceExtensions {
+		if strings.HasSuffix(location, ext) {
+			return true
+		}
+	}
+	return false
 }
 
 // javaSyntheticClass marks the class the JVM generates for a lambda
@@ -163,6 +185,13 @@ func javaOwns(line string) bool {
 // frame is plumbing between two real ones: it shows that the trace is Java's
 // and is in no root cause.
 const javaSyntheticClass = "$$Lambda"
+
+// javaFramePrefix starts a frame line as the JVM prints it. Such a line
+// that the reader cannot read as a frame, below the first frame of its
+// section, is still a frame the JVM printed: it holds a place in the
+// section (as a frame of javaSyntheticClass) so that "... N more" counts
+// right, and is in no root cause.
+const javaFramePrefix = "at "
 
 func javaFrame(line string) (StackFrame, bool) {
 	name, ok := javaFrameName(line)
@@ -276,12 +305,16 @@ func javaRootCause(lines []string) (root []StackFrame, typ string) {
 		switch {
 		case strings.HasPrefix(line, "Suppressed:"):
 			suppressed = indent
-		case strings.HasPrefix(line, "Caused by:"):
-			closeSection()
+		case strings.HasPrefix(line, javaCausePrefix):
 			cause := javaSection{more: -1, start: len(frames)}
 			if m := javaCauseRe.FindStringSubmatch(line); m != nil {
 				cause.typ = m[1]
+			} else if last := sections[len(sections)-1]; last.more < 0 && last.start == len(frames) {
+				// Prose above the frames of its section: a line of the
+				// message.
+				continue
 			}
+			closeSection()
 			sections = append(sections, cause)
 		default:
 			if strings.HasPrefix(line, "...") {
@@ -290,6 +323,8 @@ func javaRootCause(lines []string) (root []StackFrame, typ string) {
 				}
 			} else if f, ok := javaFrame(line); ok {
 				frames = append(frames, f)
+			} else if strings.HasPrefix(line, javaFramePrefix) && len(frames) > sections[len(sections)-1].start {
+				frames = append(frames, StackFrame{Module: javaSyntheticClass, Syntax: StackJava})
 			}
 		}
 	}

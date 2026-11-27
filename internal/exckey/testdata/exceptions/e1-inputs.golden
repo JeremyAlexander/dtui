@@ -14,6 +14,8 @@ ba46e319ae5dae85	const goGoroutine, goFileSuffix
 d25c4003fcbc1f21	const goPanicWord, goRuntimePackage
 13a0afea61cdc2a9	const goVendorDir
 93ff8fef9db5608a	const hexLetters, digits, msgControls
+ca69ff57fd2a6d2b	const javaCausePrefix
+4246decaaee06761	const javaFramePrefix
 9753a90bf181f7cc	const javaSyntheticClass
 d4727ff604b5e9d7	const javaUnknownSource, javaNotInFile
 9a4a8c14fe76725b	const jsRuntimeScheme, jsDependencyDir
@@ -55,12 +57,13 @@ fa9f8e94319c2c59	var javaCauseRe
 d818a662e2123c43	var javaLambdaRe
 467967a606d47822	var javaLogArchives
 6492e9c28415ae99	var javaMoreRe
-763ec9c1d221b521	var javaNoSource
+4b9f35365f39dcf5	var javaNoSource
 a83eb73dece7b60f	var javaPassThrough
 d1480b8b600e1ede	var javaProxyPkgRe
 073f52b028af9f0d	var javaProxyRe
 8c1b23545804af91	var javaScalaClassRe
 a90dbbba5da170e6	var javaScalaMethodRe
+3ba34a941d910148	var javaSourceExtensions
 80003382760e7f1c	var javaVendorPrefixes
 18cc13e6954d86f1	var jsAliasRe
 2a20b26a3e902e9d	var jsAtSignRe

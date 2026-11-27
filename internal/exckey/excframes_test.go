@@ -1228,11 +1228,25 @@ Caused by: shop.Root: root
 	at shop.C$$Lambda$5/0x0000000800c04000.call(Unknown Source)
 	... 3 more`, frames(StackJava, "shop.C", "c", "shop.A", "a", "shop.B", "b"), "shop.Root"},
 		// The words after "Caused by:" are a type only where a colon or the
-		// line's end follows them.
+		// line's end follows them. Below a frame such a line still starts
+		// a cause, whose type cannot be read; above the frames of its
+		// section it is a line of the message.
 		{"prose after Caused by is no type", `shop.A: outer
 	at shop.A.a(A.java:1)
 Caused by: connection reset by peer
 	at shop.C.c(C.java:3)`, frames(StackJava, "shop.C", "c"), ""},
+		{"prose after Caused by below the shared frames", `shop.A: outer
+	at shop.A.a(A.java:1)
+Caused by: shop.Inner: write failed
+	... 1 more
+Caused by: connection reset by peer
+	at shop.C.c(C.java:3)`, frames(StackJava, "shop.C", "c"), ""},
+		{"prose after Caused by in a message opens no section", `shop.A: outer
+	at shop.A.a(A.java:1)
+Caused by: shop.Inner: write failed
+Caused by: connection reset by peer
+	at shop.C.c(C.java:3)
+	... 1 more`, frames(StackJava, "shop.C", "c", "shop.A", "a"), "shop.Inner"},
 		{"a type beyond ASCII", `shop.A: outer
 	at shop.A.a(A.java:1)
 Caused by: shop.Größenfehler: zu groß
@@ -1245,6 +1259,116 @@ Caused by: shop.Größenfehler: zu groß
 				t.Errorf("frames %+v type %q\nwant %+v %q", got, typ, tc.want, tc.typ)
 			}
 		})
+	}
+}
+
+// A JVM class compiled without line tables prints the file alone, and an
+// obfuscated one the word "SourceFile". Both are Java's: read as .NET, whose
+// innermost exception comes first, the wrapper would be the root.
+func TestJavaTraceWithoutLineNumbers(t *testing.T) {
+	trace := func(location func(file string, line int) string) string {
+		return "Exception in thread \"main\" java.lang.IllegalStateException: checkout failed\n" +
+			"\tat Checkout.pay(" + location("Checkout.java", 12) + ")\n\tat Checkout.main(" + location("Checkout.java", 5) + ")\n" +
+			"Caused by: java.lang.IllegalArgumentException: no stock\n" +
+			"\tat Checkout.reserve(" + location("Checkout.java", 20) + ")\n\tat Checkout.pay(" + location("Checkout.java", 10) + ")\n\t... 1 more\n"
+	}
+	want := frames(StackJava, "Checkout", "reserve", "Checkout", "pay", "Checkout", "main")
+	lines := mustFingerprint(t, Event{Type: "java.lang.IllegalStateException", StackTrace: trace(func(file string, line int) string {
+		return fmt.Sprintf("%s:%d", file, line)
+	})})
+	if lines.Type != "java.lang.IllegalArgumentException" || !reflect.DeepEqual(lines.Frames, want) {
+		t.Fatalf("with lines: type %q frames %+v", lines.Type, lines.Frames)
+	}
+	for name, location := range map[string]func(string, int) string{
+		"the file alone":      func(file string, _ int) string { return file },
+		"a Kotlin file alone": func(string, int) string { return "Checkout.kt" },
+		"an obfuscated file":  func(string, int) string { return "SourceFile" },
+	} {
+		got := mustFingerprint(t, Event{Type: "java.lang.IllegalStateException", StackTrace: trace(location)})
+		if got.Key != lines.Key || got.Type != lines.Type {
+			t.Errorf("%s: key %s type %q frames %+v, want %s", name, got.Key, got.Type, got.Frames, lines.Key)
+		}
+	}
+	// A .NET parameter list still reads as one, whatever its types end in.
+	for _, params := range []string{"System.String", "Shop.Java", "Shop.Source.java, Int32", "SourceFile file"} {
+		stack := "Example.Shop.CheckoutException: failed\n ---> System.InvalidOperationException: Cart 7 is locked\n" +
+			"   at Example.Shop.Util.Check(" + params + ")\n   at Example.Shop.Cart.Save(" + params + ")\n" +
+			"   --- End of inner exception stack trace ---\n   at Example.Shop.Checkout.Run(" + params + ")"
+		got, typ, _ := parseStack(stack)
+		if want := frames(StackDotNet, "Example.Shop.Util", "Check", "Example.Shop.Cart", "Save"); !reflect.DeepEqual(got, want) ||
+			typ != "System.InvalidOperationException" {
+			t.Errorf("(%s): frames %+v type %q", params, got, typ)
+		}
+	}
+	for line, want := range map[string]bool{
+		"at a.B.c(B.java)": true, "at a.B.c(B.kt)": true, "at a.B.c(build.gradle.kts)": true, "at a.B.c(B.scala)": true,
+		"at a.B.c(B.groovy)": true, "at a.B.c(b.clj)": true, "at a.B.c(SourceFile)": true,
+		"at a.B.c(B.javax)": false, "at a.B.c(System.String)": false, "at a.B.c(java)": false, "at a.B.c(SourceFiles)": false,
+		"at a.B.c(B.Java)": false,
+	} {
+		if got := javaOwns(line); got != want {
+			t.Errorf("javaOwns(%q) = %v, want %v", line, got, want)
+		}
+	}
+}
+
+// "... N more" counts the frames the JVM printed. A frame the reader cannot
+// read (a module version with "+") is one of them: it holds its place in
+// the count and is left out of the result, so a chain reads the same
+// compressed and written out, for every length of the shared tail.
+func TestJavaMoreCountsFramesItCannotRead(t *testing.T) {
+	enclosing := []string{
+		"\tat com.example.shop.Wrap.wrap(Wrap.java:9)\n",
+		"\tat dep@1.0+7/vendor.Lib.call(Lib.java:3)\n",
+		"\tat com.example.shop.Api.post(Api.java:4)\n",
+		"\tat dep@1.0+7/vendor.Lib.run(Lib.java:8)\n",
+	}
+	const head = "com.example.shop.WrapException: wrapped\n"
+	const cause = "Caused by: java.lang.IllegalStateException: Cart 7 is locked\n\tat com.example.shop.Cart.fail(Cart.java:12)\n"
+	for shared := 0; shared <= len(enclosing); shared++ {
+		tail := strings.Join(enclosing[len(enclosing)-shared:], "")
+		written := mustFingerprint(t, Event{Type: "T", StackTrace: head + strings.Join(enclosing, "") + cause + tail})
+		compressed := mustFingerprint(t, Event{Type: "T",
+			StackTrace: head + strings.Join(enclosing, "") + cause + fmt.Sprintf("\t... %d more\n", shared)})
+		if written.Key != compressed.Key || !reflect.DeepEqual(written.Frames, compressed.Frames) {
+			t.Errorf("%d shared: written out %s %+v, compressed %s %+v", shared, written.Key, written.Frames, compressed.Key, compressed.Frames)
+		}
+		for _, f := range compressed.Frames {
+			if strings.Contains(f.Module, "vendor") || f.Module == javaSyntheticClass {
+				t.Errorf("%d shared: a frame that cannot be read is in the key: %+v", shared, compressed.Frames)
+			}
+		}
+	}
+	// Only a line the JVM starts a frame with holds a place, and only below
+	// a frame: a line of a message that starts with "at" is no frame, so a
+	// cause that has nothing else is still one without frames, and an
+	// empty line counts for nothing.
+	for name, stack := range map[string]string{
+		"prose in a cause without frames": head + "\tat com.example.shop.Wrap.wrap(Wrap.java:9)\n\tat com.example.shop.Api.post(Api.java:4)\n" +
+			"Caused by: com.example.shop.StepException: step failed\nat least one cart (of 3)\n" +
+			"Caused by: java.lang.IllegalStateException: locked\n\tat com.example.shop.Cart.fail(Cart.java:12)\n\t... 1 more\n",
+		"an empty line below the frames": head + "\tat com.example.shop.Wrap.wrap(Wrap.java:9)\n\tat com.example.shop.Api.post(Api.java:4)\n\n" +
+			"Caused by: java.lang.IllegalStateException: locked\n\tat com.example.shop.Cart.fail(Cart.java:12)\n\t... 1 more\n",
+	} {
+		got, _, _ := parseStack(stack)
+		if want := frames(StackJava, "com.example.shop.Cart", "fail", "com.example.shop.Api", "post"); !reflect.DeepEqual(got, want) {
+			t.Errorf("%s: %+v, want %+v", name, got, want)
+		}
+	}
+}
+
+// A line of an exception's message that starts with "Caused by:" and names
+// no type leaves the type and the key alone.
+func TestJavaProseCauseLineChangesNothing(t *testing.T) {
+	trace := func(extra string) string {
+		return "java.lang.RuntimeException: request failed\n\tat com.example.shop.Api.post(Api.java:4)\n" +
+			"Caused by: java.lang.IllegalArgumentException: write failed\n" + extra +
+			"\tat com.example.shop.Cart.save(Cart.java:12)\n\t... 1 more\n"
+	}
+	plain := mustFingerprint(t, Event{Type: "java.lang.RuntimeException", StackTrace: trace("")})
+	prose := mustFingerprint(t, Event{Type: "java.lang.RuntimeException", StackTrace: trace("Caused by: connection reset by peer\n")})
+	if plain.Type != "java.lang.IllegalArgumentException" || prose.Type != plain.Type || prose.Key != plain.Key {
+		t.Errorf("plain %s (%s), with a line of prose %s (%s)", plain.Key, plain.Type, prose.Key, prose.Type)
 	}
 }
 
