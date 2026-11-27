@@ -37,9 +37,10 @@ var (
 	goTypeArgsRe = regexp.MustCompile(`\[[^\]]*\]`)
 	// The file line under a frame, and what in its path shows a dependency.
 	// An absolute path may hold spaces; a system dump prints the frame's
-	// pointers after it.
+	// pointers after it. The file is Go or, for a frame written in
+	// assembly, ".s".
 	goFileRe = regexp.MustCompile(
-		`^((?:/|[A-Za-z]:[\\/]).*\.go|\S+\.go):\d+(?: \+0x[0-9a-f]+)?(?: fp=0x[0-9a-f]+ sp=0x[0-9a-f]+ pc=0x[0-9a-f]+)?$`)
+		`^((?:/|[A-Za-z]:[\\/]).*\.(?:go|s)|\S+\.(?:go|s)):\d+(?: \+0x[0-9a-f]+)?(?: fp=0x[0-9a-f]+ sp=0x[0-9a-f]+ pc=0x[0-9a-f]+)?$`)
 	goDependencyRe = regexp.MustCompile(`@v\d|/pkg/mod/|(?:^|/)vendor/`)
 	// The runtime's entry points of a panic. "panic" itself is printed
 	// without a package.
@@ -68,7 +69,10 @@ var goStdlib = []string{
 
 // goVendorPrefixes are widely used modules and module hosts that are never
 // the application itself: the Go project's own, database drivers and the
-// cloud SDKs. A trace with file lines shows a dependency without them.
+// cloud SDKs. A trace with file lines shows a dependency without them. An
+// entry that ends in "/" is a host or an organisation and matches all
+// below it; one that does not is a module, and matches that module and its
+// packages ("github.com/lib/pq", not "github.com/lib/pq-tools").
 //
 // The table is part of the key algorithm: once a release has shipped keys
 // it only changes together with ExceptionKeyVersion (see
@@ -86,11 +90,13 @@ var goVendorPrefixes = []string{
 var goPassThrough = []string{"ServeHTTP"}
 
 const (
-	// goGoroutine is what goGoroutineRe starts with, and goFileSuffix what
-	// goFileRe holds: most lines of most traces have neither.
-	goGoroutine  = "goroutine "
-	goFileSuffix = ".go:"
+	// goGoroutine is what goGoroutineRe starts with: most lines of most
+	// traces do not.
+	goGoroutine = "goroutine "
 )
+
+// goFileSuffixes are what a line goFileRe matches holds, one of them.
+var goFileSuffixes = []string{".go:", ".s:"}
 
 // goVendorDir is the directory a module keeps its dependencies' packages in.
 const goVendorDir = "vendor/"
@@ -153,7 +159,7 @@ func goOwns(line string) bool {
 		return true
 	}
 	return strings.HasPrefix(line, goGoroutine) && goGoroutineRe.MatchString(line) ||
-		strings.Contains(line, goFileSuffix) && goFileRe.MatchString(line)
+		containsAny(line, goFileSuffixes) && goFileRe.MatchString(line)
 }
 
 // goRootCause returns the frames of the first goroutine, the one that
@@ -262,7 +268,18 @@ func goGoroutineFrames(lines []string, multiline bool) (out []StackFrame, crash 
 }
 
 func goInApp(f StackFrame) bool {
-	return f.Module != "" && !f.Dependency && !isGoStdlib(f.Module) && !hasAnyPrefix(f.Module, goVendorPrefixes)
+	return f.Module != "" && !f.Dependency && !isGoStdlib(f.Module) && !isGoVendor(f.Module)
+}
+
+// isGoVendor reports whether a package is of one of goVendorPrefixes.
+func isGoVendor(module string) bool {
+	for _, prefix := range goVendorPrefixes {
+		if rest, ok := strings.CutPrefix(module, prefix); ok &&
+			(strings.HasSuffix(prefix, "/") || rest == "" || strings.HasPrefix(rest, "/")) {
+			return true
+		}
+	}
+	return false
 }
 
 // isGoStdlib reports whether a package path starts with a top-level name of

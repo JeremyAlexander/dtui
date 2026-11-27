@@ -11,7 +11,7 @@ ee2ec91e3d4628e8	const dotnetNested, dotnetGenerated
 93919b4e3cf3a7f9	const dotnetSibling
 61a640576f8dd7db	const exceptionMessageInput, ExceptionMessageMax, msgIPv6Max, msgIPv6Colons, msgIPv6WordColons, msgPlaceholderMax
 6511a88fc8d4cab7	const fingerprintKeyLen
-ba46e319ae5dae85	const goGoroutine, goFileSuffix
+0be3ce42046d5fb4	const goGoroutine
 d25c4003fcbc1f21	const goPanicWord, goRuntimePackage
 13a0afea61cdc2a9	const goVendorDir
 93ff8fef9db5608a	const hexLetters, digits, msgControls
@@ -44,7 +44,8 @@ b52bf883845e3239	var dotnetTypeArgsRe
 ca633138620f561e	var dotnetVendorPrefixes
 f0adf6a90bda193b	var goArgsRe
 02bbcc03877b5fc6	var goDependencyRe
-7f6b5deaba5a3796	var goFileRe
+aca5a1c7628ab6b2	var goFileRe
+ba92428f151a8647	var goFileSuffixes
 91fa9fc092450657	var goGeneratedRe
 d28d2de98dfd7427	var goGoroutineRe
 bd5cb2dab2295a66	var goNameRe

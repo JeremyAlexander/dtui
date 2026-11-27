@@ -1012,7 +1012,11 @@ func TestVendorTablesApplyWhole(t *testing.T) {
 	}
 	for _, table := range tables {
 		for _, prefix := range table.prefixes {
-			if f := (StackFrame{Module: prefix + "x", Function: "f", Syntax: table.syntax}); frameInApp(f) {
+			module := prefix + "x"
+			if table.syntax == StackGo && !strings.HasSuffix(prefix, "/") {
+				module = prefix + "/x" // a module, which matches whole
+			}
+			if f := (StackFrame{Module: module, Function: "f", Syntax: table.syntax}); frameInApp(f) {
 				t.Errorf("%+v counts as application code", f)
 			}
 		}
@@ -2029,6 +2033,38 @@ func TestGoGeneratedNames(t *testing.T) {
 		if !ok || f.Module != tc.module || f.Function != tc.function {
 			t.Errorf("%s\n got %q %q %v\nwant %q %q", tc.line, f.Module, f.Function, ok, tc.module, tc.function)
 		}
+	}
+}
+
+// A module on the vendor list is that module and what is below it, not
+// every module whose path starts the same way.
+func TestGoVendorModulesMatchWhole(t *testing.T) {
+	for module, want := range map[string]bool{
+		"github.com/lib/pq": false, "github.com/lib/pq/oid": false, "github.com/lib/pq-tools": true,
+		"github.com/mattn/go-sqlite3": false, "github.com/mattn/go-sqlite3-wrapper/db": true,
+		"github.com/jackc/pgx/v5": false, "golang.org/x/net/http2": false, "github.com/lib": true,
+	} {
+		if got := goInApp(StackFrame{Module: module, Function: "Open", Syntax: StackGo}); got != want {
+			t.Errorf("goInApp(%s) = %v, want %v", module, got, want)
+		}
+	}
+}
+
+// A frame written in assembly has a file line like any other, and a
+// dependency shows by it.
+func TestGoAssemblyFileLines(t *testing.T) {
+	stack := "goroutine 1 [running]:\npanic({0x1, 0x2})\n\t/usr/local/go/src/runtime/panic.go:770 +0x132\n" +
+		"shop.example.invalid/zstd.sequenceDecs_decode_amd64()\n" +
+		"\t/go/pkg/mod/shop.example.invalid/zstd@v1.17.0/zstd/seqdec_amd64.s:123 +0x1d\nmain.main()\n\t/app/main.go:12 +0x25\n"
+	got := ParseStackFrames(stack)
+	want := []StackFrame{{Module: "shop.example.invalid/zstd", Function: "sequenceDecs_decode_amd64", Syntax: StackGo, Dependency: true},
+		{Module: "main", Function: "main", Syntax: StackGo}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("frames %+v, want %+v", got, want)
+	}
+	if !goOwns("/go/pkg/mod/shop.example.invalid/zstd@v1.17.0/zstd/seqdec_amd64.s:123 +0x1d") || goOwns("see notes.s:12 for more") ||
+		goOwns("/app/main.sh:12") {
+		t.Error("goOwns: an assembly file line is Go's, prose and other files are not")
 	}
 }
 
