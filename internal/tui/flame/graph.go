@@ -254,13 +254,15 @@ func (g *Graph) ZoomIn() bool {
 	case g.sel == Root:
 		g.zooms = nil
 	default:
-		around := g.zooms[:0]
+		// Only the zooms around the new one stay, in the place they have.
+		kept := 0
 		for _, z := range g.zooms {
 			if z != g.sel && g.tree.Within(z, g.sel) {
-				around = append(around, z)
+				g.zooms[kept] = z
+				kept++
 			}
 		}
-		g.zooms = append(around, g.sel)
+		g.zooms = append(g.zooms[:kept], g.sel)
 	}
 	g.invalidate()
 	g.settle()
