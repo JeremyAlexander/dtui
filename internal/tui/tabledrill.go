@@ -71,6 +71,10 @@ func (v *tableView) inspect(rec map[string]any) tea.Cmd {
 	title := v.spec.Name
 	if e := v.entityOf(rec); e != nil && e.Name != "" {
 		title = e.Name
+	} else if _, isIssue := catalog.IssueOf(rec); isIssue {
+		// An issue row has none of the fields below; it is called what its
+		// preview pane calls it.
+		title = catalog.PreviewTitle(rec)
 	} else {
 		for _, key := range []string{"title", "name", "display_id"} {
 			if t := catalog.Str(rec, key); t != "" {

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -123,7 +124,7 @@ func TestExceptionsViewGroupsInTheFetchCommand(t *testing.T) {
 		t.Fatalf("rows = %d, want 2", len(tv.rows))
 	}
 	out := screen(a)
-	for _, want := range []string{"all 3 exception spans · last 2h", "lang.IllegalStateException", "cart <n> is locked", "cart +1", "grouped by: app frames"} {
+	for _, want := range []string{"all 3 exception spans · last 2h", "lang.IllegalStateException", "cart <n> is locked", "+1 cart", "grouped by: app frames"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("screen lacks %q:\n%s", want, out)
 		}
@@ -789,6 +790,10 @@ func TestExceptionsInspectedRowKeepsNoIssueInHistory(t *testing.T) {
 	if strings.Contains(string(raw), "__") || strings.Contains(string(raw), "e1:") {
 		t.Errorf("the persisted page holds the issue:\n%s", raw)
 	}
+	// The page is named after the issue, not after the view it came from.
+	if iv.title != "java.lang.IllegalStateException" {
+		t.Errorf("inspector title = %q, want the issue's name", iv.title)
+	}
 	if catalog.Str(iv.rec, "span.id") == "" || catalog.Str(iv.rec, "trace.id") == "" || catalog.Str(iv.rec, "start_time") == "" {
 		t.Errorf("the inspector lost the row's real fields: %v", iv.rec)
 	}
@@ -812,5 +817,56 @@ func TestExceptionsInspectedIssuesAreSeparateHistoryEntries(t *testing.T) {
 	press(a, key("d"))
 	if got := len(a.hist.entries); got != first+1 {
 		t.Errorf("history has %d entries after the second inspect, %d after the first: the pages collapsed", got, first)
+	}
+}
+
+// The first J on LAST puts the newest issue first, like a number's biggest,
+// and orders by instant: Grail trims a fraction's zeros, and as text
+// 11:59:58.5 sorts before 11:59:58.
+func TestExceptionsSortByLastIsNewestFirst(t *testing.T) {
+	a := testApp(t, "exceptions")
+	stack := func(method string) string { return "com.example.shop.Api." + method + " (Api.java:1)" }
+	tv := seedSample(t, a, []map[string]any{
+		issueSpanRecord(1, "2026-07-15T11:59:58Z", "a", "T", "", stack("whole")),
+		issueSpanRecord(2, "2026-07-15T11:59:58Z", "a", "T", "", stack("whole")),
+		issueSpanRecord(3, "2026-07-15T11:59:58Z", "a", "T", "", stack("whole")),
+		issueSpanRecord(4, "2026-07-15T11:59:57Z", "a", "T", "", stack("older")),
+		issueSpanRecord(5, "2026-07-15T11:59:57Z", "a", "T", "", stack("older")),
+		issueSpanRecord(6, "2026-07-15T11:59:58.5Z", "a", "T", "", stack("half")),
+	}, nil)
+	order := func() []string {
+		var out []string
+		for _, row := range tv.rows {
+			out = append(out, catalog.Str(row, "start_time"))
+		}
+		return out
+	}
+	press(a, key("J")) // COUNT
+	press(a, key("J")) // LAST
+	if col := tv.columns()[tv.sortCol].Title; col != "LAST" {
+		t.Fatalf("sorting by %s, want LAST", col)
+	}
+	want := []string{"2026-07-15T11:59:58.5Z", "2026-07-15T11:59:58Z", "2026-07-15T11:59:57Z"}
+	if got := order(); !reflect.DeepEqual(got, want) {
+		t.Errorf("first sort by LAST = %q\nwant newest first  %q", got, want)
+	}
+	press(a, key("K")) // the other direction
+	slices.Reverse(want)
+	if got := order(); !reflect.DeepEqual(got, want) {
+		t.Errorf("reversed sort by LAST = %q, want %q", got, want)
+	}
+}
+
+// The filter finds an issue by a service its cell does not show.
+func TestExceptionsFilterFindsAHiddenService(t *testing.T) {
+	a := testApp(t, "exceptions")
+	tv := seedSample(t, a, issueSpans(), nil)
+	press(a, key("/"))
+	typeText(a, "checkout")
+	if len(tv.rows) != 1 {
+		t.Fatalf("/checkout left %d rows, want the issue that also ran in checkout", len(tv.rows))
+	}
+	if issue, _ := catalog.IssueOf(tv.rows[0]); !slices.Contains(issue.Services, "checkout") {
+		t.Errorf("/checkout kept %+v", issue)
 	}
 }

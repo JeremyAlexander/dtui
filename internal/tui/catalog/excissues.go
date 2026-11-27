@@ -43,7 +43,7 @@ const exceptionSampleFields = "start_time, span.id, trace.id, span.name, endpoin
 
 var exceptionsSpec = &Spec{
 	Name:    "exceptions",
-	Aliases: []string{"exc"},
+	Aliases: []string{"exc", "exception"},
 	Kind:    KindSignal,
 	Desc:    "Exception issues: the newest exception spans, grouped by what was thrown where",
 	// The query ends on its sort and limit like every catalog query, so a
@@ -66,10 +66,12 @@ var exceptionsSpec = &Spec{
 		Bytes:  ExceptionSampleBytes,
 		Fields: exceptionSampleFields,
 		Group:  GroupExceptionIssues,
-		// The key is in no cell and the EXCEPTION cell shortens the type.
+		// What the preview pane shows of a row and its cells do not: the
+		// key, the whole type, the type the event recorded, and every
+		// service (the cell names one).
 		Match: func(row map[string]any) string {
 			issue := issueOf(row)
-			return issue.Key + " " + issue.Type
+			return strings.Join(append([]string{issue.Key, issue.Type, issue.EventType}, issue.Services...), " ")
 		},
 	},
 	Columns: []Column{
@@ -79,7 +81,14 @@ var exceptionsSpec = &Spec{
 		// Min keeps "Jan 02 15:04" whole when the fixed columns are squeezed.
 		{Title: "LAST", Width: 12, Min: 12,
 			Value: func(rec map[string]any) string { return FormatTime(issueOf(rec).Newest) },
-			Sort:  func(rec map[string]any) any { return issueOf(rec).Newest }},
+			Sort: func(rec map[string]any) any {
+				// The instant, not its text: Grail trims a fraction's
+				// trailing zeros, and "…58.5Z" sorts before "…58Z".
+				if at, err := time.Parse(time.RFC3339Nano, issueOf(rec).Newest); err == nil {
+					return at
+				}
+				return nil
+			}},
 		{Title: "EXCEPTION", Width: 22, Min: 12, Class: func(string) string { return "error" },
 			Value: func(rec map[string]any) string { return ExceptionTypeShort(issueOf(rec).name()) }},
 		{Title: "MESSAGE", Value: func(rec map[string]any) string {
@@ -89,20 +98,29 @@ var exceptionsSpec = &Spec{
 			}
 			return issue.Message
 		}},
-		{Title: "SERVICE", Width: 12, Min: 8, Value: func(rec map[string]any) string {
-			services := issueOf(rec).Services
-			switch len(services) {
-			case 0:
-				return ""
-			case 1:
-				return services[0]
-			}
-			return fmt.Sprintf("%s +%d", services[0], len(services)-1)
-		}},
+		// The count of further services leads: behind the name, a long
+		// name would push it out of the cell.
+		{Title: "SERVICE", Width: 12, Min: 8,
+			Value: func(rec map[string]any) string {
+				services := issueOf(rec).Services
+				switch len(services) {
+				case 0:
+					return ""
+				case 1:
+					return services[0]
+				}
+				return fmt.Sprintf("+%d %s", len(services)-1, services[0])
+			},
+			Sort: func(rec map[string]any) any {
+				if services := issueOf(rec).Services; len(services) > 0 {
+					return services[0]
+				}
+				return nil
+			}},
 		// What the row is grouped by says how specific its key is: a row
 		// keyed on the type alone is visibly coarser than one keyed on the
 		// application's frames ("app"; the preview pane has the full label).
-		{Title: "BY", Width: 7, Class: func(string) string { return "dim" },
+		{Title: "BY", Width: 7, Min: 7, Class: func(string) string { return "dim" },
 			Value: func(rec map[string]any) string {
 				return strings.TrimSuffix(issueOf(rec).Rung, " frames")
 			}},
@@ -138,10 +156,13 @@ type ExceptionIssue struct {
 	Frames []string
 	// Count is how many spans of the sample share the key.
 	Count int
-	// Services are the services those spans ran in, sorted.
+	// Services are the names of the services those spans ran in: the one
+	// most of them ran in first, then by name.
 	Services []string
 	// Newest and Oldest are the start times of the group's newest and
-	// oldest span in the sample, as the records spelled them.
+	// oldest span in the sample, as the records spelled them. Only a time
+	// that can be read counts: both are "" when no span of the group has
+	// one.
 	Newest, Oldest string
 }
 
@@ -176,39 +197,44 @@ func issueOf(rec map[string]any) ExceptionIssue {
 // keyless last row.
 //
 // A row holds the issue under exceptionIssueKey and, as real span fields,
-// the start time and the ids of the group's newest span. It shares no memory
-// with the spans: their stack traces are released with them.
+// the start time and the ids of the span that describes the group: its
+// newest one, and of several that started in the same instant the one with
+// the lowest span id, so the same sample gives the same row in whatever
+// order Grail returns it. A start time that cannot be read is no instant;
+// such a span describes its group only while no other does.
+//
+// A row shares no memory with the spans: every string it keeps is a copy,
+// and their stack traces are released with them.
 func GroupExceptionIssues(records []map[string]any) []map[string]any {
 	type group struct {
-		issue          ExceptionIssue
-		newest, oldest time.Time
-		spanID, trace  string
-		services       map[string]bool
+		issue    ExceptionIssue
+		by       issueMember // the span that describes the group
+		oldest   time.Time
+		services map[string]int // spans per service name
 	}
 	groups := map[string]*group{}
 	var order []*group
 	for _, rec := range records {
 		fp, _ := FingerprintExceptions(parseSpanExceptions(rec))
-		start := Str(rec, "start_time")
-		at, _ := time.Parse(time.RFC3339Nano, start)
+		span := issueMember{start: Str(rec, "start_time"), spanID: Str(rec, "span.id"), trace: Str(rec, "trace.id")}
+		var err error
+		span.at, err = time.Parse(time.RFC3339Nano, span.start)
+		span.timed = err == nil
 		g := groups[fp.Key]
 		if g == nil {
-			g = &group{services: map[string]bool{}, newest: at, oldest: at}
-			g.issue.Newest, g.issue.Oldest = start, start
+			g = &group{services: map[string]int{}}
 			groups[fp.Key] = g
 			order = append(order, g)
 		}
 		g.issue.Count++
 		if svc := SpanService(rec); svc != "" {
-			g.services[svc] = true
+			g.services[svc]++
 		}
-		if at.Before(g.oldest) {
-			g.oldest, g.issue.Oldest = at, start
+		if span.timed && (g.issue.Oldest == "" || span.at.Before(g.oldest)) {
+			g.oldest, g.issue.Oldest = span.at, span.start
 		}
-		// The first span of a group describes it until a newer one arrives.
-		if g.issue.Count == 1 || at.After(g.newest) {
-			g.newest, g.issue.Newest = at, start
-			g.spanID, g.trace = Str(rec, "span.id"), Str(rec, "trace.id")
+		if g.issue.Count == 1 || span.describesBefore(g.by) {
+			g.by = span
 			describeIssue(&g.issue, fp)
 		}
 	}
@@ -219,8 +245,8 @@ func GroupExceptionIssues(records []map[string]any) []map[string]any {
 			return b.issue.Key == ""
 		case a.issue.Count != b.issue.Count:
 			return a.issue.Count > b.issue.Count
-		case !a.newest.Equal(b.newest):
-			return a.newest.After(b.newest)
+		case !a.by.at.Equal(b.by.at):
+			return a.by.at.After(b.by.at)
 		}
 		return a.issue.Key < b.issue.Key
 	})
@@ -229,15 +255,46 @@ func GroupExceptionIssues(records []map[string]any) []map[string]any {
 		for svc := range g.services {
 			g.issue.Services = append(g.issue.Services, strings.Clone(svc))
 		}
-		sort.Strings(g.issue.Services)
+		sort.Slice(g.issue.Services, func(a, b int) bool {
+			x, y := g.issue.Services[a], g.issue.Services[b]
+			if g.services[x] != g.services[y] {
+				return g.services[x] > g.services[y]
+			}
+			return x < y
+		})
+		if g.by.timed {
+			g.issue.Newest = strings.Clone(g.by.start)
+		}
+		g.issue.Oldest = strings.Clone(g.issue.Oldest)
 		rows[i] = map[string]any{
 			exceptionIssueKey: g.issue,
-			"start_time":      strings.Clone(g.issue.Newest),
-			"span.id":         strings.Clone(g.spanID),
-			"trace.id":        strings.Clone(g.trace),
+			"start_time":      strings.Clone(g.by.start),
+			"span.id":         strings.Clone(g.by.spanID),
+			"trace.id":        strings.Clone(g.by.trace),
 		}
 	}
 	return rows
+}
+
+// issueMember is what grouping reads of one span to pick the span that
+// describes its group.
+type issueMember struct {
+	start, spanID, trace string
+	at                   time.Time // the zero instant unless timed
+	timed                bool      // start was read as a time
+}
+
+// describesBefore reports whether m describes a group rather than other: a
+// span with a readable time before one without, then the newer one, then
+// the lower span id.
+func (m issueMember) describesBefore(other issueMember) bool {
+	switch {
+	case m.timed != other.timed:
+		return m.timed
+	case !m.at.Equal(other.at):
+		return m.at.After(other.at)
+	}
+	return m.spanID < other.spanID
 }
 
 // describeIssue copies what a fingerprint says about its exception into the
@@ -275,12 +332,16 @@ func issuePreview(issue ExceptionIssue) []PreviewFact {
 		if i == 0 {
 			label = "thrown at"
 		}
-		b.facts = append(b.facts, PreviewFact{Label: label, Value: frame})
+		// Wrapped like the message: cut at the pane's edge, a frame loses
+		// its function, which is what tells two throw sites apart.
+		b.facts = append(b.facts, PreviewFact{Label: label, Value: frame, Wrap: true})
 	}
 	b.add("services", strings.Join(issue.Services, ", "))
-	b.add("last seen", FormatTime(issue.Newest))
-	if issue.Oldest != issue.Newest {
-		b.add("first seen", FormatTime(issue.Oldest))
+	last, first := FormatTime(issue.Newest), FormatTime(issue.Oldest)
+	b.add("last seen", last)
+	// Two sightings the clock prints alike are one line.
+	if first != last {
+		b.add("first seen", first)
 	}
 	return b.facts
 }

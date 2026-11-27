@@ -5,6 +5,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
+	"unsafe"
 )
 
 // issueSpan is one projected record of the exceptions view: the fields its
@@ -244,6 +246,156 @@ func TestGroupExceptionIssuesCountsEverySpan(t *testing.T) {
 	}
 }
 
+// Spans that started in the same instant must not take turns describing
+// their group: which trace enter opens, and which message the row shows,
+// would then change between two refreshes of the same data, since Grail
+// returns ties in no fixed order. The lower span id describes the group.
+func TestGroupExceptionIssuesBreaksATieBySpanID(t *testing.T) {
+	const at = "2026-07-15T11:00:00Z"
+	a := issueSpan(7, at, "a", "T", "cart 1 failed for alice", cartLockedStack)
+	b := issueSpan(3, at, "a", "T", "order 2 failed for bob", cartLockedStack)
+	older := issueSpan(1, "2026-07-15T10:00:00Z", "a", "T", "an older one", cartLockedStack)
+	for name, spans := range map[string][]map[string]any{
+		"a first": {a, b, older}, "b first": {b, a, older}, "older first": {older, b, a}, "older between": {a, older, b},
+	} {
+		row := GroupExceptionIssues(spans)[0]
+		issue := issuesOf(t, []map[string]any{row})[0]
+		if Str(row, "span.id") != Str(b, "span.id") || Str(row, "trace.id") != Str(b, "trace.id") || issue.Message != "order <n> failed for bob" {
+			t.Errorf("%s: the group is described by span %s (%q), want the lower id of the tie",
+				name, Str(row, "span.id"), issue.Message)
+		}
+	}
+}
+
+// A start time that cannot be read is no instant: it is neither the group's
+// first nor its last sighting, and its span describes the group only while
+// no span with a readable time does.
+func TestGroupExceptionIssuesIgnoresAnUnreadableTime(t *testing.T) {
+	good := issueSpan(2, "2026-07-15T11:00:00Z", "a", "T", "the readable one", cartLockedStack)
+	bad := issueSpan(1, "soon", "a", "T", "the unreadable one", cartLockedStack)
+	missing := issueSpan(4, "", "a", "T", "the one without", cartLockedStack)
+	delete(missing, "start_time")
+	for name, spans := range map[string][]map[string]any{
+		"unreadable first": {bad, good, missing}, "unreadable last": {good, missing, bad},
+	} {
+		row := GroupExceptionIssues(spans)[0]
+		issue := issuesOf(t, []map[string]any{row})[0]
+		if issue.Newest != "2026-07-15T11:00:00Z" || issue.Oldest != "2026-07-15T11:00:00Z" {
+			t.Errorf("%s: newest/oldest = %q / %q, want the one readable time", name, issue.Newest, issue.Oldest)
+		}
+		if Str(row, "span.id") != Str(good, "span.id") || issue.Message != "the readable one" || Str(row, "start_time") != "2026-07-15T11:00:00Z" {
+			t.Errorf("%s: described by span %s (%q)", name, Str(row, "span.id"), issue.Message)
+		}
+		for _, fact := range PreviewFacts(row) {
+			if fact.Label == "first seen" {
+				t.Errorf("%s: the preview shows a first sighting %q beside one readable time", name, fact.Value)
+			}
+		}
+	}
+	// With no readable time at all the row claims none, and the lower span
+	// id describes it.
+	row := GroupExceptionIssues([]map[string]any{missing, bad})[0]
+	issue := issuesOf(t, []map[string]any{row})[0]
+	if issue.Newest != "" || issue.Oldest != "" || Str(row, "span.id") != Str(bad, "span.id") {
+		t.Errorf("no readable time: newest/oldest = %q / %q, span %s", issue.Newest, issue.Oldest, Str(row, "span.id"))
+	}
+}
+
+// A row outlives the fetched spans, so none of its strings may be the
+// span's own: a record producer that cuts its strings out of one buffer
+// would otherwise keep the whole response alive behind a row.
+func TestGroupExceptionIssuesRowsShareNoStringWithTheSpans(t *testing.T) {
+	// Every string of the two spans is cut out of one buffer, as a decoder
+	// that does not copy would hand them over.
+	buffer := strings.Repeat("x", 64<<10) +
+		"2026-07-15T11:00:00Z|2026-07-15T10:00:00Z|span-a|span-b|trace-a|trace-b|cart|" +
+		"com.example.Boom|the cart is locked|" + cartLockedStack
+	cut := func(part string) string {
+		at := strings.Index(buffer, part)
+		return buffer[at : at+len(part)]
+	}
+	span := func(start, id, trace string) map[string]any {
+		return map[string]any{"start_time": cut(start), "span.id": cut(id), "trace.id": cut(trace),
+			"dt.service.name": cut("cart"),
+			"span.events": []any{map[string]any{"span_event.name": "exception", "exception.type": cut("com.example.Boom"),
+				"exception.message": cut("the cart is locked"), "exception.stack_trace": cut(cartLockedStack)}}}
+	}
+	row := GroupExceptionIssues([]map[string]any{
+		span("2026-07-15T11:00:00Z", "span-a", "trace-a"), span("2026-07-15T10:00:00Z", "span-b", "trace-b"),
+	})[0]
+	issue := issuesOf(t, []map[string]any{row})[0]
+	lo := uintptr(unsafe.Pointer(unsafe.StringData(buffer)))
+	kept := map[string]string{
+		"Newest": issue.Newest, "Oldest": issue.Oldest, "Services[0]": issue.Services[0],
+		"Type": issue.Type, "EventType": issue.EventType, "Message": issue.Message,
+		"start_time": Str(row, "start_time"), "span.id": Str(row, "span.id"), "trace.id": Str(row, "trace.id"),
+	}
+	for i, frame := range issue.Frames {
+		kept[fmt.Sprintf("Frames[%d]", i)] = frame
+	}
+	if len(issue.Frames) == 0 {
+		t.Fatal("the stack gave no frames: the case does not cover them")
+	}
+	for name, text := range kept {
+		if text == "" {
+			t.Errorf("%s is empty", name)
+		}
+		if at := uintptr(unsafe.Pointer(unsafe.StringData(text))); at >= lo && at < lo+uintptr(len(buffer)) {
+			t.Errorf("%s points into the fetched buffer: the row keeps it alive", name)
+		}
+	}
+}
+
+// The cell names one service: the one most of the group's spans ran in, not
+// the first by name. A span that names its service in service.name alone
+// (no OneAgent) counts like any other.
+func TestGroupExceptionIssuesOrdersServicesBySpans(t *testing.T) {
+	otel := issueSpan(4, "2026-07-15T11:00:00Z", "", "T", "", "")
+	otel["dt.service.name"], otel["service.name"] = nil, "aardvark"
+	spans := []map[string]any{
+		otel,
+		issueSpan(1, "2026-07-15T11:00:01Z", "web", "T", "", ""),
+		issueSpan(2, "2026-07-15T11:00:02Z", "web", "T", "", ""),
+		issueSpan(3, "2026-07-15T11:00:03Z", "batch", "T", "", ""),
+	}
+	issue := issuesOf(t, GroupExceptionIssues(spans))[0]
+	if want := []string{"web", "aardvark", "batch"}; !reflect.DeepEqual(issue.Services, want) {
+		t.Errorf("services = %q, want %q", issue.Services, want)
+	}
+}
+
+// The filter finds a row by what its preview pane shows and its cells do
+// not: a service the cell hides, and the type the event recorded.
+func TestExceptionIssueMatchTextNamesWhatTheCellsHide(t *testing.T) {
+	rows := GroupExceptionIssues([]map[string]any{
+		issueSpan(1, "2026-07-15T11:59:58Z", "cart", "java.lang.IllegalStateException", "m", cartLockedStack),
+		issueSpan(2, "2026-07-15T11:59:57Z", "cart", "java.lang.IllegalStateException", "m", cartLockedStack),
+		issueSpan(3, "2026-07-15T11:59:40Z", "checkout", "java.lang.IllegalStateException", "m", cartLockedStack),
+	})
+	issue := issuesOf(t, rows)[0]
+	issue.EventType = "org.example.Wrapper"
+	rows[0][exceptionIssueKey] = issue
+	text := exceptionsSpec.Sample.Match(rows[0])
+	for _, want := range []string{issue.Key, "java.lang.IllegalStateException", "org.example.Wrapper", "cart", "checkout"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("match text %q lacks %q", text, want)
+		}
+	}
+}
+
+// Two sightings within one second print the same clock time: one line.
+func TestPreviewFactsExceptionIssueHidesAFirstSeenThatPrintsAlike(t *testing.T) {
+	rows := GroupExceptionIssues([]map[string]any{
+		issueSpan(1, "2026-07-15T11:59:58.9Z", "cart", "T", "", ""),
+		issueSpan(2, "2026-07-15T11:59:58.1Z", "cart", "T", "", ""),
+	})
+	for _, fact := range PreviewFacts(rows[0]) {
+		if fact.Label == "first seen" {
+			t.Errorf("first seen %q repeats last seen", fact.Value)
+		}
+	}
+}
+
 func TestGroupExceptionIssuesEmpty(t *testing.T) {
 	if rows := GroupExceptionIssues(nil); len(rows) != 0 {
 		t.Errorf("no spans grouped into %d rows", len(rows))
@@ -292,7 +444,7 @@ func TestExceptionIssueColumns(t *testing.T) {
 		"COUNT":     "2",
 		"EXCEPTION": "lang.IllegalStateException",
 		"MESSAGE":   "cart <n> is locked",
-		"SERVICE":   "cart +1",
+		"SERVICE":   "+1 cart",
 		"BY":        "app",
 	} {
 		if got := cell(rows[0], title); got != want {
@@ -306,16 +458,65 @@ func TestExceptionIssueColumns(t *testing.T) {
 	if got := cell(rows[1], "MESSAGE"); got != "" {
 		t.Errorf("keyless MESSAGE = %q", got)
 	}
-	// COUNT sorts as a number, LAST as the instant.
+	// COUNT sorts as a number, SERVICE by the name and not by the "+1".
 	for _, c := range exceptionsSpec.Columns {
 		switch c.Title {
 		case "COUNT":
 			if c.Sort(rows[0]) != 2 {
 				t.Errorf("COUNT sort key = %v, want 2", c.Sort(rows[0]))
 			}
-		case "LAST":
-			if c.Sort(rows[0]) != "2026-07-15T11:59:58Z" {
-				t.Errorf("LAST sort key = %v", c.Sort(rows[0]))
+		case "SERVICE":
+			if c.Sort(rows[0]) != "cart" || c.Sort(rows[1]) != "checkout" {
+				t.Errorf("SERVICE sort keys = %v, %v", c.Sort(rows[0]), c.Sort(rows[1]))
+			}
+		}
+	}
+}
+
+// LAST sorts by the instant, not by its text: Grail trims a fraction's
+// trailing zeros, so the raw spellings would put 11:59:58.5 before 11:59:58.
+func TestExceptionIssueLastSortsByInstant(t *testing.T) {
+	var last Column
+	for _, c := range exceptionsSpec.Columns {
+		if c.Title == "LAST" {
+			last = c
+		}
+	}
+	key := func(start string) any {
+		return last.Sort(GroupExceptionIssues([]map[string]any{issueSpan(1, start, "a", "T", "", "")})[0])
+	}
+	inOrder := []string{
+		"2026-07-15T11:59:57.999999999Z",
+		"2026-07-15T11:59:58Z",
+		"2026-07-15T13:59:58.25+02:00", // 11:59:58.25Z, written two zones east
+		"2026-07-15T11:59:58.5Z",
+		"2026-07-15T12:00:00Z",
+	}
+	for i := 1; i < len(inOrder); i++ {
+		a, aok := key(inOrder[i-1]).(time.Time)
+		b, bok := key(inOrder[i]).(time.Time)
+		if !aok || !bok || !a.Before(b) {
+			t.Errorf("sort key of %s (%v) is not an instant before that of %s (%v)", inOrder[i-1], a, inOrder[i], b)
+		}
+	}
+	// An unreadable time has no key: the table sinks empty keys.
+	if k := key("soon"); k != nil {
+		t.Errorf("sort key of an unreadable time = %v, want none", k)
+	}
+}
+
+// The count of further services must survive the cell's truncation: the
+// column is 12 wide, and a long first name would push a trailing count out.
+func TestExceptionIssueServiceCellLeadsWithItsCount(t *testing.T) {
+	rows := GroupExceptionIssues([]map[string]any{
+		issueSpan(1, "2026-07-15T11:59:58Z", "checkout-service-east-01", "T", "", ""),
+		issueSpan(2, "2026-07-15T11:59:57Z", "checkout-service-west-02", "T", "", ""),
+		issueSpan(3, "2026-07-15T11:59:56Z", "inventory", "T", "", ""),
+	})
+	for _, c := range exceptionsSpec.Columns {
+		if c.Title == "SERVICE" {
+			if got := c.Text(rows[0]); !strings.HasPrefix(got, "+2 ") || got != "+2 checkout-service-east-01" {
+				t.Errorf("SERVICE = %q, want the count of further services first", got)
 			}
 		}
 	}
@@ -353,7 +554,7 @@ func TestExceptionIssueYank(t *testing.T) {
 func TestPreviewFactsExceptionIssue(t *testing.T) {
 	rows := GroupExceptionIssues([]map[string]any{
 		issueSpan(1, "2026-07-15T11:59:58Z", "cart", "java.lang.IllegalStateException", "cart 4411 is locked", cartLockedStack),
-		issueSpan(2, "2026-07-15T11:59:40Z", "checkout", "java.lang.IllegalStateException", "cart 9020 is locked", cartLockedStackMoved),
+		issueSpan(2, "2026-07-15T11:40:00Z", "checkout", "java.lang.IllegalStateException", "cart 9020 is locked", cartLockedStackMoved),
 	})
 	if got := PreviewTitle(rows[0]); got != "java.lang.IllegalStateException" {
 		t.Errorf("title = %q", got)
@@ -365,11 +566,11 @@ func TestPreviewFactsExceptionIssue(t *testing.T) {
 		{Label: "in sample", Value: "2 spans"},
 		{Label: "grouped by", Value: "app frames"},
 		{Label: "message", Value: "cart <n> is locked", Wrap: true},
-		{Label: "thrown at", Value: "com.example.shop.cart.CartService.addItem"},
-		{Label: "then", Value: "com.example.shop.web.CartController.post"},
+		{Label: "thrown at", Value: "com.example.shop.cart.CartService.addItem", Wrap: true},
+		{Label: "then", Value: "com.example.shop.web.CartController.post", Wrap: true},
 		{Label: "services", Value: "cart, checkout"},
 		{Label: "last seen", Value: FormatTime("2026-07-15T11:59:58Z")},
-		{Label: "first seen", Value: FormatTime("2026-07-15T11:59:40Z")},
+		{Label: "first seen", Value: FormatTime("2026-07-15T11:40:00Z")},
 	}
 	if !reflect.DeepEqual(facts, want) {
 		t.Errorf("facts =\n%+v\nwant\n%+v", facts, want)
@@ -412,11 +613,11 @@ func TestPreviewFactsExceptionIssueOfOneWrappedSpan(t *testing.T) {
 func TestExceptionsViewLeavesEventsItsPrefixes(t *testing.T) {
 	for input, want := range map[string]string{
 		"e": "events", "ev": "events",
-		"ex": "exceptions", "exc": "exceptions", "exceptions": "exceptions",
+		"ex": "exceptions", "exc": "exceptions", "exception": "exceptions", "exceptions": "exceptions",
 		"exe": "executions", "exec": "executions",
 	} {
 		if got := Match(input); len(got) == 0 || got[0].Name != want {
-			t.Errorf(":%s opens %v, want %s", input, got[0].Name, want)
+			t.Errorf(":%s opens %v, want %s", input, got, want)
 		}
 	}
 }

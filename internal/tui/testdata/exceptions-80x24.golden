@@ -3,7 +3,7 @@
  6 rows · 1s
  limit hit: newest 1000 exception spans, back to 11:48:19; any older ones are n…
  COUNT  LAST          EXCEPTION               MESSAGE      SERVICE       BY
-▌  650  11:59:59      lang.IllegalStateExce…  cart <n> i…  cart +1       app
+▌  650  11:59:59      lang.IllegalStateExce…  cart <n> i…  +1 cart       app
    100  11:59:56      sql.SQLException        connection…  orders        app
    100  11:59:53      TimeoutError            upstream t…  payments      app
     50  11:59:49      TypeError               Cannot rea…  frontend      app
