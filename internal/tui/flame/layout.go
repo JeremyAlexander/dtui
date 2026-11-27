@@ -158,13 +158,35 @@ func Label(label string, width int) string {
 
 // functionOf is the function at the end of a label: what follows the last
 // dot of a package.Type.function, or the colon of a path/file.js:function,
-// without a parameter list.
+// without a parameter list. A parameter list is the parentheses that close
+// the label. Go spells a method's receiver in parentheses in the middle of
+// it (pkg.(*Type).Method), and those are part of the name.
 func functionOf(label string) string {
-	if i := strings.IndexByte(label, '('); i > 0 {
-		label = label[:i]
+	if open := paramsAt(label); open > 0 {
+		label = label[:open]
 	}
 	if i := strings.LastIndexAny(label, ".:"); i >= 0 && i < len(label)-1 {
 		return label[i+1:]
 	}
 	return label
+}
+
+// paramsAt is where the parameter list that closes a label opens; -1 for a
+// label that does not end in one.
+func paramsAt(label string) int {
+	if !strings.HasSuffix(label, ")") {
+		return -1
+	}
+	depth := 0
+	for i := len(label) - 1; i >= 0; i-- {
+		switch label[i] {
+		case ')':
+			depth++
+		case '(':
+			if depth--; depth == 0 {
+				return i
+			}
+		}
+	}
+	return -1
 }

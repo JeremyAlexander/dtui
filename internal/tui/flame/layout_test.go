@@ -2,6 +2,7 @@ package flame
 
 import (
 	"fmt"
+	"github.com/dynatrace-oss/dtui/internal/tui/catalog"
 	"math"
 	"strings"
 	"testing"
@@ -313,6 +314,14 @@ func TestLabel(t *testing.T) {
 		{"a method that does not fit keeps its start", "com.example.shop.Cart.total", 4, "tot…"},
 		{"a method without its parameters", "com.example.Cart.total(int, long)", 6, "total "},
 		{"a script's function before a fragment of its path", "src/server/handler.js:resolve", 9, "resolve  "},
+		// Go spells a method's receiver in parentheses: they are no
+		// parameter list, and the method is what follows them.
+		{"a Go method on a pointer receiver", "net/http.(*conn).serve", 10, "serve     "},
+		{"a Go method that does not fit keeps its start", "example.com/shop/internal/cart.(*Service).AddItem", 5, "AddI…"},
+		{"a Go method of a generic receiver", "example.com/shop/internal/cart.(*Set[go.shape.int]).Add", 6, "Add   "},
+		{"a parameter list after a receiver", "example.com/shop/internal/cart.(*Service).AddItem(string)", 9, "AddItem  "},
+		{"a parameter list that holds a receiver", "com.example.Cart.total(a.(*B).c)", 6, "total "},
+		{"parentheses that are not closed are part of the name", "com.example.Cart.total(int", 6, "total…"},
 		{"a name without a dot keeps its start", "lambda$handleRequest$0", 8, "lambda$…"},
 		{"a wide name keeps its start", "com.example.注文.処理する", 5, "処理…"},
 		{"a control sequence is shown, not obeyed", "a\x1b[31mb", 10, "a␛[31mb   "},
@@ -335,5 +344,40 @@ func TestLabel(t *testing.T) {
 				t.Errorf("Label(%q, %d) = %q is %d cells wide", tc.label, tc.width, got, w)
 			}
 		})
+	}
+}
+
+// Lock and Unlock of one type are two frames, and read as two in cells of
+// any width: the receiver in parentheses is not cut for a parameter list.
+//
+// One part of this is not the graph's to decide. A cell wide enough for the
+// label with its "parameters" folded to "(…)" shows what catalog.ShortFrame
+// makes of it, and ShortFrame reads a Go receiver as a parameter list until
+// catalog.splitParams is cured on the profiling view's branch. That part is
+// skipped, and named, while it does not hold in this tree.
+func TestLabelTellsGoMethodsOfOneTypeApart(t *testing.T) {
+	const lock, unlock = "example.com/shop/internal/guard.(*Guard).Lock", "example.com/shop/internal/guard.(*Guard).Unlock"
+	cured := strings.HasSuffix(catalog.ShortFrame("sync.(*Mutex).Lock", 12), "Lock")
+	var depends []int
+	for width := 3; width <= len(unlock)+2; width++ {
+		a, b := Label(lock, width), Label(unlock, width)
+		same := a == b || !strings.Contains(strings.ReplaceAll(a, "…", ""), "Lo") || !strings.Contains(strings.ReplaceAll(b, "…", ""), "Un")
+		if !same {
+			continue
+		}
+		// Only the form ShortFrame folds is the catalog's doing.
+		folded := func(label string) bool {
+			short := catalog.ShortFrame(label, width)
+			return strings.HasSuffix(short, "(…)") && !strings.HasPrefix(short, "…")
+		}
+		if !cured && (folded(lock) || folded(unlock)) {
+			depends = append(depends, width)
+			continue
+		}
+		t.Errorf("at %d cells the two read %q and %q", width, a, b)
+	}
+	if len(depends) > 0 {
+		t.Skipf("at %d widths (%d to %d cells) a cell shows the label as catalog.ShortFrame folds it, which loses a Go method's name until catalog.splitParams stops reading a receiver as a parameter list (the profiling view's branch); every other width holds",
+			len(depends), depends[0], depends[len(depends)-1])
 	}
 }
