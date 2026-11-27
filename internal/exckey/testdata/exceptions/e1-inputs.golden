@@ -22,6 +22,7 @@ ca69ff57fd2a6d2b	const javaCausePrefix
 d4727ff604b5e9d7	const javaUnknownSource, javaNotInFile
 9a4a8c14fe76725b	const jsRuntimeScheme, jsDependencyDir
 ccb956b113a3e111	const msgNumberLeads, msgCodeDigits, msgEscape
+12364c2d5b7363e9	const msgNumeral
 32ce4153ff8a92ee	const msgQuoted, msgURL, msgUUID, msgDate, msgMAC, msgIP, msgPath, msgHex, msgID, msgNumber
 ae53d13605172001	const msgQuotes, msgApostrophe, msgEscapingQuotes, msgClosers
 b29bd30168fc254b	const msgWinPathWord, msgWinPathWords
@@ -98,14 +99,14 @@ b31800458cf9cc82	var msgIPv6BracketRe
 7ae7d4aa677de534	var msgIPv6Re
 eb88958d1e12d232	var msgMACRe
 e0188cff3a26bf19	var msgNumberRe
-cfedae2fc6af9127	var msgNumberText
+0fbf172348b90146	var msgNumberText
 1bf19649abaca1fc	var msgPlaceholders
 36207411439c96ce	var msgPrefixedIDRe
 e54fe08c91dbe103	var msgQuotedStateRe
 b5dc00612ce32c5f	var msgURLRe
 95fa6350781d692b	var msgUUIDRe
 60b07b14f9f00dac	var msgUnitText
-564d0f544d99f335	var msgUnits
+3eae5fc0fc8473e4	var msgUnits
 246d1b1e27dc378c	var msgUnixPathRe
 590b91abad6d02aa	var msgWinPathRe
 a231b8c2c60d6c9c	var pythonFrameRe
