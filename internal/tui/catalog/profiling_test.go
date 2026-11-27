@@ -2,6 +2,7 @@ package catalog
 
 import (
 	"math"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -159,7 +160,11 @@ func TestAllocationPathColumnHasText(t *testing.T) {
 	if got := col.Sort(rec); got != want {
 		t.Errorf("sort key = %q, want %q", got, want)
 	}
-	if got := col.TextAt(rec, 40); got != "c.e.s.c.ProductCache.load ← CatalogService.find ← Handler.get" {
+	if got := col.TextAt(rec, 80); got != "com.example.shop.cache.ProductCache.load ← CatalogService.find ← Handler.get" {
+		t.Errorf("drawn at 80 = %q", got)
+	}
+	// The cell is full after the first caller; the table cuts what is over.
+	if got := col.TextAt(rec, 40); got != "c.e.s.c.ProductCache.load ← CatalogService.find" {
 		t.Errorf("drawn at 40 = %q", got)
 	}
 }
@@ -528,5 +533,33 @@ func TestFocusTargetOfARowWithoutAFunction(t *testing.T) {
 		if fn, why := FocusTarget(s, map[string]any{}); fn != "" || why != "" {
 			t.Errorf("focus %q: a row without a function gives (%q, %q), want neither", s.Arg, fn, why)
 		}
+	}
+}
+
+// The path cell is drawn for every visible row on every frame. It names
+// callers until the cell is full and no further: the rest would be cut off.
+func TestAllocationPathStopsWhenTheCellIsFull(t *testing.T) {
+	var callers []any
+	for i := range 5000 {
+		callers = append(callers, "com.example.Layer"+strconv.Itoa(1000+i)+".call")
+	}
+	rec := map[string]any{ProfSite: "com.example.Buffer.grow", ProfCallers: callers}
+	got := allocationPath(rec, 60)
+	if want := "com.example.Buffer.grow ← Layer1000.call ← Layer1001.call ← Layer1002.call"; got != want {
+		t.Errorf("a path of 5,000 callers in 60 cells draws\n %q, want\n %q", got, want)
+	}
+	// A path that fills the cell exactly and goes on draws one caller more,
+	// so that the table's cut shows there is more.
+	if got := allocationPath(rec, 57); !strings.HasSuffix(got, "Layer1002.call") {
+		t.Errorf("a path that goes on past a full cell draws %q, want one caller past the cell", got)
+	}
+	// The arrows count toward the cell as well.
+	if got := allocationPath(rec, 52); !strings.HasSuffix(got, "Layer1001.call") {
+		t.Errorf("in 52 cells the path draws %q, want it to end after the second caller", got)
+	}
+	// One that fits is whole.
+	rec[ProfCallers] = callers[:2]
+	if want := "com.example.Buffer.grow ← Layer1000.call ← Layer1001.call"; allocationPath(rec, 60) != want {
+		t.Errorf("a path of two callers draws %q, want %q", allocationPath(rec, 60), want)
 	}
 }

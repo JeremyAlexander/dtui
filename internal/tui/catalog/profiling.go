@@ -543,11 +543,24 @@ func allocationPath(rec map[string]any, width int) string {
 	// The site is the row's identity: it gets the room it needs, up to
 	// two thirds, and the callers share the rest.
 	siteW := min(runewidth.StringWidth(site), max(width*2/3, 8))
-	parts := []string{shortFrame(site, siteW)}
+	const arrow = " ← "
+	var b strings.Builder
+	site = shortFrame(site, siteW)
+	b.WriteString(site)
+	// A path can be hundreds of frames deep and the cell is drawn for every
+	// visible row: stop once the cell overflows. The table cuts what is over
+	// and marks the cut, so a path that goes on never ends flush.
+	used := runewidth.StringWidth(site)
 	for _, c := range callers {
-		parts = append(parts, tailFrame(FormatValue(c)))
+		if used > width {
+			break
+		}
+		caller := tailFrame(FormatValue(c))
+		b.WriteString(arrow)
+		b.WriteString(caller)
+		used += runewidth.StringWidth(arrow) + runewidth.StringWidth(caller)
 	}
-	return strings.Join(parts, " ← ")
+	return b.String()
 }
 
 // tailFrame is a frame's Class.method, without its package.
