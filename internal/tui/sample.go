@@ -20,7 +20,7 @@ const (
 	cutNone    sampleCut = iota
 	cutRows              // the query's own limit was reached
 	cutBytes             // the result reached its size limit
-	cutPartial           // cut short for a reason this file has no wording for
+	cutPartial           // cut short where nothing says which records arrived
 	cutScan              // Grail stopped scanning at its scan limit
 	cutTimeout           // the fetch timed out
 )
@@ -76,38 +76,27 @@ func takeSample(s *catalog.SampleSpec, window string, records []map[string]any, 
 	return s.Group(records), facts
 }
 
-// cutFor reads from a response's notices what cut its result short. Of
-// several the one that says least about what arrived wins: after a scan that
-// stopped early, the records are not known to be the newest of the
-// timeframe, whatever limit also applied.
+// cutFor reads from a response's notices what cut its result short: of
+// several the gravest, the one the footer names too (gravestNotice).
 //
 // A notice counts whatever its severity, as it does for dtctl
 // (exec.PartialCause): a result that was cut is cut, also when Grail files
-// the fact as information. A cause dtctl knows and this file has no wording
-// for is cutPartial, so a type dtctl learns later can never read as whole.
+// the fact as information. The consumption limit has no wording of its own
+// here and reads as cutPartial.
 func cutFor(notices []exec.QueryNotification) sampleCut {
-	cut := cutNone
-	for _, n := range notices {
-		c := cutNone
-		switch classifyNotice(n.NotificationType, n.Message) {
-		case noticeScanLimit:
-			c = cutScan
-		case noticeTimeout:
-			c = cutTimeout
-		case noticeSizeLimit:
-			c = cutBytes
-		case noticeResultLimit:
-			c = cutRows
-		default:
-			if exec.ResultIsPartial(n) {
-				c = cutPartial
-			}
-		}
-		if c > cut {
-			cut = c
-		}
+	switch gravestNotice(notices, nil) {
+	case noticeTimeout:
+		return cutTimeout
+	case noticeScanLimit:
+		return cutScan
+	case noticeConsumption:
+		return cutPartial
+	case noticeSizeLimit:
+		return cutBytes
+	case noticeResultLimit:
+		return cutRows
 	}
-	return cut
+	return cutNone
 }
 
 // samplingNoticed reports whether a notice says the read was sampled.
@@ -121,9 +110,12 @@ func samplingNoticed(notices []exec.QueryNotification) bool {
 }
 
 // line renders the header: what cut the sample, how many records arrived,
-// how far back they reach, and last the window they were fetched over. The
-// window comes last because a narrow table truncates the line, and the
-// screen's own header names the window anyway; the reach is nowhere else.
+// how far back they reach, and last the window they were fetched over. A
+// narrow table truncates the line at its end, so what is nowhere else comes
+// first, as short as it can be said: the reason, the count and the reach
+// fit beside the preview pane at its narrowest, also with a date in the
+// reach (TestSampleLineKeepsItsReachAtEveryWidth). The caveat, the hint
+// and the window, which the screen's own header names anyway, trail.
 // warn is set when the records are not known to be all the timeframe holds:
 // the sample was cut, or read with sampling. "" for an empty sample nothing
 // cut: an empty view needs no caveat.
@@ -152,12 +144,12 @@ func (f *sampleFacts) line() (text string, warn bool) {
 	case cutRows:
 		// A full sample without a notice cannot be told from a cut one, so
 		// the line claims nothing about older records.
-		reason, what = "limit hit", f.newest()+"; any older ones are not counted"
+		reason, what = "row limit", "newest "+count+f.reach()+"; any older ones are not counted"
 		if f.fetched == 0 {
 			what = "the result was cut and holds no " + f.noun + "s"
 		}
 	case cutBytes:
-		reason, what = "size limit hit", f.newest()+"; older ones are not counted"
+		reason, what = "size limit", "newest "+count+f.reach()+"; older ones are not counted"
 		if f.fetched == 0 {
 			what = "no " + f.noun + " fit"
 		}
@@ -167,7 +159,7 @@ func (f *sampleFacts) line() (text string, warn bool) {
 			what = "no " + f.noun + "s in what was returned" + narrow
 		}
 	case cutScan, cutTimeout:
-		reason = "scan limit hit"
+		reason = "scan limit"
 		if f.cut == cutTimeout {
 			reason = "fetch timed out"
 		}
@@ -181,17 +173,13 @@ func (f *sampleFacts) line() (text string, warn bool) {
 	return reason + ": " + what + " · " + f.window, true
 }
 
-// newest words a sample that is a prefix of the newest records: how many
-// arrived and how far back they reach.
-func (f *sampleFacts) newest() string {
-	count := fmt.Sprintf("newest %d %s", f.fetched, f.noun)
-	if f.fetched != 1 {
-		count += "s"
+// reach words how far back a sample of the newest records goes ("" when no
+// record carries a readable time).
+func (f *sampleFacts) reach() string {
+	if f.oldest == "" {
+		return ""
 	}
-	if f.oldest != "" {
-		count += ", back to " + catalog.FormatTime(f.oldest)
-	}
-	return count
+	return " back to " + catalog.FormatTime(f.oldest)
 }
 
 // sampleOpts are a sample query's execution options: the usual ones, with

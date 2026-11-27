@@ -1,7 +1,7 @@
  ▛▞▟ dtui  ·  context:test  ·  ● readonly                                                   last 2h
  exceptions ───────────────────────────────────────────────────────────────────────────────────────
  6 rows · 1s
- limit hit: newest 1000 exception spans, back to 11:48:19; any older ones are not counted · last 2h
+ row limit: newest 1000 exception spans back to 11:48:19; any older ones are not counted · last 2h
  COUNT  LAST          EXCEPTION               MESSAGE                          SERVICE       BY
 ▌  650  11:59:59      lang.IllegalStateExce…  cart <n> is locked               +1 cart       app
    100  11:59:56      sql.SQLException        connection to <ip> refused       orders        app

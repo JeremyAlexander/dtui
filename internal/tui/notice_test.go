@@ -93,6 +93,38 @@ func TestNoticeForSizeLimit(t *testing.T) {
 	}
 }
 
+// Of several notices the footer names the gravest, whatever their order: a
+// sampling notice ahead of a scan limit must not make a cut result read as
+// merely approximate.
+func TestNoticeForTakesTheGravestOfSeveral(t *testing.T) {
+	note := func(typ string) exec.QueryNotification {
+		return exec.QueryNotification{Severity: "WARNING", NotificationType: typ}
+	}
+	// Each type outranks every one before it.
+	ranked := []string{"SAMPLING_APPLIED", "RESULT_LIMIT_RECORDS", "BYTE_LIMIT_ADDED",
+		"QUERY_CONSUMPTION_LIMIT", "SCAN_LIMIT_GBYTES", "FETCH_TIMEOUT"}
+	for hi := 1; hi < len(ranked); hi++ {
+		alone, _ := noticeFor([]exec.QueryNotification{note(ranked[hi])})
+		for lo := range hi {
+			for _, ns := range [][]exec.QueryNotification{
+				{note(ranked[lo]), note(ranked[hi])}, {note(ranked[hi]), note(ranked[lo])},
+			} {
+				if got, _ := noticeFor(ns); got != alone {
+					t.Errorf("%s with %s: notice = %q, want that of %s", ns[0].NotificationType, ns[1].NotificationType, got.text, ranked[hi])
+				}
+				if !partialNotice(ns) {
+					t.Errorf("%s with %s is not read as partial", ns[0].NotificationType, ns[1].NotificationType)
+				}
+			}
+		}
+	}
+	// A notice below a warning never outranks one: it is not shown at all.
+	got, ok := noticeFor([]exec.QueryNotification{{Severity: "INFO", NotificationType: "FETCH_TIMEOUT"}, note("SAMPLING_APPLIED")})
+	if !ok || got.warn || !strings.Contains(got.text, "sampled") {
+		t.Errorf("an INFO timeout beside a sampling warning gave %+v", got)
+	}
+}
+
 func TestNoticeForSkipsInfoSeverity(t *testing.T) {
 	if _, ok := noticeFor([]exec.QueryNotification{
 		{Severity: "INFO", NotificationType: "SCAN_LIMIT_GBYTES"},

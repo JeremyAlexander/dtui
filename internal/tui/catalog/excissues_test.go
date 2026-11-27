@@ -78,7 +78,7 @@ func TestExceptionsQueryShape(t *testing.T) {
 	}
 }
 
-// The limit in the query is the sample's row cap: the header's "limit hit"
+// The limit in the query is the sample's row cap: the header's "row limit"
 // compares the fetched count to it.
 func TestExceptionsQueryLimitIsTheSampleCap(t *testing.T) {
 	dql := exceptionsSpec.Query(Scope{Timeframe: Timeframe{Label: "2h"}})

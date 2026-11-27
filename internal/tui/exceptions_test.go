@@ -160,6 +160,10 @@ func TestExceptionsViewAsksForBothCaps(t *testing.T) {
 	if len(opts.Segments) != 1 || opts.ClientContext != clientContext {
 		t.Errorf("a sample query must run like any other: %+v", opts)
 	}
+	// No metric catalogue lookup rides on a span query.
+	if opts.MetadataFields != nil {
+		t.Errorf("a sample query asked for metadata %q", opts.MetadataFields)
+	}
 }
 
 // The header says what the counts are counts of: how many spans arrived, how
@@ -183,38 +187,38 @@ func TestSampleLine(t *testing.T) {
 		{"one", issueSpans()[:1], nil, "1 exception span · last 2h", false},
 		// A full sample may be all there is: nothing says older spans exist.
 		{"row limit", manySpans(catalog.ExceptionSampleRows), nil,
-			"limit hit: newest 1000 exception spans, back to 11:43:20; any older ones are not counted · last 2h", true},
+			"row limit: newest 1000 exception spans back to 11:43:20; any older ones are not counted · last 2h", true},
 		{"one short of the limit", manySpans(catalog.ExceptionSampleRows - 1), nil,
 			"all 999 exception spans · last 2h", false},
 		{"row limit announced", manySpans(5), rowLimit,
-			"limit hit: newest 5 exception spans, back to 11:59:55; any older ones are not counted · last 2h", true},
+			"row limit: newest 5 exception spans back to 11:59:55; any older ones are not counted · last 2h", true},
 		// No scan gave up here: the result was cut and happens to be empty.
 		{"row limit, nothing arrived", nil, rowLimit,
-			"limit hit: the result was cut and holds no exception spans · last 2h", true},
+			"row limit: the result was cut and holds no exception spans · last 2h", true},
 		{"size limit", manySpans(412), sizeLimit,
-			"size limit hit: newest 412 exception spans, back to 11:53:08; older ones are not counted · last 2h", true},
+			"size limit: newest 412 exception spans back to 11:53:08; older ones are not counted · last 2h", true},
 		{"scan limit", manySpans(5), scanLimit,
-			"scan limit hit: 5 exception spans of what was scanned; narrow the timeframe (t) · last 2h", true},
+			"scan limit: 5 exception spans of what was scanned; narrow the timeframe (t) · last 2h", true},
 		{"timeout", manySpans(5), warning("FETCH_TIMEOUT", ""),
 			"fetch timed out: 5 exception spans of what was scanned; narrow the timeframe (t) · last 2h", true},
 		{"scan limit, nothing found", nil, scanLimit,
-			"scan limit hit: the scan gave up before it found exception spans; narrow the timeframe (t) · last 2h", true},
+			"scan limit: the scan gave up before it found exception spans; narrow the timeframe (t) · last 2h", true},
 		{"timeout, nothing found", nil, warning("FETCH_TIMEOUT", ""),
 			"fetch timed out: the scan gave up before it found exception spans; narrow the timeframe (t) · last 2h", true},
 		{"size limit, nothing fits", nil, sizeLimit,
-			"size limit hit: no exception span fit · last 2h", true},
+			"size limit: no exception span fit · last 2h", true},
 		// A scan that stopped early outranks the row limit: the rows that
 		// arrived are then not the newest of the timeframe.
 		{"scan limit on a full sample", manySpans(catalog.ExceptionSampleRows), scanLimit,
-			"scan limit hit: 1000 exception spans of what was scanned; narrow the timeframe (t) · last 2h", true},
+			"scan limit: 1000 exception spans of what was scanned; narrow the timeframe (t) · last 2h", true},
 		// Spans without a readable start time: the line claims no reach.
 		{"size limit, no times", []map[string]any{{"span.id": "a"}, {"span.id": "b", "start_time": "soon"}}, sizeLimit,
-			"size limit hit: newest 2 exception spans; older ones are not counted · last 2h", true},
+			"size limit: newest 2 exception spans; older ones are not counted · last 2h", true},
 		// A cut is a cut whatever severity Grail files it under.
 		{"a cut filed as information", issueSpans(), []exec.QueryNotification{{Severity: "INFO", NotificationType: "SCAN_LIMIT_GBYTES"}},
-			"scan limit hit: 3 exception spans of what was scanned; narrow the timeframe (t) · last 2h", true},
+			"scan limit: 3 exception spans of what was scanned; narrow the timeframe (t) · last 2h", true},
 		{"a cut without a severity", issueSpans(), []exec.QueryNotification{{NotificationType: "RESULT_LIMIT_BYTES"}},
-			"size limit hit: newest 3 exception spans, back to 11:59:40; older ones are not counted · last 2h", true},
+			"size limit: newest 3 exception spans back to 11:59:40; older ones are not counted · last 2h", true},
 		{"execution time limit", manySpans(5), warning("FETCH_EXEC_TIME_LIMIT", ""),
 			"fetch timed out: 5 exception spans of what was scanned; narrow the timeframe (t) · last 2h", true},
 		{"internal time limit, by its message", manySpans(5), warning("", "The query reached an internal time limit."),
@@ -231,7 +235,7 @@ func TestSampleLine(t *testing.T) {
 		{"consumption limit and a size cut", manySpans(5), append(sizeLimit, consumption...),
 			"partial result: 5 exception spans of what was returned; narrow the timeframe (t) · last 2h", true},
 		{"consumption limit and a scan limit", manySpans(5), append(consumption, scanLimit...),
-			"scan limit hit: 5 exception spans of what was scanned; narrow the timeframe (t) · last 2h", true},
+			"scan limit: 5 exception spans of what was scanned; narrow the timeframe (t) · last 2h", true},
 		// A sampled read is not all of the timeframe either.
 		{"sampling", issueSpans(), sampling,
 			"sampled read: 3 exception spans in the part that was read · last 2h", true},
@@ -240,7 +244,7 @@ func TestSampleLine(t *testing.T) {
 		{"sampling, nothing read", nil, sampling,
 			"sampled read: no exception spans in the part that was read · last 2h", true},
 		{"sampling and a size cut", manySpans(412), append(sampling, sizeLimit...),
-			"size limit hit: newest 412 exception spans, back to 11:53:08; older ones are not counted · last 2h", true},
+			"size limit: newest 412 exception spans back to 11:53:08; older ones are not counted · last 2h", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, facts := takeSample(spec, sampleWindow(catalog.Timeframe{Label: "2h"}), tc.spans, tc.notices, false)
@@ -356,7 +360,7 @@ func TestSampleLineTakesARowOfThePage(t *testing.T) {
 	}
 	lines := strings.Split(out, "\n")
 	for i, l := range lines {
-		if strings.Contains(l, "limit hit: newest 1000 exception spans") {
+		if strings.Contains(l, "row limit: newest 1000 exception spans") {
 			if !strings.Contains(lines[i+1], "COUNT") {
 				t.Errorf("the column header does not follow the sample line:\n%s", out)
 			}
@@ -590,7 +594,7 @@ func TestExceptionsEmptyCutSampleClaimsNoEmptyTimeframe(t *testing.T) {
 		if strings.Contains(out, "no data in timeframe") {
 			t.Errorf("%s: an empty cut sample reads as an empty timeframe:\n%s", notices[0].NotificationType, out)
 		}
-		if !strings.Contains(out, "hit: ") && !strings.Contains(out, "timed out: ") {
+		if !strings.Contains(out, " limit: ") && !strings.Contains(out, "timed out: ") {
 			t.Errorf("%s: no sample line:\n%s", notices[0].NotificationType, out)
 		}
 	}
@@ -613,19 +617,63 @@ func TestExceptionsLastSeenKeepsItsTimeWhenSqueezed(t *testing.T) {
 	}
 }
 
-// How far back a cut sample reaches is the fact its counts depend on, so it
-// leads the line: on 80 columns, under a custom window with a long label, it
-// must still be on screen when the line is truncated.
-func TestSampleLineKeepsItsReachOnANarrowScreen(t *testing.T) {
+// The reach is nowhere else on the screen, so no width may cut it: not the
+// preview pane at its narrowest, and not a reach on another day, which is
+// longer by its date. Every width a terminal is likely to have is walked,
+// with the longest reason that carries a reach.
+func TestSampleLineKeepsItsReachAtEveryWidth(t *testing.T) {
 	pinSnapshotClock(t)
 	a := testApp(t, "exceptions")
-	from := time.Date(2026, 7, 15, 10, 0, 0, 0, time.UTC)
-	a.setTimeframe(catalog.AbsoluteTimeframe(from, from.Add(2*time.Hour), snapshotNow))
-	seedSample(t, a, manySpans(catalog.ExceptionSampleRows), nil)
-	for _, size := range snapshotSizes {
-		a.Update(tea.WindowSizeMsg{Width: size.w, Height: size.h})
-		if out := screen(a); !strings.Contains(out, "limit hit: newest 1000 exception spans, back to 11:43:20") {
-			t.Errorf("%dx%d: the sample line lost its reach:\n%s", size.w, size.h, out)
+	spans := manySpans(catalog.ExceptionSampleRows)
+	spans[len(spans)-1]["start_time"] = "2026-07-14T21:59:00Z"
+	seedSample(t, a, spans, warning("BYTE_LIMIT_ADDED", ""))
+	want := "size limit: newest 1000 exception spans back to " + catalog.FormatTime("2026-07-14T21:59:00Z")
+	if !strings.Contains(want, "Jul 14") {
+		t.Fatalf("the case lost its date: %q", want)
+	}
+	for width := 80; width <= 200; width++ {
+		a.Update(tea.WindowSizeMsg{Width: width, Height: 40})
+		if out := screen(a); !strings.Contains(out, want) {
+			t.Fatalf("%d columns: the sample line lost its reach:\n%s", width, out)
+		}
+	}
+}
+
+// The line's facts are read from the records, not from their order: spans
+// that arrive oldest first reach as far back as the same spans newest first.
+func TestSampleLineReachIsTheOldestTimeInAnyOrder(t *testing.T) {
+	pinSnapshotClock(t)
+	spec := catalog.Lookup("exceptions").Sample
+	spans := manySpans(5)
+	slices.Reverse(spans)
+	_, facts := takeSample(spec, "last 2h", spans, warning("BYTE_LIMIT_ADDED", ""), false)
+	if text, _ := facts.line(); !strings.HasPrefix(text, "size limit: newest 5 exception spans back to 11:59:55;") {
+		t.Errorf("line of spans delivered oldest first = %q", text)
+	}
+}
+
+// With two notices the line above the table and the footer name the same
+// reason, the gravest, in whichever order the notices arrive.
+func TestSampleLineAndFooterNameTheSameReason(t *testing.T) {
+	size := exec.QueryNotification{Severity: "WARNING", NotificationType: "BYTE_LIMIT_ADDED"}
+	scan := exec.QueryNotification{Severity: "WARNING", NotificationType: "SCAN_LIMIT_GBYTES"}
+	rows := exec.QueryNotification{Severity: "WARNING", NotificationType: "RESULT_LIMIT_RECORDS"}
+	for _, tc := range []struct {
+		notices      []exec.QueryNotification
+		line, footer string
+	}{
+		{[]exec.QueryNotification{size, scan}, "scan limit: 3 exception spans of what was scanned", "Grail scan limit reached"},
+		{[]exec.QueryNotification{scan, size}, "scan limit: 3 exception spans of what was scanned", "Grail scan limit reached"},
+		{[]exec.QueryNotification{rows, size}, "size limit: newest 3 exception spans", "truncated to the size limit"},
+		{[]exec.QueryNotification{size, rows}, "size limit: newest 3 exception spans", "truncated to the size limit"},
+		{[]exec.QueryNotification{rows}, "row limit: newest 3 exception spans", "truncated to the row limit"},
+	} {
+		a := testApp(t, "exceptions")
+		a.Update(tea.WindowSizeMsg{Width: 200, Height: 40})
+		seedSample(t, a, issueSpans(), tc.notices)
+		out := screen(a)
+		if !strings.Contains(out, tc.line) || !strings.Contains(out, tc.footer) {
+			t.Errorf("%v: want the line %q and the footer %q:\n%s", tc.notices, tc.line, tc.footer, out)
 		}
 	}
 }
@@ -683,7 +731,7 @@ func TestExceptionsFetchCommandCapsTheQueryAndReadsItsNotices(t *testing.T) {
 		t.Fatalf("the query ran with %+v, want one run with both caps", ran)
 	}
 	a.Update(msg)
-	if out := screen(a); !strings.Contains(out, "size limit hit: newest 412 exception spans, back to 11:53:08") {
+	if out := screen(a); !strings.Contains(out, "size limit: newest 412 exception spans back to 11:53:08") {
 		t.Errorf("the header does not name the size limit:\n%s", out)
 	}
 	// A failed fetch delivers its error and no sample.
@@ -710,7 +758,7 @@ func TestExceptionsLateResultOfAnEarlierRefreshIsDropped(t *testing.T) {
 	if tv.sample.fetched != 5 || len(tv.rows) != 1 {
 		t.Errorf("the late result replaced the current sample: %+v, %d rows", tv.sample, len(tv.rows))
 	}
-	if out := screen(a); !strings.Contains(out, "scan limit hit: 5 exception spans of what was scanned") {
+	if out := screen(a); !strings.Contains(out, "scan limit: 5 exception spans of what was scanned") {
 		t.Errorf("the line no longer describes the rows on screen:\n%s", out)
 	}
 }

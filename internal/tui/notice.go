@@ -17,38 +17,61 @@ type queryNotice struct {
 	warn bool   // WARNING/ERROR severity: the result may be PARTIAL/incomplete
 }
 
-// noticeFor picks the most actionable notice from a query's notifications, or
-// reports false when none warrant surfacing. dtctl's exec package owns the
-// same mapping for its CLI/agent output but keeps it unexported; the category
-// set (scan limit, result limit, fetch timeout, sampling, consumption limit)
-// mirrors exec.classifyNotification so the TUI and CLI stay in step; the size
-// limit is told apart from the row limit here only.
+// noticeFor picks the notice to show from a query's notifications, or
+// reports false when none warrant surfacing. Of several it takes the gravest
+// (gravestNotice), the one a sampled view's line above its table names too,
+// so the footer and that line never give two reasons for one result.
+//
+// The category set mirrors dtctl's exec.classifyNotification, which is
+// unexported, so the TUI and the CLI stay in step; exec.PartialCause and
+// exec.ResultIsPartial are its exported readers
+// (TestClassifyNoticeKnowsWhatDtctlCallsPartial). The size limit is told
+// apart from the row limit here only.
 func noticeFor(ns []exec.QueryNotification) (queryNotice, bool) {
-	for _, n := range ns {
-		if !noticeWarns(n) {
-			continue // INFO and below are noise in a one-line banner
-		}
-		switch classifyNotice(n.NotificationType, n.Message) {
-		case noticeScanLimit:
-			return queryNotice{warn: true,
-				text: "partial result — Grail scan limit reached; narrow the timeframe (t) to scan less"}, true
-		case noticeResultLimit:
-			return queryNotice{warn: true,
-				text: "result truncated to the row limit — narrow the timeframe (t) or add a filter"}, true
-		case noticeSizeLimit:
-			return queryNotice{warn: true,
-				text: "result truncated to the size limit — narrow the timeframe (t) or add a filter"}, true
-		case noticeTimeout:
-			return queryNotice{warn: true,
-				text: "fetch timed out — result may be incomplete; narrow the timeframe (t)"}, true
-		case noticeConsumption:
-			return queryNotice{warn: true,
-				text: "partial result — query consumption limit reached; narrow the timeframe (t) to read less"}, true
-		case noticeSampling:
-			return queryNotice{text: "results are sampled (approximate)"}, true
-		}
+	// INFO and below are noise in a one-line banner.
+	switch gravestNotice(ns, noticeWarns) {
+	case noticeScanLimit:
+		return queryNotice{warn: true,
+			text: "partial result — Grail scan limit reached; narrow the timeframe (t) to scan less"}, true
+	case noticeResultLimit:
+		return queryNotice{warn: true,
+			text: "result truncated to the row limit — narrow the timeframe (t) or add a filter"}, true
+	case noticeSizeLimit:
+		return queryNotice{warn: true,
+			text: "result truncated to the size limit — narrow the timeframe (t) or add a filter"}, true
+	case noticeTimeout:
+		return queryNotice{warn: true,
+			text: "fetch timed out — result may be incomplete; narrow the timeframe (t)"}, true
+	case noticeConsumption:
+		return queryNotice{warn: true,
+			text: "partial result — query consumption limit reached; narrow the timeframe (t) to read less"}, true
+	case noticeSampling:
+		return queryNotice{text: "results are sampled (approximate)"}, true
 	}
 	return queryNotice{}, false
+}
+
+// gravestNotice returns the category of the notice that says least about
+// what arrived, among those counts accepts (nil = all): a timeout or a scan
+// that stopped early before a consumption stop, that before the size and
+// the row limit, and sampling last. After a scan that stopped early the
+// records are not known to be the newest of the timeframe, whatever limit
+// also applied, so the order of the notifications must not decide.
+func gravestNotice(ns []exec.QueryNotification, counts func(exec.QueryNotification) bool) int {
+	rank := map[int]int{
+		noticeSampling: 1, noticeResultLimit: 2, noticeSizeLimit: 3,
+		noticeConsumption: 4, noticeScanLimit: 5, noticeTimeout: 6,
+	}
+	gravest := noticeNone
+	for _, n := range ns {
+		if counts != nil && !counts(n) {
+			continue
+		}
+		if c := classifyNotice(n.NotificationType, n.Message); rank[c] > rank[gravest] {
+			gravest = c
+		}
+	}
+	return gravest
 }
 
 // noticeWarns reports whether a notification is severe enough to act on.
@@ -61,8 +84,9 @@ func noticeWarns(n exec.QueryNotification) bool {
 }
 
 // partialNotice reports whether the notifications say the result may be
-// incomplete (scan limit, truncation, timeout, or consumption limit) — the callers that must not
-// react to an empty result as if the data simply weren't there.
+// incomplete (scan limit, truncation, timeout, or consumption limit) — for
+// the callers that must not react to an empty result as if the data simply
+// weren't there.
 func partialNotice(ns []exec.QueryNotification) bool {
 	n, ok := noticeFor(ns)
 	return ok && n.warn
