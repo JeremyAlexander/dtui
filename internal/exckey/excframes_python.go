@@ -95,7 +95,7 @@ func pythonModule(path string) string {
 // right of them. A frame may have several source lines or none, so the
 // columns tell the two apart. Only where the indentation was stripped does
 // the order have to: there the line after a frame is its source text.
-func pythonRootCause(lines []string) (frames []StackFrame, typ string) {
+func pythonRootCause(lines []string) (frames []StackFrame, typ string, atFault bool) {
 	chained := false // another exception follows the root's, or wraps it
 	after := false   // the line follows a frame directly
 	column := 0      // of the last frame, behind the gutter of a group
@@ -139,7 +139,7 @@ scan:
 	for i, j := 0, len(frames)-1; i < j; i, j = i+1, j-1 {
 		frames[i], frames[j] = frames[j], frames[i]
 	}
-	return frames, typ
+	return frames, typ, true
 }
 
 func pythonInApp(f StackFrame) bool {

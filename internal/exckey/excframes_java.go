@@ -263,7 +263,7 @@ type javaSection struct {
 // at least as deep as its first: Java indents a suppressed exception and its
 // causes one step further than the exception they belong to. A trace whose
 // indentation was stripped therefore ends at its first suppressed block.
-func javaRootCause(lines []string) (root []StackFrame, typ string) {
+func javaRootCause(lines []string) (root []StackFrame, typ string, atFault bool) {
 	var frames []StackFrame
 	sections := []javaSection{{more: -1, enclosing: -1}}
 	enclosing := -1  // the last section with frames or a "more" line
@@ -335,7 +335,7 @@ func javaRootCause(lines []string) (root []StackFrame, typ string) {
 		at--
 	}
 	if at < 0 {
-		return nil, ""
+		return nil, "", true
 	}
 	typ = sections[at].typ
 	root = make([]StackFrame, 0, sections[at].total)
@@ -353,7 +353,7 @@ func javaRootCause(lines []string) (root []StackFrame, typ string) {
 			need = sec.shared
 		}
 	}
-	return root, typ
+	return root, typ, true
 }
 
 func javaInApp(f StackFrame) bool {

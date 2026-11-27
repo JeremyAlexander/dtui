@@ -664,6 +664,86 @@ shop/internal/api.(*Handler).PostItem(0xc000012345, {0x7b2a40, 0xc0000a2000}, 0x
 	}
 }
 
+// Whether a trace is a panic's is read from the goroutine its frames come
+// from. A reporter that dumps every goroutine (runtime.Stack(buf, true))
+// prints the others too, and one of them may be in the deferred call of a
+// panic of its own. The dumps are a Go 1.26 program's.
+func TestGoPanicOfAnotherGoroutineIsNotTheErrors(t *testing.T) {
+	const alone = `goroutine 1 [running]:
+main.report({0x27ff77b1af28?, 0x1043c1a40?})
+	shop/main.go:11 +0x40
+main.main()
+	shop/main.go:27 +0x3c
+`
+	const beside = `goroutine 1 [running]:
+main.report({0x1044f79c8?, 0x0?})
+	shop/main.go:11 +0x40
+main.main()
+	shop/main.go:32 +0xfc
+
+goroutine 19 [chan receive]:
+main.worker.func1()
+	shop/main.go:19 +0x3c
+panic({0x1044dfd00?, 0x1045011c0?})
+	runtime/panic.go:860 +0x12c
+main.worker(0x0?, 0x0?)
+	shop/main.go:22 +0x5c
+created by main.main in goroutine 1
+	shop/main.go:30 +0xe0
+`
+	seen := func(stack string) ExceptionFingerprint {
+		return mustFingerprint(t, Event{Type: "*errors.errorString", Message: "cart 7 is locked", StackTrace: stack})
+	}
+	a, b := seen(alone), seen(beside)
+	if a.Rung != RungMessage || b.Rung != RungMessage || a.Key != b.Key {
+		t.Errorf("alone %s on rung %v, beside a panicking goroutine %s on rung %v (%+v)", a.Key, a.Rung, b.Key, b.Rung, b.Frames)
+	}
+	// The first goroutine's own panic still counts, with or without others.
+	const own = `goroutine 19 [running]:
+main.worker.func1()
+	shop/main.go:19 +0x3c
+panic({0x1044dfd00?, 0x1045011c0?})
+	runtime/panic.go:860 +0x12c
+main.worker(0x0?, 0x0?)
+	shop/main.go:22 +0x5c
+
+` + alone
+	if got := seen(own); got.Rung != RungAppFrames || !reflect.DeepEqual(got.Frames, frames(StackGo, "main", "worker")) {
+		t.Errorf("its own panic: rung %v, frames %+v", got.Rung, got.Frames)
+	}
+	// A crash header stands above the first goroutine, not somewhere in
+	// the lines of another.
+	const later = alone + "\ngoroutine 19 [running]:\npanic: not this goroutine's\nmain.worker(0x0?, 0x0?)\n\tshop/main.go:22 +0x5c\n"
+	if got := seen(later); got.Rung != RungMessage {
+		t.Errorf("a panic line of another goroutine: rung %v, frames %+v", got.Rung, got.Frames)
+	}
+	headerless := strings.TrimPrefix(alone, "goroutine 1 [running]:\n") + "panic: logged by something else\n"
+	if got := seen(headerless); got.Rung != RungMessage {
+		t.Errorf("a panic line below the frames: rung %v, frames %+v", got.Rung, got.Frames)
+	}
+}
+
+// The value of a panic may take several lines, and one of them may read
+// like a call. They end at the first empty line, and none is a frame.
+func TestGoPanicValueLinesAreNoFrames(t *testing.T) {
+	want := frames(StackGo, "main", "real", "main", "main")
+	for name, stack := range map[string]string{
+		"a call in the value":            "panic: bad state:\n\tshop.fake()\n\ngoroutine 1 [running]:\nmain.real(0x1)\n\t/app/main.go:9 +0x1d\nmain.main()\n\t/app/main.go:5 +0x25\n",
+		"a call with arguments":          "panic: bad state:\n\tshop.fake(0x1, 0x2)\n\ngoroutine 1 [running]:\nmain.real(0x1)\n\t/app/main.go:9 +0x1d\nmain.main()\n\t/app/main.go:5 +0x25\n",
+		"a fatal error":                  "fatal error: bad state:\nshop.fake(0x1)\n\ngoroutine 1 [running]:\nmain.real(0x1)\nmain.main()\n",
+		"no header below the value":      "panic: bad state:\n\tshop.fake(0x1)\n\nmain.real(0x1)\n\t/app/main.go:9 +0x1d\nmain.main()\n\t/app/main.go:5 +0x25\n",
+		"a signal line and no header":    "panic: runtime error: index out of range\n[signal SIGSEGV: segmentation violation]\n\nmain.real(0x1)\nmain.main()\n",
+		"no empty line above the header": "panic: bad state:\n\tshop.fake(0x1)\ngoroutine 1 [running]:\nmain.real(0x1)\nmain.main()\n",
+		"no line of a value":             "panic: bad state\nmain.real(0x1)\nmain.main()\n",
+		"lines above the crash header":   "2026/11/26 10:11:12 shutting down\npanic: bad state:\n\tshop.fake(0x1)\n\ngoroutine 1 [running]:\nmain.real(0x1)\nmain.main()\n",
+	} {
+		got := mustFingerprint(t, Event{Type: "panic", Message: "bad state", StackTrace: stack})
+		if got.Rung != RungAppFrames || !reflect.DeepEqual(got.Frames, want) {
+			t.Errorf("%s: rung %v, frames %+v, want %+v", name, got.Rung, got.Frames, want)
+		}
+	}
+}
+
 // An event that says nothing about an exception (no type, no message, no
 // stack) is not one to key on: it would give every such span one key, and
 // as the last event hide the real one before it.

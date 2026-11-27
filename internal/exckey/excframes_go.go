@@ -143,38 +143,25 @@ func goOwns(line string) bool {
 }
 
 // goRootCause returns the frames of the first goroutine, the one that
-// panicked, from the throw site down.
-func goRootCause(lines []string) ([]StackFrame, string) {
-	return goThrowSite(goFirstGoroutine(lines)), ""
+// panicked, from the throw site down, and whether the trace is a panic's.
+// A Go error carries no stack: a trace recorded next to one (debug.Stack in
+// a handler that logs it) says where the error was seen, and every error
+// that passes there has the same. A panic's trace starts where the fault
+// is. It shows by a panic entry of that goroutine: a frame of the runtime's
+// (isGoPanic), as a recovered trace has them, or the line a crash starts
+// with above it (goPanicHeaders). What another goroutine of the dump is
+// doing says nothing about this one.
+func goRootCause(lines []string) (frames []StackFrame, typ string, atFault bool) {
+	frames, atFault = goFirstGoroutine(lines)
+	for i := 0; i < len(frames) && !atFault; i++ {
+		atFault = isGoPanic(frames[i])
+	}
+	return goThrowSite(frames), "", atFault
 }
 
 // goPanicHeaders start the first line of a crash: a panic, or an error the
 // runtime does not let a program recover from.
 var goPanicHeaders = []string{"panic: ", "fatal error: "}
-
-// goAtFault reports whether a trace is a panic's. A Go error carries no
-// stack: a trace recorded next to one (debug.Stack in a handler that logs
-// it) says where the error was seen, and every error that passes there has
-// the same. A panic's trace starts where the fault is. It shows by a panic
-// entry: a frame of the runtime's (isGoPanic), as a recovered trace has
-// them, or the line a crash starts with (goPanicHeaders).
-func goAtFault(lines []string) bool {
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if hasAnyPrefix(line, goPanicHeaders) {
-			return true
-		}
-		// A panic entry is "panic(" or a function of package runtime; no
-		// other line needs reading as a frame.
-		if !strings.Contains(line, goPanicWord) && !strings.Contains(line, goRuntimePackage) {
-			continue
-		}
-		if f, ok := goFrame(line); ok && isGoPanic(f) {
-			return true
-		}
-	}
-	return false
-}
 
 // goThrowSite drops the frames above the throw site: the deferred calls that
 // ran while panicking, which are printed first, and the runtime's entry into
@@ -202,25 +189,52 @@ func isGoPanic(f StackFrame) bool {
 const (
 	// goPanicWord is the frame of the built-in, which has no package.
 	goPanicWord = "panic"
-	// goRuntimePackage starts the name of every function of the runtime.
+	// goRuntimePackage is what the name of every function of the runtime
+	// starts with.
 	goRuntimePackage = "runtime."
 )
 
 // goFirstGoroutine reads the frames up to the first header that follows
 // one: a dump may start without the header of the goroutine it is about.
-func goFirstGoroutine(lines []string) []StackFrame {
-	var out []StackFrame
+// crash reports whether the line a crash starts with stands above them. The
+// value of a panic follows that line and may take several, down to the
+// first empty line or the goroutine's header; a line of it is no frame,
+// though it may read like a call. Where that leaves no frame, the text was
+// joined some other way, and every line below the first is read.
+func goFirstGoroutine(lines []string) (out []StackFrame, crash bool) {
+	if out, crash = goGoroutineFrames(lines, true); crash && len(out) == 0 {
+		out, crash = goGoroutineFrames(lines, false)
+	}
+	return out, crash
+}
+
+// goGoroutineFrames is goFirstGoroutine for a panic's value of several
+// lines (multiline) or of one.
+func goGoroutineFrames(lines []string, multiline bool) (out []StackFrame, crash bool) {
 	framed := false // the line before was a frame; this one may be its file
+	value := false  // inside the value of a panic
+	headed := false // a goroutine header was read
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
+		header := strings.HasPrefix(line, goGoroutine) && goGoroutineRe.MatchString(line)
+		if value && !header {
+			value = line != ""
+			continue
+		}
+		value = false
+		if !headed && len(out) == 0 && hasAnyPrefix(line, goPanicHeaders) {
+			crash, value = true, multiline
+			continue
+		}
 		f, ok := goFrame(line)
 		switch {
 		case ok:
 			out = append(out, f)
-		case goGoroutineRe.MatchString(line):
+		case header:
 			if len(out) > 0 {
-				return out
+				return out, crash
 			}
+			headed = true
 		// Few file lines hold what shows a dependency; only those are read
 		// for where their path ends.
 		case framed && goDependencyRe.MatchString(line):
@@ -230,7 +244,7 @@ func goFirstGoroutine(lines []string) []StackFrame {
 		}
 		framed = ok
 	}
-	return out
+	return out, crash
 }
 
 func goInApp(f StackFrame) bool {

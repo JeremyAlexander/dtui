@@ -323,7 +323,7 @@ func countDigits(s string) int {
 // without a namespace at the start of one (dotnetInnerLineRe). An inner exception thrown without a stack has no
 // frames before the line that closes it, so the frames that follow belong
 // to the exception around it.
-func dotnetRootCause(lines []string) (frames []StackFrame, typ string) {
+func dotnetRootCause(lines []string) (frames []StackFrame, typ string, atFault bool) {
 	var inner []string // the types the arrows introduced, outermost first
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
@@ -350,7 +350,7 @@ func dotnetRootCause(lines []string) (frames []StackFrame, typ string) {
 	if len(inner) > 0 {
 		typ = inner[len(inner)-1]
 	}
-	return frames, typ
+	return frames, typ, true
 }
 
 func dotnetInApp(f StackFrame) bool {
