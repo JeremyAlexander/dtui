@@ -164,8 +164,12 @@ var (
 			Background(dual("#ffffff", "231", "15", "#000000", "16", "0"))
 	// FlameHit is a frame a search matched: a cool colour among the warm
 	// ones, and quieter than the cursor.
-	FlameHit = lipgloss.NewStyle().Foreground(Text).
-			Background(dual("#2e4f8f", "25", "4", "#b4c9f5", "153", "12"))
+	// At 16 colours a dark terminal has one blue to give, and it is the
+	// selection's (SelBg), which "the same function" is drawn on: a hit is
+	// black on cyan there.
+	FlameHit = lipgloss.NewStyle().
+			Foreground(dual("#cdd6f4", "253", "0", "#4c4f69", "239", "0")).
+			Background(dual("#2e4f8f", "25", "6", "#b4c9f5", "153", "12"))
 	// FlameSame is another call of the function the cursor is on: quieter
 	// than a search hit, so the two can be told apart.
 	FlameSame = lipgloss.NewStyle().Foreground(Text).Background(SelBg)

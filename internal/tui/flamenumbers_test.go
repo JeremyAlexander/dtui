@@ -14,6 +14,7 @@ import (
 
 	"github.com/dynatrace-oss/dtui/internal/tui/catalog"
 	"github.com/dynatrace-oss/dtui/internal/tui/flame"
+	"github.com/dynatrace-oss/dtui/internal/tui/theme"
 )
 
 // words is the screen as one line of words: a line of it may wrap.
@@ -284,5 +285,33 @@ func TestFlameTreeKeepsTheHeaviestStacksOfEveryState(t *testing.T) {
 	tree = flameTree(rows, len(states))
 	if got := tree.Path(1); len(got) != 1 || got[0] != "huge" {
 		t.Errorf("a stack whose sum is beyond an integer is not the heaviest: first %v", got)
+	}
+}
+
+// The marks of the graph are told apart by their colours at every colour
+// depth and on both backgrounds: a search hit is not "the same function",
+// and neither is the cursor or a caller of the zoom.
+func TestFlameMarksDifferAtEveryColourDepth(t *testing.T) {
+	oldProfile, oldDark := lipgloss.ColorProfile(), lipgloss.HasDarkBackground()
+	t.Cleanup(func() {
+		lipgloss.SetColorProfile(oldProfile)
+		lipgloss.SetHasDarkBackground(oldDark)
+	})
+	for _, profile := range []termenv.Profile{termenv.ANSI, termenv.ANSI256, termenv.TrueColor} {
+		for _, dark := range []bool{true, false} {
+			lipgloss.SetColorProfile(profile)
+			lipgloss.SetHasDarkBackground(dark)
+			marks := map[string]string{
+				"the cursor": theme.FlameSelected.Render("x"), "a search hit": theme.FlameHit.Render("x"),
+				"the same function": theme.FlameSame.Render("x"), "a caller of the zoom": theme.FlameCaller.Render("x"),
+			}
+			seen := map[string]string{}
+			for name, drawn := range marks {
+				if other, ok := seen[drawn]; ok {
+					t.Errorf("profile %d, dark %v: %s and %s are drawn alike (%q)", profile, dark, name, other, drawn)
+				}
+				seen[drawn] = name
+			}
+		}
 	}
 }
