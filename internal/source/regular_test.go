@@ -290,7 +290,7 @@ func TestScanFileSaysWhenItWasCutBeforeAnAnswer(t *testing.T) {
 			io.MultiReader(strings.NewReader("class Big {\n"), &filler{maxFileBytes}),
 			Match{Path: "Big.java", Line: 1, How: TypeOnly}, holds{}, read},
 	} {
-		m, has, how := scanFile(context.Background(), tc.content, Match{Path: tc.path}, tc.f, tc.pkg)
+		m, has, how := scanFile(context.Background(), tc.content, Match{Path: tc.path}, looking(tc.f, tc.pkg))
 		if m != tc.want || has != tc.has || how != tc.how {
 			t.Errorf("%s: %+v, %+v, reading %d; want %+v, %+v, reading %d", tc.name, m, has, how, tc.want, tc.has, tc.how)
 		}
@@ -305,11 +305,11 @@ func TestResolveCountsAFileCutBeforeAnAnswer(t *testing.T) {
 		"cmd/b/main.go": "package main\n",
 		"cmd/c/main.go": "package main\n",
 	}))
-	found := ix.resolve(context.Background(), Parse("main.main"), func(ctx context.Context, rel string, f Frame, pkg string) (Match, holds, reading) {
+	found := ix.resolve(context.Background(), Parse("main.main"), func(ctx context.Context, rel string, look *lookFor) (Match, holds, reading) {
 		if rel == "cmd/b/main.go" {
 			return Match{Path: rel}, holds{}, partly
 		}
-		return ix.locate(ctx, rel, f, pkg)
+		return ix.locate(ctx, rel, look)
 	})
 	if len(found.Matches) != 1 || found.Matches[0].Path != "cmd/a/main.go" || found.Unread != 1 || found.Late {
 		t.Errorf("%+v; want the first file and 1 unread", found)
@@ -428,14 +428,14 @@ func TestScanFileStopsWhenTheTimeRunsOut(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	src := &cancelling{r: strings.NewReader(content), cancel: cancel}
-	m, has, how := scanFile(ctx, src, Match{Path: "main.go"}, f, "main")
+	m, has, how := scanFile(ctx, src, Match{Path: "main.go"}, looking(f, "main"))
 	if how != cut || m != (Match{Path: "main.go"}) || has != (holds{}) {
 		t.Errorf("out of time: %+v, %+v, reading %d; want cut and no answer", m, has, how)
 	}
 	if src.reads != 1 {
 		t.Errorf("%d reads after the time ran out, want the one that was under way", src.reads)
 	}
-	m, has, how = scanFile(context.Background(), strings.NewReader(content), Match{Path: "main.go"}, f, "main")
+	m, has, how = scanFile(context.Background(), strings.NewReader(content), Match{Path: "main.go"}, looking(f, "main"))
 	if how != read || m != (Match{Path: "main.go", Line: 3, How: Declaration}) || has != (holds{function: true, pkg: true}) {
 		t.Errorf("in time: %+v, %+v, reading %d", m, has, how)
 	}
@@ -460,12 +460,12 @@ func (f *failing) Read(p []byte) (int, error) {
 func TestScanFileOnAReadThatFails(t *testing.T) {
 	f := Parse("main.main")
 	src := &failing{r: strings.NewReader("package main\n\nfunc main() {}\n"), err: errors.New("input/output error")}
-	m, has, how := scanFile(context.Background(), src, Match{Path: "main.go"}, f, "main")
+	m, has, how := scanFile(context.Background(), src, Match{Path: "main.go"}, looking(f, "main"))
 	if how != refused || m != (Match{Path: "main.go"}) || has != (holds{}) {
 		t.Errorf("a failed read: %+v, %+v, reading %d; want refused and no answer", m, has, how)
 	}
 	long := "package main\n\nfunc main() {}\n" + strings.Repeat("x", 1<<20+1) + "\nfunc main() {}\n"
-	m, has, how = scanFile(context.Background(), strings.NewReader(long), Match{Path: "main.go"}, f, "main")
+	m, has, how = scanFile(context.Background(), strings.NewReader(long), Match{Path: "main.go"}, looking(f, "main"))
 	if how != read || m != (Match{Path: "main.go", Line: 3, How: Declaration}) || has != (holds{function: true, pkg: true}) {
 		t.Errorf("a line too long: %+v, %+v, reading %d", m, has, how)
 	}
@@ -482,12 +482,12 @@ func TestResolveCountsTheFileTheTimeRanOutOn(t *testing.T) {
 	}))
 	f := Parse("main.main")
 	asked := []string{}
-	got, unread, late := parts(ix.resolve(context.Background(), f, func(ctx context.Context, rel string, f Frame, pkg string) (Match, holds, reading) {
+	got, unread, late := parts(ix.resolve(context.Background(), f, func(ctx context.Context, rel string, look *lookFor) (Match, holds, reading) {
 		asked = append(asked, rel)
 		if rel == "cmd/b/main.go" {
 			return Match{Path: rel}, holds{}, cut
 		}
-		return ix.locate(ctx, rel, f, pkg)
+		return ix.locate(ctx, rel, look)
 	}))
 	if len(got) != 1 || got[0].Path != "cmd/a/main.go" || unread != 3 || !late {
 		t.Errorf("%+v, %d unread, late %v; want the first file, 3 unread and late", got, unread, late)

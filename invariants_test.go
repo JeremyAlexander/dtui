@@ -5,9 +5,11 @@ import (
 	"go/parser"
 	"go/token"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -149,18 +151,28 @@ func TestCatalogIsFrameworkFree(t *testing.T) {
 	}
 }
 
+// flameImports is all the flame graph's model may import: the standard
+// library's arithmetic and text, the measure of a terminal cell, and of this
+// module the catalog, whose text helpers it shares with the tables. A list
+// of what is allowed is shorter than one of what is not, and does not have
+// to foresee the next package.
+var flameImports = map[string]bool{
+	"cmp": true, "math": true, "math/bits": true, "regexp": true, "slices": true, "strings": true,
+	"github.com/mattn/go-runewidth":      true,
+	modulePath + "/internal/tui/catalog": true,
+}
+
 // TestFlameIsFrameworkFree pins the flame graph's model as rules without a
-// screen (ADR-0023): no terminal framework, and of this module only the
-// catalog, whose text helpers it shares with the tables. What the graph
-// shows for a tree, a size and a key is then tested as plain values.
+// screen (ADR-0023): no terminal framework, no file, no clock. What the
+// graph shows for a tree, a size and a key is then tested as plain values.
 func TestFlameIsFrameworkFree(t *testing.T) {
 	seen := 0
 	for file, imports := range importsByFile(t, "internal/tui/flame") {
 		seen++
 		for _, imp := range imports {
-			if strings.HasPrefix(imp, "github.com/charmbracelet/") ||
-				(strings.HasPrefix(imp, modulePath+"/") && imp != modulePath+"/internal/tui/catalog") {
-				t.Errorf("%s imports %s: the flame model draws nothing; rendering and keys live in internal/tui", file, imp)
+			if !flameImports[imp] {
+				t.Errorf("%s imports %s: the flame model draws nothing and reads nothing (allowed: %v); rendering and keys live in internal/tui",
+					file, imp, slices.Sorted(maps.Keys(flameImports)))
 			}
 		}
 	}
@@ -169,17 +181,30 @@ func TestFlameIsFrameworkFree(t *testing.T) {
 	}
 }
 
+// sourceImports is all internal/source may import: text, time, and reading
+// files. Nothing in it starts a program or speaks to a network.
+var sourceImports = map[string]bool{
+	"bufio": true, "context": true, "errors": true, "fmt": true, "io": true, "io/fs": true, "net/url": true,
+	"os": true, "path": true, "path/filepath": true, "regexp": true, "slices": true, "strings": true, "time": true,
+}
+
+// sourceOSNames are the names internal/source may take from os: looking at
+// a path, and opening a file for reading. The package starts processes and
+// writes files too, so the import alone says too little.
+var sourceOSNames = map[string]bool{
+	"File": true, "Lstat": true, "Stat": true, "SameFile": true, "OpenFile": true, "O_RDONLY": true,
+}
+
 // sourceOpenFlags is the one file of internal/source that may import
-// syscall, and nonBlockingOpen the one name it may take from it: the flag
-// that keeps the open of a named pipe from waiting. The package holds
-// Exec and Kill too, so the import is not allowed anywhere else.
-const (
-	sourceOpenFlags = "internal/source/open_unix.go"
-	nonBlockingOpen = "O_NONBLOCK"
-)
+// syscall, and openFlagNames the names it may take from it: the flag that
+// keeps the open of a named pipe from waiting, and the one that keeps it
+// from following a link. The package holds Exec and Kill too.
+const sourceOpenFlags = "internal/source/open_unix.go"
+
+var openFlagNames = map[string]bool{"O_NONBLOCK": true, "O_NOFOLLOW": true}
 
 // TestSourceLookupRunsNothing pins what opening a frame's source may do
-// (ADR-0023): internal/source reads files and words a link. It starts no
+// (ADR-0024): internal/source reads files and words a link. It starts no
 // program, speaks to no network and knows neither Dynatrace nor a terminal
 // framework, so a frame's name, which is text from the environment, has
 // nothing to reach.
@@ -188,17 +213,25 @@ func TestSourceLookupRunsNothing(t *testing.T) {
 	for file, imports := range importsByFile(t, "internal/source") {
 		seen++
 		for _, imp := range imports {
-			if imp == "syscall" && filepath.ToSlash(file) == sourceOpenFlags {
-				for _, name := range namesTakenFrom(t, file, "syscall") {
-					if name != nonBlockingOpen {
-						t.Errorf("%s uses syscall.%s: of syscall, internal/source may name %s only", file, name, nonBlockingOpen)
-					}
-				}
+			allowed, names := sourceImports[imp], map[string]bool(nil)
+			switch {
+			case imp == "os":
+				names = sourceOSNames
+			case imp == "syscall" && filepath.ToSlash(file) == sourceOpenFlags:
+				allowed, names = true, openFlagNames
+			}
+			if !allowed {
+				t.Errorf("%s imports %s: internal/source only reads files under one directory and words a link (allowed: %v)",
+					file, imp, slices.Sorted(maps.Keys(sourceImports)))
 				continue
 			}
-			if imp == "os/exec" || imp == "syscall" || imp == "plugin" || imp == "net" || strings.HasPrefix(imp, "net/http") ||
-				isDtctlImport(imp) || strings.HasPrefix(imp, "github.com/charmbracelet/") || strings.HasPrefix(imp, modulePath+"/") {
-				t.Errorf("%s imports %s: internal/source only reads files under one directory and words a link", file, imp)
+			if names == nil {
+				continue
+			}
+			for _, name := range namesTakenFrom(t, file, imp) {
+				if !names[name] {
+					t.Errorf("%s uses %s.%s: of %s, internal/source may name %v only", file, imp, name, imp, slices.Sorted(maps.Keys(names)))
+				}
 			}
 		}
 	}

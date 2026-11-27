@@ -49,6 +49,30 @@ func TestParse(t *testing.T) {
 		{"Shop.Services.CartService..ctor", Frame{Notation: Dotted, Package: "Shop.Services", Type: "CartService", Function: ".ctor"}},
 		{"Shop.Services.CartService..cctor", Frame{Notation: Dotted, Package: "Shop.Services", Type: "CartService", Function: ".cctor"}},
 
+		// Go's standard library is spelled without a slash too, and is the
+		// runtime then as well: time.Now is not a script called time.
+		{"time.Now", Frame{Notation: Dotted, Type: "time", Function: "Now", Runtime: "the Go standard library"}},
+		{"runtime.main", Frame{Notation: Dotted, Type: "runtime", Function: "main", Runtime: "the Go standard library"}},
+		{"time.Time.Add", Frame{Notation: Dotted, Package: "time", Type: "Time", Function: "Add", Runtime: "the Go standard library"}},
+		{"io.example.tracing.Span.context", Frame{Notation: Dotted, Package: "io.example.tracing", Type: "Span", Function: "context"}},
+		// The JVM names a hidden class with an address after a slash: it is
+		// no import path.
+		{"com.example.shop.CartService$$Lambda$14/0x000000080012.run", Frame{Notation: Dotted, Package: "com.example.shop", Type: "CartService$$Lambda$14", Function: "run"}},
+		{"com.example.shop.CartService$$Lambda/0x000000080012.run(int)", Frame{Notation: Dotted, Package: "com.example.shop", Type: "CartService$$Lambda", Function: "run"}},
+		{"java.util.stream.ReferencePipeline$$Lambda$7/0x0000000800ab.accept", Frame{Notation: Dotted, Package: "java.util.stream", Type: "ReferencePipeline$$Lambda$7", Function: "accept", Runtime: "the JDK"}},
+		{"/app/src/0xbeef.js:run", Frame{Notation: Path, File: "/app/src/0xbeef.js", Function: "run"}},
+		{"example.com/shop/0xbeef.Run", Frame{Notation: Go, Package: "example.com/shop/0xbeef", Function: "Run"}},
+		// Type parameters hold slashes and dots of their own.
+		{"pkg.Process[*example.com/other/pkg.T]", Frame{Notation: Dotted, Type: "pkg", Function: "Process"}},
+		{"example.com/shop/pkg.Process[*example.com/other/pkg.T]", Frame{Notation: Go, Package: "example.com/shop/pkg", Function: "Process"}},
+		{"example.com/shop/pkg.Map[string,[]example.com/other/pkg.T].Get", Frame{Notation: Go, Package: "example.com/shop/pkg", Type: "Map", Function: "Get"}},
+		// A method value.
+		{"github.com/acme/shop/internal/cart.(*Service).AddItem-fm", Frame{Notation: Go, Package: "github.com/acme/shop/internal/cart", Type: "Service", Function: "AddItem"}},
+		// A script's frame with its parameters, and a file with brackets.
+		{"/app/src/handler.ts:resolve(req)", Frame{Notation: Path, File: "/app/src/handler.ts", Function: "resolve"}},
+		{"pages/[id].tsx:handler", Frame{Notation: Path, File: "pages/[id].tsx", Function: "handler"}},
+		{"src/a.js:(anonymous)", Frame{Notation: Path, File: "src/a.js", Function: "(anonymous)"}},
+
 		{"", Frame{}},
 		{"...", Frame{}},
 		{"a..b", Frame{Notation: Dotted, Type: "a", Function: "b"}},

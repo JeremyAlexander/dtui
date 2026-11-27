@@ -54,6 +54,12 @@ const (
 // Likely reports, without reading a file, whether the index has a file the
 // frame could be in.
 func (ix *Index) Likely(f Frame) bool {
+	// A Go frame is looked for in every Go file when no directory fits its
+	// package, so it has a candidate whenever the walk saw a Go file. That
+	// is asked for each frame the cursor rests on, and needs no list.
+	if f.Notation == Go && f.Runtime == "" {
+		return len(ix.goFiles) > 0
+	}
 	files, _ := ix.candidates(f)
 	return len(files) > 0
 }
@@ -81,15 +87,16 @@ type Found struct {
 // line the function is declared on. Reading stops after ResolveTime as
 // well, or when ctx ends.
 func (ix *Index) Resolve(ctx context.Context, f Frame) Found {
-	ctx, cancel := context.WithTimeout(ctx, maxResolveTime)
-	defer cancel()
 	return ix.resolve(ctx, f, ix.locate)
 }
 
-// resolve is Resolve within the time ctx leaves, reading each file with
-// locate.
-func (ix *Index) resolve(ctx context.Context, f Frame, locate func(context.Context, string, Frame, string) (Match, holds, reading)) (found Found) {
+// resolve is Resolve, reading each file with locate. The bound on its time
+// is its own: no caller can leave it out.
+func (ix *Index) resolve(ctx context.Context, f Frame, locate func(context.Context, string, *lookFor) (Match, holds, reading)) (found Found) {
+	ctx, cancel := context.WithTimeout(ctx, maxResolveTime)
+	defer cancel()
 	files, need := ix.candidates(f)
+	look := looking(f, need.pkg)
 	if len(files) > maxCandidates {
 		files, found.Unread = files[:maxCandidates], len(files)-maxCandidates
 	}
@@ -98,7 +105,7 @@ func (ix *Index) resolve(ctx context.Context, f Frame, locate func(context.Conte
 			found.Unread, found.Late = found.Unread+len(files)-i, true
 			break
 		}
-		m, has, how := locate(ctx, rel, f, need.pkg)
+		m, has, how := locate(ctx, rel, look)
 		if how == cut {
 			found.Unread, found.Late = found.Unread+len(files)-i, true
 			break
@@ -165,7 +172,7 @@ func (ix *Index) candidates(f Frame) (files []string, need needs) {
 		}
 		return files, need
 	case Go:
-		return ix.goFiles(f.Package), needs{function: true, pkg: goPackage(f.Package)}
+		return ix.goFilesOf(f.Package), needs{function: true, pkg: goPackage(f.Package)}
 	}
 	pkg := segments(f.Package, ".")
 	outer := f.OuterType()
@@ -213,7 +220,7 @@ func (ix *Index) candidates(f Frame) (files []string, need needs) {
 	// Go spelled without an import path: main.main. The runtime's own
 	// packages are spelled so too (runtime.main), and are not searched.
 	if f.Package == "" && !goStd[f.Type] {
-		return ix.goFiles(f.Type), needs{function: true, pkg: f.Type}
+		return ix.goFilesOf(f.Type), needs{function: true, pkg: f.Type}
 	}
 	return nil, needs{}
 }
@@ -237,8 +244,8 @@ var majorVersion = regexp.MustCompile(`^v[0-9]+$`)
 // no directory fits (package main, a module's root) leaves every Go file.
 // Either way a file must declare the frame's package and its function: a
 // library's function is not the application's of the same name.
-func (ix *Index) goFiles(pkg string) []string {
-	pool := slices.DeleteFunc(slices.Clone(ix.byExt[".go"]), func(rel string) bool { return strings.HasSuffix(rel, "_test.go") })
+func (ix *Index) goFilesOf(pkg string) []string {
+	pool := ix.goFiles
 	want := segments(pkg, "/")
 	if best, _ := bestBySuffix(pool, want, 1, func(rel string) []string { return segments(path.Dir(rel), "/") }); len(best) > 0 {
 		return best
@@ -303,7 +310,7 @@ const (
 // locate finds the frame's line in one file, and says whether the file
 // declares the function by name and the package pkg. Only a file that was
 // read has an answer.
-func (ix *Index) locate(ctx context.Context, rel string, f Frame, pkg string) (Match, holds, reading) {
+func (ix *Index) locate(ctx context.Context, rel string, look *lookFor) (Match, holds, reading) {
 	m := Match{Path: rel}
 	file, err := ix.open(rel)
 	if err != nil {
@@ -313,7 +320,7 @@ func (ix *Index) locate(ctx context.Context, rel string, f Frame, pkg string) (M
 		return m, holds{}, refused
 	}
 	defer file.Close()
-	return scanFile(ctx, file, m, f, pkg)
+	return scanFile(ctx, file, m, look)
 }
 
 // open opens a file of the index for reading, under what Abs and
@@ -323,22 +330,53 @@ func (ix *Index) open(rel string) (*os.File, error) {
 	if err != nil {
 		return nil, err
 	}
-	return openRegular(openNoWait, abs)
+	return openRegular(ix.opener, abs)
+}
+
+// lookFor is what one lookup looks for in each file it reads: the frame,
+// and the patterns of its package, its function and its type. The patterns
+// are made once for the lookup, and once per kind of file, not once for
+// every file read.
+type lookFor struct {
+	frame Frame
+	// pkg matches the line that declares the package; nil when the frame
+	// needs none.
+	pkg   *regexp.Regexp
+	byExt map[string]declared
+}
+
+// declared are the patterns of the lines that declare a frame's function
+// and its type in one kind of file; nil for what the frame has no name for.
+type declared struct{ function, typ *regexp.Regexp }
+
+// looking is what to look for in the files that may hold f, where a file
+// must declare the package pkg ("" for none).
+func looking(f Frame, pkg string) *lookFor {
+	look := &lookFor{frame: f, byExt: map[string]declared{}}
+	if pkg != "" {
+		look.pkg = compile(`^\s*(?:package|namespace|Namespace)\s+` + regexp.QuoteMeta(pkg) + `\s*[;{]?\s*(?://.*)?$`)
+	}
+	return look
+}
+
+// in are the patterns for a file of the extension.
+func (l *lookFor) in(ext string) declared {
+	d, ok := l.byExt[ext]
+	if !ok {
+		d = declared{function: declaration(ext, l.frame), typ: typeDeclaration(ext, l.frame)}
+		l.byExt[ext] = d
+	}
+	return d
 }
 
 // scanFile is locate for the content of the file m names. It reads up to
 // maxFileBytes of it and stops when ctx ends. A file that was cut before
 // the frame's function (or, for a frame without a name to look for, its
 // type) and the package were found has no answer.
-func scanFile(ctx context.Context, content io.Reader, m Match, f Frame, pkg string) (Match, holds, reading) {
-	var inPackage *regexp.Regexp
-	if pkg != "" {
-		inPackage = compile(`^\s*(?:package|namespace|Namespace)\s+` + regexp.QuoteMeta(pkg) + `\s*[;{]?\s*(?://.*)?$`)
-	}
-	pkgSeen := false
-
-	ext := strings.ToLower(path.Ext(m.Path))
-	function, typ := declaration(ext, f), typeDeclaration(ext, f)
+func scanFile(ctx context.Context, content io.Reader, m Match, look *lookFor) (Match, holds, reading) {
+	inPackage, pkgSeen := look.pkg, false
+	in := look.in(strings.ToLower(path.Ext(m.Path)))
+	function, typ := in.function, in.typ
 	found, typeLine := 0, 0
 	limited := &bounded{ctx: ctx, r: content, left: maxFileBytes}
 	scan := bufio.NewScanner(limited)

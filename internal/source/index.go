@@ -27,10 +27,16 @@ var DefaultLimits = Limits{Entries: 300_000, Files: 60_000, Time: 3 * time.Secon
 // skipped are directories whose files are not the application's source:
 // dependencies, build output and tool state. Hidden directories are skipped
 // as well.
-var skipped = map[string]bool{
-	"node_modules": true, "vendor": true, "target": true, "build": true, "dist": true, "out": true,
-	"bin": true, "obj": true, "__pycache__": true, "venv": true, "site-packages": true, "bower_components": true,
-}
+var skipped = func() map[string]bool {
+	skip := map[string]bool{
+		"target": true, "build": true, "dist": true, "out": true, "bin": true, "obj": true, "__pycache__": true, "venv": true,
+	}
+	// What a label is refused for is not indexed either.
+	for dir := range dependencies {
+		skip[dir] = true
+	}
+	return skip
+}()
 
 // extensions are the files the index keeps, by what reads them.
 var extensions = map[string]bool{
@@ -47,9 +53,16 @@ var extensions = map[string]bool{
 type Index struct {
 	root string
 	// byName holds the root-relative, slash-separated paths by file name,
-	// and byExt by extension.
+	// and byExt by extension. The extension is in lower case in both keys,
+	// whatever the file's own is: CartService.JAVA is found as
+	// CartService.java.
 	byName, byExt map[string][]string
 	known         map[string]bool
+	// goFiles are the Go files that are not tests, which is where a Go
+	// frame is looked for.
+	goFiles []string
+	// opener is what a file of the index is opened with.
+	opener opener
 	// Partial says why the walk stopped early; "" when it saw everything.
 	Partial string
 }
@@ -74,7 +87,8 @@ var (
 // before it and is looked in.
 func Root(dir, home string) (string, error) {
 	return rootIn(dir, home, func(p string) bool {
-		_, err := os.Lstat(p)
+		// The entry is followed: a link to nothing is no repository.
+		_, err := os.Stat(p)
 		return err == nil
 	})
 }
@@ -126,12 +140,15 @@ func Scan(ctx context.Context, root string, lim Limits) (*Index, error) {
 	if err != nil {
 		return nil, fmt.Errorf("source directory: %w", err)
 	}
-	ix := &Index{root: root, byName: map[string][]string{}, byExt: map[string][]string{}, known: map[string]bool{}}
+	ix := &Index{root: root, byName: map[string][]string{}, byExt: map[string][]string{}, known: map[string]bool{}, opener: openNoWait}
 	deadline := time.Now().Add(lim.Time)
 	entries := 0
 	stop := errors.New("stop")
 	err = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
+			if p == root {
+				return err // nothing of it was read: that is no empty repository
+			}
 			if d != nil && d.IsDir() {
 				return fs.SkipDir // unreadable: not ours to index
 			}
@@ -143,8 +160,6 @@ func Scan(ctx context.Context, root string, lim Limits) (*Index, error) {
 			ix.Partial = "the search was interrupted"
 		case entries > lim.Entries:
 			ix.Partial = fmt.Sprintf("more than %d files and directories", lim.Entries)
-		case len(ix.known) >= lim.Files:
-			ix.Partial = fmt.Sprintf("more than %d source files", lim.Files)
 		case entries%512 == 0 && time.Now().After(deadline):
 			ix.Partial = fmt.Sprintf("reading the directory took more than %s", lim.Time)
 		}
@@ -166,10 +181,20 @@ func Scan(ctx context.Context, root string, lim Limits) (*Index, error) {
 		if err != nil {
 			return nil
 		}
+		// Partial only when a file is left out: a directory that holds
+		// exactly as many as are kept was seen whole.
+		if len(ix.known) >= lim.Files {
+			ix.Partial = fmt.Sprintf("more than %d source files", lim.Files)
+			return stop
+		}
 		rel = filepath.ToSlash(rel)
-		ix.byName[name] = append(ix.byName[name], rel)
+		key := name[:len(name)-len(ext)] + ext
+		ix.byName[key] = append(ix.byName[key], rel)
 		ix.byExt[ext] = append(ix.byExt[ext], rel)
 		ix.known[rel] = true
+		if ext == ".go" && !strings.HasSuffix(key, "_test.go") {
+			ix.goFiles = append(ix.goFiles, rel)
+		}
 		return nil
 	})
 	if err != nil && !errors.Is(err, stop) {

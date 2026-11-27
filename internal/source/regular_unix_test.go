@@ -125,3 +125,54 @@ func TestOpenRegularDoesNotOpenANamedPipe(t *testing.T) {
 		}
 	})
 }
+
+// A file that became a link between the look at it and the open is not
+// opened: the open itself refuses to follow the last step of the path.
+func TestOpenSameDoesNotFollowALink(t *testing.T) {
+	root := tree(t, map[string]string{"a.go": "package a\n"})
+	outside := filepath.Join(t.TempDir(), "secret")
+	if err := os.WriteFile(outside, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	a := filepath.Join(root, "a.go")
+	seen, err := os.Lstat(a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(a); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, a); err != nil {
+		t.Skip("no symbolic link here:", err)
+	}
+	opened := false
+	file, err := openSame(func(abs string) (*os.File, error) {
+		f, err := openNoWait(abs)
+		opened = err == nil
+		return f, err
+	}, a, seen)
+	if file != nil || opened || !errors.Is(err, syscall.ELOOP) {
+		t.Errorf("the link was opened (%v) before it was refused: %v", opened, err)
+	}
+}
+
+// What an index opens with does not wait: a file that became a named pipe
+// after the look at it is refused at once.
+func TestIndexOpensWithoutWaiting(t *testing.T) {
+	root := tree(t, map[string]string{"a.go": "package a\n"})
+	ix := scan(t, root)
+	real := ix.opener
+	var pipe string
+	ix.opener = func(abs string) (*os.File, error) {
+		pipe = pipeAt(t, root, "a.go")
+		return real(abs)
+	}
+	within(t, filepath.Join(root, "a.go"), func() {
+		if file, err := ix.open("a.go"); !errors.Is(err, errNotRegular) {
+			t.Errorf("a named pipe is opened: %v, %v", file, err)
+		}
+	})
+	if pipe == "" {
+		t.Fatal("the index did not open with its opener")
+	}
+}

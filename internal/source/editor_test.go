@@ -53,8 +53,8 @@ func TestEditorLink(t *testing.T) {
 		"cursor":          "cursor://file/home/dev/shop/src/Cart%20Service%231%3F.java:42",
 		"windsurf":        "windsurf://file/home/dev/shop/src/Cart%20Service%231%3F.java:42",
 		"zed":             "zed://file/home/dev/shop/src/Cart%20Service%231%3F.java:42",
-		"idea":            "idea://open?file=%2Fhome%2Fdev%2Fshop%2Fsrc%2FCart+Service%231%3F.java&line=42",
-		"goland":          "goland://open?file=%2Fhome%2Fdev%2Fshop%2Fsrc%2FCart+Service%231%3F.java&line=42",
+		"idea":            "idea://open?file=%2Fhome%2Fdev%2Fshop%2Fsrc%2FCart%20Service%231%3F.java&line=42",
+		"goland":          "goland://open?file=%2Fhome%2Fdev%2Fshop%2Fsrc%2FCart%20Service%231%3F.java&line=42",
 		"sublime":         "subl://open?url=file%3A%2F%2F%2Fhome%2Fdev%2Fshop%2Fsrc%2FCart%2520Service%25231%253F.java&line=42",
 		"textmate":        "txmt://open?url=file%3A%2F%2F%2Fhome%2Fdev%2Fshop%2Fsrc%2FCart%2520Service%25231%253F.java&line=42",
 	} {

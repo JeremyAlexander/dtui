@@ -151,7 +151,9 @@ func (e Editor) link(slashed string, line int) string {
 	escaped := escapePath(slashed)
 	switch e.form {
 	case formOpen:
-		link := e.scheme + "://open?file=" + url.QueryEscape(slashed)
+		// A space is %20 and not the + of a form: a handler that reads the
+		// query as a plain URI keeps a + for what it is.
+		link := e.scheme + "://open?file=" + strings.ReplaceAll(url.QueryEscape(slashed), "+", "%20")
 		if line > 0 {
 			link += fmt.Sprintf("&line=%d", line)
 		}

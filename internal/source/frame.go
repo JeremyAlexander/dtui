@@ -76,13 +76,17 @@ var scripts = []string{".js", ".mjs", ".cjs", ".jsx", ".ts", ".mts", ".cts", ".t
 // Parse takes a label apart. It never fails: a label it cannot read has the
 // notation Unknown.
 func Parse(label string) Frame {
+	if f, ok := parsePath(label); ok {
+		return f
+	}
+	label = withoutHiddenClassAddress(label)
 	// A parameter list, which Go's (*Type) receiver is not.
 	if i := strings.IndexByte(label, '('); i > 0 && !strings.HasPrefix(label[i:], "(*") && !strings.Contains(label[:i], "/") {
 		label = label[:i]
 	}
-	if f, ok := parsePath(label); ok {
-		return f
-	}
+	// Type parameters hold dots and slashes of their own ([go.shape.int],
+	// [*example.com/pkg.T]): they say nothing of where the frame is.
+	label = withoutTypeParameters(label)
 	if strings.Contains(label, "/") || strings.Contains(label, "(*") {
 		return parseGo(label)
 	}
@@ -106,7 +110,62 @@ func Parse(label string) Frame {
 			f.Runtime = r.name
 		}
 	}
+	// Go's standard library spelled without a slash: time.Now, runtime.main,
+	// time.Time.Add. Only a package of one name is taken for it, so that
+	// io.example.Type.method stays an application's.
+	if std := f.Package; (std == "" && goStd[f.Type]) || goStd[std] {
+		f.Runtime = goStdName
+	}
 	return f
+}
+
+const goStdName = "the Go standard library"
+
+// withoutHiddenClassAddress drops the address the JVM appends to the name of
+// a hidden class (CartService$$Lambda$14/0x000000080012.run): the slash is
+// no import path's.
+func withoutHiddenClassAddress(label string) string {
+	at := strings.Index(label, "/0x")
+	if at < 0 || !strings.Contains(label[:at], "$") {
+		return label
+	}
+	end := at + len("/0x")
+	for end < len(label) && isHex(label[end]) {
+		end++
+	}
+	if end == at+len("/0x") || (end < len(label) && label[end] != '.') {
+		return label
+	}
+	return label[:at] + label[end:]
+}
+
+func isHex(c byte) bool {
+	return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
+}
+
+// withoutTypeParameters drops every bracketed list of a label, nested ones
+// with the list they are in. A label whose brackets do not pair is left as
+// it is.
+func withoutTypeParameters(label string) string {
+	if !strings.Contains(label, "[") {
+		return label
+	}
+	var b strings.Builder
+	depth := 0
+	for i := 0; i < len(label); i++ {
+		switch c := label[i]; {
+		case c == '[':
+			depth++
+		case c == ']' && depth > 0:
+			depth--
+		case depth == 0:
+			b.WriteByte(c)
+		}
+	}
+	if depth != 0 {
+		return label
+	}
+	return b.String()
 }
 
 // cutLast cuts s at its last sep; without one, all of s is after it.
@@ -123,6 +182,10 @@ func parsePath(label string) (Frame, bool) {
 		return Frame{}, false
 	}
 	file, function := label[:i], label[i+1:]
+	// A parameter list after the name; "(anonymous)" is a name.
+	if open := strings.IndexByte(function, '('); open > 0 && strings.HasSuffix(function, ")") {
+		function = function[:open]
+	}
 	if strings.HasPrefix(file, "node:") {
 		return Frame{Notation: Path, File: file, Function: function, Runtime: "Node.js"}, true
 	}
@@ -149,13 +212,8 @@ func parseGo(label string) Frame {
 		return Frame{}
 	}
 	f := Frame{Notation: Go, Package: label[:slash+1+dot]}
-	rest := label[slash+1+dot+1:]
-	// Type parameters hold dots of their own: [go.shape.int].
-	if open := strings.IndexByte(rest, '['); open >= 0 {
-		if end := strings.IndexByte(rest[open:], ']'); end >= 0 {
-			rest = rest[:open] + rest[open+end+1:]
-		}
-	}
+	// A method value is named after its method: AddItem-fm.
+	rest := strings.TrimSuffix(label[slash+1+dot+1:], "-fm")
 	parts := strings.Split(rest, ".")
 	// Closures are named after the function they are in: F.func1, F.func1.2.
 	for len(parts) > 1 && closure(parts[len(parts)-1]) {
@@ -172,7 +230,7 @@ func parseGo(label string) Frame {
 		return Frame{}
 	}
 	if first, _, _ := strings.Cut(f.Package, "/"); goStd[first] {
-		f.Runtime = "the Go standard library"
+		f.Runtime = goStdName
 	}
 	return f
 }
