@@ -143,11 +143,44 @@ var (
 	msgControlRe = regexp.MustCompile(`\x1b\[[0-?]*[ -/]*[@-~]|[\x00-\x08\x0b\x0e-\x1f\x7f]`)
 )
 
+// msgUnits are the units a number may carry without a space: of time, of
+// size and of rate. Letters behind a number are part of it only where they
+// are one of these, in any case: "250ms" is a number, and "2fa", "3ds",
+// "4xx" and "404Err" are words, which stay. The micro sign has two
+// spellings, U+00B5 and the Greek letter U+03BC.
+var msgUnits = []string{
+	"ns", "us", "\u00b5s", "\u03bcs", "ms", "s", "sec", "secs", "msec", "m", "min", "mins", "h", "hr", "hrs", "d",
+	"b", "kb", "mb", "gb", "tb", "kib", "mib", "gib", "tib", "k", "g",
+	"bps", "kbps", "mbps", "gbps", "rps", "qps", "hz", "khz", "mhz", "ghz",
+}
+
+// msgNumberText is a number with an optional unit ("250ms", "12.5secs",
+// "1.5µs"), or a run of them without a space ("1m0s", "2h45m30.5s").
+var msgNumberText = `(?:\d+(?:\.\d+)?` + msgUnitText + `)*\d+(?:\.\d+)?` + msgUnitText + `?`
+
+// msgUnitText matches one of msgUnits. Each ASCII letter is written in both
+// cases: matching without regard to case would also take the kelvin sign
+// for k and "ſ" for s.
+var msgUnitText = func() string {
+	var b strings.Builder
+	b.WriteString("(?:")
+	for i, unit := range msgUnits {
+		if i > 0 {
+			b.WriteByte('|')
+		}
+		for _, r := range unit {
+			if r < utf8.RuneSelf {
+				b.WriteString("[" + strings.ToLower(string(r)) + strings.ToUpper(string(r)) + "]")
+			} else {
+				b.WriteRune(r)
+			}
+		}
+	}
+	b.WriteString(")")
+	return b.String()
+}()
+
 const (
-	// msgNumberText is a number with an optional unit of up to seven
-	// letters ("250ms", "12.5secs", "1.5µs"), or a run of them without a
-	// space ("1m0s", "2h45m30.5s").
-	msgNumberText = `(?:\d+(?:\.\d+)?[A-Za-zµ]{1,7})*\d+(?:\.\d+)?[A-Za-zµ]{0,7}`
 	// msgNumberLeads are the characters a minus sign may follow, as
 	// msgNumberRe lists them.
 	msgNumberLeads = " \t\n\f\r=:([,;"
