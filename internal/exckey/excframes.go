@@ -174,7 +174,8 @@ const (
 	// one a trace is in.
 	stackVoteLines = 16
 	// stackTextMax caps how much of a trace is read, far above what a
-	// runtime prints: the text is cut at the last line that ends inside it.
+	// runtime prints: the text is cut at the last line that ends inside it
+	// (stackLines).
 	stackTextMax = 1 << 20
 	// stackLineMax is the longest line that can be a frame. A longer one is
 	// read as an empty line.
@@ -200,16 +201,24 @@ const stackWordEnds = " \t\"'("
 // without any line break whose breaks arrived escaped (a backslash and an
 // "n") is split at those instead. Only an escaped break followed by
 // indentation shows that this happened: a backslash and an "n" alone are
-// also part of "C:\app\node_modules".
+// also part of "C:\app\node_modules". Real breaks at the ends of the text,
+// which a shipper of logs adds, say nothing about the ones inside it.
+//
+// The text is cut to stackTextMax bytes as it arrived, before any pass over
+// it, and the line the cut goes through is not read.
 func stackLines(stack string) []string {
-	if !strings.ContainsAny(stack, "\r\n") && (strings.Contains(stack, `\n `) || strings.Contains(stack, `\n\t`)) {
+	cut := len(stack) > stackTextMax
+	if cut {
+		stack = stack[:stackTextMax]
+	}
+	if !strings.ContainsAny(strings.Trim(stack, "\r\n"), "\r\n") && (strings.Contains(stack, `\n `) || strings.Contains(stack, `\n\t`)) {
 		stack = unescapeBreaks(stack)
 	}
 	if strings.Contains(stack, "\r") {
 		stack = stackLineBreaks.Replace(stack)
 	}
-	if len(stack) > stackTextMax {
-		stack = stack[:strings.LastIndexByte(stack[:stackTextMax], '\n')+1]
+	if cut {
+		stack = stack[:strings.LastIndexByte(stack, '\n')+1]
 	}
 	lines := strings.Split(stack, "\n")
 	for i, line := range lines {
@@ -223,7 +232,8 @@ func stackLines(stack string) []string {
 // unescapeBreaks turns escaped line breaks and tabs into real ones. Inside
 // a Windows path a backslash before an "n", an "r" or a "t" separates two
 // directories ("C:\app\node_modules", "C:\src\tools"), so there only a
-// break that indentation follows is one.
+// break that indentation follows is one. A path ends at a colon that is not
+// its drive's, which stands before a line number ("C:\app\cart.go:10").
 func unescapeBreaks(stack string) string {
 	var b strings.Builder
 	b.Grow(len(stack))
@@ -246,7 +256,7 @@ scan:
 		}
 		b.WriteByte(c)
 		i++
-		if strings.IndexByte(stackWordEnds, c) >= 0 {
+		if strings.IndexByte(stackWordEnds, c) >= 0 || c == ':' && i-word != len("C:") {
 			word = i
 		}
 	}

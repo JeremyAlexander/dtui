@@ -2203,6 +2203,85 @@ func TestEscapedBreaksLeaveWindowsPaths(t *testing.T) {
 	}
 }
 
+// An escaped trace is one whatever stands at its ends: a real line break
+// behind it, which a log shipper adds, does not make its breaks real.
+func TestEscapedTraceWithARealBreakAtItsEnds(t *testing.T) {
+	chain := "com.example.shop.CheckoutException: failed\n\tat com.example.shop.Api.post(Api.java:12)\n" +
+		"Caused by: java.lang.IllegalStateException: locked\n\tat com.example.shop.Cart.add(Cart.java:42)\n\t... 1 more"
+	escaped := strings.ReplaceAll(strings.ReplaceAll(chain, "\n", `\n`), "\t", `\t`)
+	want := ParseStackFrames(chain)
+	for _, stack := range []string{escaped + "\n", escaped + "\r\n", "\n" + escaped, escaped + "\n\n", escaped + `\n` + "\n"} {
+		if got := ParseStackFrames(stack); len(want) != 2 || !reflect.DeepEqual(got, want) {
+			t.Errorf("%q: %+v, want %+v", stack[len(stack)-12:], got, want)
+		}
+	}
+	// A real break inside it shows that the breaks are real.
+	if got := ParseStackFrames(escaped + "\n" + "\tat com.example.shop.Late.run(Late.java:1)"); len(got) != 1 {
+		t.Errorf("a real break inside: %+v", got)
+	}
+}
+
+// In an escaped trace a Windows path ends at the colon before its line
+// number, so the break behind the number is one.
+func TestEscapedBreaksBehindAWindowsPath(t *testing.T) {
+	escape := func(s string) string { return strings.ReplaceAll(strings.ReplaceAll(s, "\n", `\n`), "\t", `\t`) }
+	dump := "goroutine 1 [running]:\nshop/cart.Fail(0x1)\n\tC:\\app\\cart.go:10\nshop/cart.Checkout(0x1)\n\tC:\\app\\cart.go:20\nmain.main()\n\tC:\\app\\main.go:5"
+	if got, want := ParseStackFrames(escape(dump)), ParseStackFrames(dump); len(want) != 3 || !reflect.DeepEqual(got, want) {
+		t.Errorf("go dump: %+v, want %+v", got, want)
+	}
+	v8 := "Error: outer\n    at checkout (C:\\app\\src\\api.js:3:1) {\n  [cause]: Error: inner\n      at Cart.add (C:\\app\\src\\cart.js:10:5)\n}"
+	if got, want := ParseStackFrames(escape(v8)), ParseStackFrames(v8); len(want) == 0 || !reflect.DeepEqual(got, want) {
+		t.Errorf("v8 cause: %+v, want %+v", got, want)
+	}
+	v8 = "Error: x\n    at Cart.add (C:\\app\\src\\cart.js:10:5)\n[stack]: next\n    at run (C:\\app\\src\\new.js:1:2)"
+	if got, want := ParseStackFrames(escape(v8)), ParseStackFrames(v8); len(want) != 2 || !reflect.DeepEqual(got, want) {
+		t.Errorf("v8, a line at the first column: %+v, want %+v", got, want)
+	}
+	// The drive's colon ends nothing.
+	if got := unescapeBreaks(`at run (C:\app\new\tools.js:1:2)\n at x`); got != "at run (C:\\app\\new\\tools.js:1:2)\n at x" {
+		t.Errorf("unescaped %q", got)
+	}
+}
+
+// What is read of a trace is bounded before any pass over it: text past
+// the limit costs nothing.
+func TestStackTextIsCutBeforeItIsRead(t *testing.T) {
+	frame := `\n\tat com.example.shop.Cart.add(Cart.java:12)`
+	allocated := func(stack string) uint64 {
+		least := uint64(0)
+		for i := range 3 {
+			var before, after runtime.MemStats
+			runtime.ReadMemStats(&before)
+			got := ParseStackFrames(stack)
+			runtime.ReadMemStats(&after)
+			if len(got) != 1 {
+				t.Fatalf("%d frames, want one", len(got))
+			}
+			if a := after.TotalAlloc - before.TotalAlloc; i == 0 || a < least {
+				least = a
+			}
+		}
+		return least
+	}
+	head := "java.lang.IllegalStateException: locked" + frame + `\n\t`
+	atLimit := allocated(head + strings.Repeat(`\`, stackTextMax-len(head)))
+	if past := allocated(head + strings.Repeat(`\`, 8*stackTextMax)); past > atLimit*3/2 {
+		t.Errorf("%d bytes allocated for a trace at the limit, %d for eight times the text", atLimit, past)
+	}
+	// The cut is on the bytes that arrive, and the line it goes through is
+	// not read.
+	late := `\tat com.example.shop.Late.run(Late.java:1)\n`
+	past := `\tat com.example.shop.Past.run(Past.java:1)`
+	trace := func(n int) string { return head + strings.Repeat("x", n) + `\n` + late + past }
+	n := stackTextMax - len(trace(0)) + len(past)
+	if got := ParseStackFrames(trace(n)); len(got) != 2 {
+		t.Errorf("a frame whose line ends at byte %d: %d frames, want two", stackTextMax, len(got))
+	}
+	if got := ParseStackFrames(trace(n + 1)); len(got) != 1 {
+		t.Errorf("a frame whose line ends past byte %d: %d frames, want one", stackTextMax, len(got))
+	}
+}
+
 // A getter and a setter are functions of their own.
 func TestJavaScriptAccessors(t *testing.T) {
 	for line, want := range map[string]string{
