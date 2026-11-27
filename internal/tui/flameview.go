@@ -26,7 +26,7 @@ import (
 // flameHelp is the view's keys as the help overlay lists them. They are
 // flamelens's where dtui has not given the key another meaning.
 var flameHelp = []keyHint{
-	{"↑/k ↓/j", "caller / widest callee"},
+	{"↑/k ↓/j", "caller / heaviest callee"},
 	{"← →", "previous / next frame on the level, whoever called it"},
 	{"enter", "zoom into the selected frame"},
 	{"backspace", "zoom out one step"},

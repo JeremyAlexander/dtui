@@ -703,11 +703,19 @@ func TestFlameGraphExits(t *testing.T) {
 func TestFlameGraphFitsEveryTerminal(t *testing.T) {
 	a, _, fv, _ := openFlame(t)
 	answerFlame(a, fv, loadProfilingScenario(t, "stacks").Records, nil)
-	odd := stackRecords("2026-07-15T12:00:00Z", "日本語のメソッド;e\u0301te\u0301;a\x1b[31mb\nc 40,0", "日本語のメソッド;👨\u200d👩\u200d👧.run 30,0", "ab\u2764\ufe0f;x 30,0")
-	check := func(what string) {
+	// Another window than the recorded analysis: the same one would be
+	// taken for the analysis already shown, and not be drawn.
+	odd := stackRecords("2026-07-15T12:05:00Z", "日本語のメソッド;e\u0301te\u0301;a\x1b[31mb\nc 40,0", "日本語のメソッド;👨\u200d👩\u200d👧.run 30,0", "ab\u2764\ufe0f;x 30,0")
+	// Every state is looked at on the flame graph, at every size, and the
+	// sweep ends at a size that draws one: a key pressed on a screen too
+	// small for a graph is the app's, and esc there leaves the graph.
+	check := func(what string, holds func() bool) {
 		t.Helper()
-		for _, size := range []struct{ w, h int }{{40, 10}, {41, 11}, {57, 13}, {80, 24}, {120, 40}, {200, 60}, {400, 100}, {20, 5}, {4, 8}, {1, 8}} {
+		for _, size := range []struct{ w, h int }{{40, 10}, {41, 11}, {57, 13}, {80, 24}, {200, 60}, {400, 100}, {20, 5}, {4, 8}, {1, 8}, {120, 40}} {
 			a.Update(tea.WindowSizeMsg{Width: size.w, Height: size.h})
+			if a.top() != viewModel(fv) || !holds() {
+				t.Fatalf("%s at %dx%d: the flame graph is not shown in that state", what, size.w, size.h)
+			}
 			out := a.View()
 			lines := strings.Split(out, "\n")
 			if len(lines) != size.h {
@@ -718,26 +726,40 @@ func TestFlameGraphFitsEveryTerminal(t *testing.T) {
 					t.Errorf("%s at %dx%d: line %d is %d cells wide: %q", what, size.w, size.h, i, w, line)
 				}
 			}
+			// The tests draw without colour, so the frame as the terminal
+			// gets it holds no control sequence of dtui's own: one in it
+			// came from a label.
+			if strings.ContainsAny(out, "\x1b\r\t") {
+				t.Errorf("%s at %dx%d: a control character reached the terminal: %q", what, size.w, size.h, out)
+			}
 		}
 	}
-	check("the recorded analysis")
+	graph := func() bool { return fv.graph != nil && fv.err == nil }
+	check("the recorded analysis", func() bool { return graph() && fv.graph.Searching() })
 	for _, k := range []string{"esc", "down", "down", "down", "enter", "#"} {
 		press(a, flameKey(k))
 	}
-	check("zoomed and searched")
+	check("zoomed and searched", func() bool { return graph() && fv.graph.Zoomed() && fv.graph.Searching() })
 	press(a, key("/"))
-	check("typing a search")
+	check("typing a search", func() bool { return graph() && fv.typing })
 	press(a, key("esc"))
 	press(a, key("r"))
-	check("refreshing")
+	check("refreshing", func() bool { return fv.loading && !fv.typing })
 	answerFlame(a, fv, odd, nil)
-	check("odd labels")
-	if out := screen(a); strings.Contains(out, "\x1b") {
-		t.Error("a control sequence of a label reached the terminal")
+	check("odd labels", func() bool {
+		tree := fv.graph.Tree()
+		hostile := false
+		for n := flame.NodeID(1); int(n) < tree.Len(); n++ {
+			hostile = hostile || tree.Label(n) == "a\x1b[31mb\nc"
+		}
+		return graph() && !fv.loading && tree.Len() == 7 && hostile
+	})
+	if out := screen(a); !strings.Contains(out, "日本語のメソッド") {
+		t.Errorf("the odd labels are not drawn:\n%s", out)
 	}
 	press(a, key("r"))
 	answerFlame(a, fv, nil, errors.New(strings.Repeat("the environment failed on the analysis; ", 30)))
-	check("a failed analysis")
+	check("a failed analysis", func() bool { return fv.err != nil && !fv.loading })
 }
 
 // Without colour the first cell of a frame says what it is; with colour the
@@ -788,7 +810,15 @@ func TestSnapshotFlameGraph(t *testing.T) {
 		return a
 	}
 	t.Run("root", func(t *testing.T) {
-		assertSnapshots(t, "profiling-flame-root", open(t))
+		a := open(t)
+		// esc clears the search and stays on the function it found, far
+		// down the graph. The root is what this snapshot is of.
+		fv := a.top().(*flameView)
+		fv.graph.Reset()
+		if g := fv.graph; g.Selected() != flame.Root || g.Top() != 0 {
+			t.Fatalf("not at the root: %s", place(fv))
+		}
+		assertSnapshots(t, "profiling-flame-root", a)
 	})
 	t.Run("zoomed", func(t *testing.T) {
 		a := open(t)
@@ -810,33 +840,110 @@ func TestSnapshotFlameGraph(t *testing.T) {
 }
 
 // Every key the help overlay lists for the graph is one the view acts on,
-// and the overlay lists them.
+// and does what its row says. Each key is pressed from a place where it has
+// something to do, and what it did is looked at: none is excused.
 func TestFlameGraphHelpListsItsKeys(t *testing.T) {
 	a, fv := walkFlame(t)
 	press(a, key("?"))
 	out := strings.Join(strings.Fields(screen(a)), " ")
 	for _, h := range flameHelp {
-		if !strings.Contains(out, h.Desc) {
-			t.Errorf("the help overlay does not say %q", h.Desc)
+		if !strings.Contains(out, h.Key+" "+h.Desc) {
+			t.Errorf("the help overlay does not say %q for %q", h.Desc, h.Key)
 		}
 	}
 	press(a, key("esc"))
-	// The keys of the view itself: each changes the graph or says something.
-	for _, k := range []string{"down", "j", "right", "left", "enter", "backspace", "#", "n", "N", "]", "[", "k", "up", "G", "g", "pgdown", "pgup", "ctrl+f", "ctrl+b", "space"} {
-		fv.graph.Reset()
-		press(a, flameKey("down"))
-		press(a, flameKey("down"))
-		before := place(fv)
-		a.status = ""
-		press(a, flameKey(k))
-		acted := place(fv) != before || a.status != ""
-		paging := strings.HasPrefix(k, "pg") || strings.HasPrefix(k, "ctrl") || k == "space" || k == "g" || k == "G" || k == "left"
-		if !acted && !paging {
-			t.Errorf("%s did nothing", k)
+	g := func() *flame.Graph { return fv.graph }
+	sel := func() string { return strings.Join(g().Tree().Path(g().Selected()), ";") }
+	status := func(part string) func() bool {
+		return func() bool { return strings.Contains(a.status, part) }
+	}
+	pressed, top := map[string]bool{}, 0 // top is the first level in view before the key
+	for _, tc := range []struct {
+		key   string
+		after string // keys pressed first, from main;a at 120x40
+		did   func() bool
+		what  string
+	}{
+		{"down", "", func() bool { return sel() == "main;a;x" }, "move to the heaviest callee"},
+		{"j", "", func() bool { return sel() == "main;a;x" }, "move to the heaviest callee"},
+		{"up", "", func() bool { return sel() == "main" }, "move to the caller"},
+		{"k", "", func() bool { return sel() == "main" }, "move to the caller"},
+		{"right", "", func() bool { return sel() == "main;b" }, "move to the next frame"},
+		{"left", "right", func() bool { return sel() == "main;a" }, "move to the previous frame"},
+		{"enter", "", func() bool { return g().Zoomed() && sel() == "main;a" }, "zoom in"},
+		{"backspace", "enter", func() bool { return !g().Zoomed() }, "zoom out"},
+		{"#", "", func() bool { return g().SearchedFunction() == "a" }, "search for the function"},
+		{"n", "#", func() bool { return sel() == "other;a" }, "move to the next match"},
+		{"N", "# n", func() bool { return sel() == "main;a" }, "move to the previous match"},
+		{"]", "", func() bool { return g().Lens() == 1 }, "show the next thread state"},
+		{"[", "]", func() bool { return g().Lens() == 0 }, "show the thread state before"},
+		{"G", "small", func() bool { return top == 0 && g().Top() > 0 }, "show the last level"},
+		{"g", "small G", func() bool { return top > 0 && g().Top() == 0 }, "show the first level"},
+		{"pgdown", "small g", func() bool { return top == 0 && g().Top() > 0 }, "show the next screen of levels"},
+		{"ctrl+f", "small g", func() bool { return top == 0 && g().Top() > 0 }, "show the next screen of levels"},
+		{"space", "small g", func() bool { return top == 0 && g().Top() > 0 }, "show the next screen of levels"},
+		{"pgup", "small G", func() bool { return g().Top() < top }, "show the screen of levels before"},
+		{"ctrl+b", "small G", func() bool { return g().Top() < top }, "show the screen of levels before"},
+		{"P", "", func() bool { return a.ds.previewOff && !strings.Contains(screen(a), "callees ") }, "turn the details off"},
+		{"P", "P", func() bool { return !a.ds.previewOff && strings.Contains(screen(a), "callees ") }, "turn the details on"},
+		{"d", "", func() bool { return fv.detailsFirst }, "give the details the room"},
+		{"/", "", func() bool { return fv.typing }, "open the search line"},
+		{"esc", "/", func() bool { return !fv.typing && a.top() == viewModel(fv) }, "close the search line"},
+		{"esc", "# enter", func() bool { return !g().Searching() && g().Zoomed() }, "clear the search first"},
+		{"esc", "enter", func() bool { return !g().Zoomed() && a.top() == viewModel(fv) }, "clear the zoom"},
+		{"y", "", status("copied function"), "copy the function"},
+		{"c", "", status("copied: dtctl exec profiling hotspots"), "copy the command"},
+		{"O", "", status("looks for a frame's file"), "say where it looks for the source"},
+	} {
+		a.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+		a.ds.previewOff, fv.detailsFirst = false, false
+		g().Reset()
+		fv.scope.Lens = 0
+		g().SetLens(0)
+		for _, k := range strings.Fields("down down " + tc.after) {
+			if k == "small" {
+				a.Update(tea.WindowSizeMsg{Width: 120, Height: 10}) // not all four levels
+				continue
+			}
+			press(a, flameKey(k))
+		}
+		if sel() != "main;a" && tc.after == "" {
+			t.Fatalf("the fixture: at %s", place(fv))
+		}
+		a.status, top = "", g().Top()
+		press(a, flameKey(tc.key))
+		pressed[tc.key] = true
+		if !tc.did() {
+			t.Errorf("%s after %q did not %s: %s, status %q", tc.key, tc.after, tc.what, place(fv), a.status)
 		}
 		if a.top() != viewModel(fv) {
-			t.Fatalf("%s left the graph", k)
+			t.Fatalf("%s left the graph", tc.key)
 		}
+		if fv.typing {
+			press(a, key("esc"))
+		}
+	}
+	// Every key a row of the help names was pressed above.
+	for _, h := range flameHelp {
+		for _, k := range strings.FieldsFunc(h.Key, func(r rune) bool { return r == ' ' || r == '/' }) {
+			names := map[string][]string{"↑": {"up"}, "↓": {"down"}, "←": {"left"}, "→": {"right"}, "pgup": {"pgup"}, "dn": {"pgdown"}}
+			for _, name := range append(names[k], k)[:1] {
+				if !pressed[name] {
+					t.Errorf("the help names %q (%s), which the test does not press", k, h.Key)
+				}
+			}
+		}
+	}
+	for _, k := range []string{"ctrl+b", "ctrl+f", "space"} {
+		if !pressed[k] {
+			t.Errorf("%s is named in a description and not pressed", k)
+		}
+	}
+	// esc on a graph with no search and no zoom returns to the functions.
+	g().Reset()
+	press(a, key("esc"))
+	if _, ok := a.top().(*tableView); !ok {
+		t.Errorf("esc at the root shows %T", a.top())
 	}
 }
 

@@ -4,9 +4,11 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/mattn/go-runewidth"
 
 	"github.com/dynatrace-oss/dtui/internal/tui/catalog"
 	"github.com/dynatrace-oss/dtui/internal/tui/flame"
@@ -141,7 +143,37 @@ func (v *flameView) View(width, height int) string {
 	default:
 		v.renderGraph(&b, width)
 	}
-	return b.String()
+	return flameWithin(b.String(), width)
+}
+
+// flameWithin holds every line of a body to its width as the screen is
+// measured. The lines were cut to it already, but the cut the tables use
+// counts a cluster as the sum of its characters, and the screen's measure
+// counts some wider (a keycap is one cell by the first and two by the
+// second). One line that is too wide has the frame fill every other line out
+// to it. Such a line is cut again, shorter, until it fits.
+//
+// A cluster can only be wider than its characters where one of them has no
+// width of its own, so a body without such a character is returned as it is,
+// unmeasured: this runs on every paint.
+func flameWithin(body string, width int) string {
+	joins := func(s string) bool {
+		return strings.ContainsFunc(s, func(r rune) bool { return r >= 0x300 && runewidth.RuneWidth(r) == 0 })
+	}
+	if !joins(body) {
+		return body
+	}
+	lines := strings.Split(body, "\n")
+	for i, line := range lines {
+		if !joins(line) {
+			continue
+		}
+		for to := width - 1; to >= 0 && lipgloss.Width(line) > width; to-- {
+			line = ansi.Truncate(lines[i], to, "…")
+		}
+		lines[i] = line
+	}
+	return strings.Join(lines, "\n")
 }
 
 // stateStrip is the thread states with the one drawn marked, and at its
@@ -487,10 +519,22 @@ func (p *flamePaint) row(b *strings.Builder, cells []flame.Cell, level int) {
 		if !isASCII(text) {
 			// The model counts cells as the tables do; a terminal can count
 			// a rare cluster wider. Never let a frame push its level over.
-			text = pad(text, c.W-1)
+			text = fitCells(text, c.W-1)
 		}
 		b.WriteString(ink.on + edge + text + ink.off)
 	}
+}
+
+// fitCells is s in exactly w cells as the screen is measured: cut at its end
+// while it is wider, then filled with spaces. It is for text the model laid
+// out by the cell and the screen's measure counts wider, a keycap for one,
+// which the truncation the tables use lets through at its full width.
+func fitCells(s string, w int) string {
+	for len(s) > 0 && lipgloss.Width(s) > w {
+		_, size := utf8.DecodeLastRuneInString(s)
+		s = s[:len(s)-size]
+	}
+	return s + strings.Repeat(" ", max(w-lipgloss.Width(s), 0))
 }
 
 func isASCII(s string) bool {

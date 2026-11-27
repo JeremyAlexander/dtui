@@ -1,24 +1,24 @@
  ▛▞▟ dtui  ·  context:test  ·  ● readonly                               last 2h
  hotspots (shop-backend) › flame·running ──────────────────────────────────────
-  running   lock   net_io   disk_io   wait            levels 15 to 22 of 23 ▲ ▼
+  running   lock   net_io   disk_io   wait          levels 1 to 11 of 23 ▼ pgdn
  last 2h (10:00–12:00 UTC) · 77,631 running samples (stacks seen, not time) ·
  all threads, leaf: total
-   ▏▏addItem▏listPr…▏▏▏▏▏▏▏▏search  ▏▏▏▏writeInternal
-   ▏▏addItem▏findPr…▏▏▏▏▏▏▏▏query   ▏▏▏▏c.f.j.d.ObjectWriter.writeValue
-   ▏▏price…·▏▏toD…▏…·▏·▏▏▏▏▏…▏score ▏▏▏▏serializeValue
-    ▏a…▏▏   ·▏▏…  ▏…       ▏ ▏…▏…     ▏▏serializeContents
-    ▏        ▏    ▏…                  ▏▏c.f.j.d.s.BeanSerializer.serialize
-                  ▏…                  ▏▏serializeAsField                ▏
-                  ▏…                  ▏▏▏▏▏▏get…▏ge…▏▏…▏▏▏▏▏▏▏▏▏▏▏▏▏▏▏·
-                                       █▍▍▍▍wr… ▍w… ▍▍ ▍▏▏··▍▍▍▍▍▍·▍··
- ▸ com.fasterxml.jackson.core.json.UTF8JsonGenerator.writeString
-   self 52 · total 75 · 0.1% of all · 1 callee too narrow to draw (23 samples):
-   enter zooms in
-   package    com.fasterxml.jackson.core.json
-   type       UTF8JsonGenerator
-   function   writeString
-   self/total running 52/75 · lock 0/0 · net_io 0/0 · disk_io 0/0 · wait 0/0
-   depth      level 21 of 26
-   … 26 more lines: d gives the details the room
+█all
+▏java.lang.Thread.run
+▏r…▏org.apache.tomcat.util.threads.TaskThread$WrappingRunnable.run             ▏
+▏r…▏java.util.concurrent.ThreadPoolExecutor$Worker.run                         ▏
+▏r…▏org.apache.tomcat.util.net.NioEndpoint$SocketProcessor.doRun               ▏
+▏r…▏org.apache.coyote.http11.Http11Processor.service
+▏  ▏org.apache.catalina.connector.CoyoteAdapter.service                       ▏
+   ▏org.apache.catalina.core.StandardWrapperValve.invoke
+   ▏org.apache.catalina.core.ApplicationFilterChain.doFilter
+   ▏org.springframework.security.web.FilterChainProxy.doFilter
+   ▏com.example.shop.web.RequestIdFilter.doFilter                         ▏d…
+ ▸ every running stack of the process
+   self 0 · total 77,631 · 100.0% of all
+   samples    running 77,631 · lock 11,353 · net_io 56,681 · disk_io 3,190 ·
+              wait 227,600
+   depth      26 levels
+   starts in  100.0%  java.lang.Thread.run
  ↑↓←→ move  enter zoom  tab functions  / search  pgdn more levels  ? help
  ≡ dtctl exec profiling hotspots PROCESS-000000000000A001 --view stacks --show-…

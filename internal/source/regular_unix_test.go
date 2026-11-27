@@ -176,3 +176,37 @@ func TestIndexOpensWithoutWaiting(t *testing.T) {
 		t.Fatal("the index did not open with its opener")
 	}
 }
+
+// The file at a path is swapped for another regular file between the look
+// and the open: the same path, another file. It is refused, because the look
+// kept the file's device and inode. (TestOpenSameRefusesAnotherFile opens a
+// second path, which a comparison that reads the identity through the path
+// would refuse as well.) This is the half of the check Windows does not
+// have: there the identity of what was seen is read through the path, after
+// the swap, so the test is for Unix only.
+func TestOpenSameRefusesAFileSwappedInAtTheSamePath(t *testing.T) {
+	root := tree(t, map[string]string{"a.go": "package a\n", "other.go": "package other\n"})
+	a := filepath.Join(root, "a.go")
+	seen, err := os.Lstat(a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(filepath.Join(root, "other.go"), a); err != nil {
+		t.Fatal(err)
+	}
+	if now, err := os.Lstat(a); err != nil || !now.Mode().IsRegular() {
+		t.Fatalf("the fixture: %v, %v", now, err)
+	}
+	if file, err := openSame(openNoWait, a, seen); !errors.Is(err, errNotRegular) {
+		if file != nil {
+			file.Close()
+		}
+		t.Errorf("a file swapped in at the path that was seen is opened: %v", err)
+	}
+	// Seen again, it is the file there is.
+	file, err := openRegular(openNoWait, a)
+	if err != nil {
+		t.Fatalf("the file that is there now: %v", err)
+	}
+	file.Close()
+}

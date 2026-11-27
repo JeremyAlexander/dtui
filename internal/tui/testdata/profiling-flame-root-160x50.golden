@@ -2,7 +2,7 @@
  hotspots (shop-backend) › flame·running ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   running   lock   net_io   disk_io   wait                                                                                                            27 levels
  last 2h (10:00–12:00 UTC) · 77,631 running samples (stacks seen, not time) · all threads, leaf: total
-▏all
+█all
 ▏java.lang.Thread.run
 ▏run   ▏org.apache.tomcat.util.threads.TaskThread$WrappingRunnable.run                                                                                        ▏…
 ▏run   ▏java.util.concurrent.ThreadPoolExecutor$Worker.run                                                                                                    ▏▏
@@ -23,26 +23,26 @@
          ▏…               ▏…        ▏do…              ▏                   ▏  ▏ ▏com.fasterxml.jackson.databind.ser.BeanSerializer.serialize
                                     ▏li…              ▏                   ▏  ▏ ▏c.f.jackson.databind.ser.BeanPropertyWriter.serializeAsField    ▏…
                                     ▏▏n…              ▏                   ▏  ▏ ▏▏▏▏▏…▏▏getAttri…▏getDes…▏g…▏g…▏g…▏…▏▏▏▏▏▏▏▏▏▏▏▏▏▏▏▏…▏▏▏▏▏▏▏▏·
-                                    ▏                                          █▍▍▍▍…▍▏▍write…  ▏▍wri…  ▍… ▍… ▏▍ ▏▍▏··▍·▍▍▍▍▍▍·▍▍▍▍…▍·▍▍··▍·
+                                    ▏                                          ▏▏▏▏▏…▏▏▏write…  ▏▏wri…  ▏… ▏… ▏▏ ▏▏▏··▏·▏▏▏▏▏▏·▏▏▏▏…▏·▏▏··▏·
                                     ▏                                          ····▏ ▏ ▏…        ▏      ▏  ▏   ·  ·   ▏ ▏·▏·▏▏ ···▏ · ··  ▏
                                     ▏
                                     ▏
                                     ▏
                                     ▏
- ▸ com.fasterxml.jackson.core.json.UTF8JsonGenerator.writeString
-   self 52 · total 75 · 0.1% of all · 1 callee too narrow to draw (23 samples): enter zooms in
-   package    com.fasterxml.jackson.core.json                                                      callers     15.9%  c.e.s.catalog.dto.ProductDto.getAttributes
-   type       UTF8JsonGenerator                                                                                12.6%  c.e.s.c.dto.ProductDto.getDescription
-   function   writeString                                                                                       5.6%  c.e.shop.catalog.dto.ProductDto.getName
-   self/total running 52/75 · lock 0/0 · net_io 0/0 · disk_io 0/0 · wait 0/0                                  and 82 more
-   depth      level 21 of 26                                                                       callees     30.7%  …JsonGenerator._outputEscapedMultiByteChar
-   paths      85 call paths reach this function: total 19,223 (24.8% of all), self 13,321
-   stack      java.lang.Thread.run › TaskThread$WrappingRunnable.run › j.u.c.ThreadPoolExecutor$Worker.run › NioEndpoint$SocketProcessor.doRun ›
-              o.a.c.http11.Http11Processor.service › o.a.c.c.CoyoteAdapter.service › o.a.c.c.StandardWrapperValve.invoke › ApplicationFilterChain.doFilter ›
-              o.s.s.web.FilterChainProxy.doFilter › c.e.s.web.RequestIdFilter.doFilter › c.e.shop.web.TenantFilter.doFilter ›
-              o.s.w.s.DispatcherServlet.doDispatch › …dyMethodProcessor.handleReturnValue › …2HttpMessageConverter.writeInternal ›
-              c.f.j.d.ObjectWriter.writeValue › …ltSerializerProvider.serializeValue › …lectionSerializer.serializeContents ›
-              c.f.j.d.ser.BeanSerializer.serialize › BeanPropertyWriter.serializeAsField › c.e.s.account.dto.AccountDto.getId › UTF8JsonGenerator.writeString
+ ▸ every running stack of the process
+   self 0 · total 77,631 · 100.0% of all
+   samples    running 77,631 · lock 11,353 · net_io 56,681 · disk_io 3,190 · wait 227,600
+   depth      26 levels
+   starts in  100.0%  java.lang.Thread.run
+
+
+
+
+
+
+
+
+
 
 
 

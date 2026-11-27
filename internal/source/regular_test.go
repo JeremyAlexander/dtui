@@ -378,8 +378,10 @@ func TestBoundedStopsAtTheBoundOnAFileThatGrows(t *testing.T) {
 	if n != bound || err != io.EOF || !b.more {
 		t.Errorf("read %d bytes of a file that grows, %v, more %v; want %d, the end, and that there is more", n, err, b.more, bound)
 	}
-	if g.largest != readChunk {
-		t.Errorf("the largest read asked for %d bytes, want %d", g.largest, readChunk)
+	// The number itself, not the constant: the test is what says how much
+	// one read may ask for.
+	if g.largest != 65_536 {
+		t.Errorf("the largest read asked for %d bytes, want 65,536", g.largest)
 	}
 	if info, err := os.Stat(p); err != nil || info.Size() != readChunk+bound+1 {
 		t.Errorf("the file grew to %d bytes, %v; want what it held and what was read", info.Size(), err)
