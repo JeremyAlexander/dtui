@@ -166,15 +166,7 @@ type messageRule struct {
 // paths before the ids in their segments. A digit run is a number however
 // long it is, so hex needs a letter. Changing the order changes fingerprints.
 var messageRules = []messageRule{
-	{"sqlstate", func(s string) bool { return strings.ContainsAny(s, "\"'") && len(s) > msgCodeDigits }, func(s string) string {
-		return msgQuotedStateRe.ReplaceAllStringFunc(s, func(m string) string {
-			parts := msgQuotedStateRe.FindStringSubmatch(m)
-			if !isASCII(parts[1]) {
-				return m
-			}
-			return parts[1] + parts[2] + parts[3]
-		})
-	}},
+	{"sqlstate", func(s string) bool { return strings.ContainsAny(s, "\"'") && len(s) > msgCodeDigits }, unquoteStates},
 	{"quoted", func(s string) bool { return strings.ContainsAny(s, "\"'`") }, func(s string) string {
 		s = msgDoubleQuotedRe.ReplaceAllString(s, msgQuoted)
 		s = msgSingleQuotedRe.ReplaceAllString(s, msgQuoted)
@@ -250,6 +242,27 @@ func replaceFilePath(m string) string {
 		return lead + m
 	}
 	return lead + msgPath
+}
+
+// unquoteStates drops the quotes around a SQLSTATE behind its wording, where
+// that is ASCII (see msgNumberRe).
+func unquoteStates(s string) string {
+	var b strings.Builder
+	last := 0
+	for _, m := range msgQuotedStateRe.FindAllStringSubmatchIndex(s, -1) {
+		if !isASCII(s[m[2]:m[3]]) {
+			continue
+		}
+		state := max(m[4], m[6])
+		b.WriteString(s[last : state-1])
+		b.WriteString(s[state : state+msgCodeDigits])
+		last = m[1]
+	}
+	if last == 0 {
+		return s
+	}
+	b.WriteString(s[last:])
+	return b.String()
 }
 
 // replaceNumbers decides what each msgNumberRe match becomes: a number is
