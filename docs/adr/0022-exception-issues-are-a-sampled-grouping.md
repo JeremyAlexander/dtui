@@ -35,9 +35,12 @@ rest how the view uses it.
   keys of a corpus, and one digest per table, expression and limit the key is
   computed from. The digests cover declarations; the code of a function is
   covered by the corpus and the tests alone.
-- **One event per span is keyed.** Of a span's exception events that say
-  anything (a type, a message or a stack), take the last one flagged
-  `exception.is_caused_by_root`, else the last one. Where that event's stack
+- **One event per span is keyed.** Of a span's exception events that give a
+  type, a message that is not empty once parameterised, or a frame a reader
+  can use, take the last one flagged `exception.is_caused_by_root`, else the
+  last one. Stack text no reader can use does not make an event count, and
+  neither does a Go stack that is not a panic's. A span with no such event
+  has no key. Where that event's stack
   text holds a whole chain (`Caused by:` in Java, an inner exception in .NET,
   an earlier traceback in Python), the frames and the type are the root
   cause's, read from the text, so type and frames belong to one exception. A
@@ -59,7 +62,8 @@ rest how the view uses it.
   coarse.
 - **A Go stack that is not a panic's is not used.** It was taken where the
   error was recorded, not where it arose, and every error that passes there
-  has the same. Such an event is keyed on its message.
+  has the same. Such an event is keyed as if it had no stack: on its message,
+  else on its type alone.
 - **The throw site is always in a frame key, and pass-through frames do not
   count among the application's.** Filter chains, middleware continuations,
   interceptors and decorator wrappers are shared by every error that passes
