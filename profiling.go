@@ -284,11 +284,12 @@ func (r *profileRuns) get(ctx context.Context, key string, tf catalog.Timeframe,
 		delete(r.runs, key)
 		run = nil
 	}
-	if run == nil {
+	switch {
+	case run == nil:
 		run = r.start(key, tf, fetch)
-	} else if run.finished() {
+	case run.finished():
 		r.use(run)
-	} else if run.note != "" {
+	case run.note != "":
 		// The view behind this call has heard nothing yet, and the next
 		// response of the analysis can be a minute away.
 		r.report(ctx, run.note)
