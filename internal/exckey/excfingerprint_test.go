@@ -770,10 +770,67 @@ func TestFingerprintSkipsEventsThatSayNothing(t *testing.T) {
 		}
 	}
 	// One of the three is enough.
-	for _, ex := range []Event{{Type: "A"}, {Message: "locked"}, {StackTrace: "no frames in here"}} {
+	for _, ex := range []Event{{Type: "A"}, {Message: "locked"}, {StackTrace: "\tat com.example.shop.Cart.add(Cart.java:42)\n"}} {
 		if _, ok := FingerprintExceptions([]Event{ex, {}}); !ok {
 			t.Errorf("%+v has no key", ex)
 		}
+	}
+}
+
+// What an event gives must be something a reader can use: a type, a message
+// that is not empty once parameterised, or a frame. An event with none of
+// them would get the key of the empty type, the same for every such event
+// of every service, and as the last event of a span stand in for the real
+// one before it.
+func TestFingerprintSkipsEventsNoReaderCanUse(t *testing.T) {
+	goTrace := "goroutine 1 [running]:\nmain.process(0xc000012345)\n\t/app/main.go:42 +0x1d\nmain.main()\n\t/app/main.go:12 +0x25\n"
+	useless := map[string]Event{
+		"stack text no reader can use":     {StackTrace: "something unreadable"},
+		"a Go stack that is not a panic's": {StackTrace: goTrace},
+		"a message of colour codes":        {Message: "\x1b[31m\x1b[0m"},
+		"a message of a NUL":               {Message: "\x00"},
+		"a message of invalid UTF-8":       {Message: "\xff\xfe"},
+		"a message past its limit":         {Message: strings.Repeat(" ", exceptionMessageInput) + "real error"},
+		"a message of 5000 spaces":         {Message: strings.Repeat(" ", 5000) + "real error"},
+		"all three, none usable":           {Type: " ", Message: "\x1b[0m", StackTrace: "at least nothing"},
+		"a message of spaces beyond ASCII": {Message: "\u00a0\u2003"},
+	}
+	real := Event{Type: "java.lang.NullPointerException", Message: "x is null"}
+	want := mustFingerprint(t, real)
+	for name, ex := range useless {
+		if got, ok := FingerprintExceptions([]Event{ex}); ok {
+			t.Errorf("%s: got the key %s on rung %s", name, got.Key, got.Rung)
+		}
+		for _, flagged := range []bool{false, true} {
+			ex.Root = flagged
+			if got, ok := FingerprintExceptions([]Event{real, ex}); !ok || got.Key != want.Key {
+				t.Errorf("%s (flagged %v) after a typed event: key %s %v, want %s", name, flagged, got.Key, ok, want.Key)
+			}
+		}
+	}
+	// The same events with one thing a reader can use.
+	for name, ex := range map[string]Event{
+		"a type":                       {Type: "E", StackTrace: "something unreadable"},
+		"a message beside the stack":   {Message: "locked", StackTrace: goTrace},
+		"a message behind colour":      {Message: "\x1b[31mlocked\x1b[0m"},
+		"a message inside its limit":   {Message: strings.Repeat(" ", exceptionMessageInput-1) + "real error"},
+		"a frame":                      {StackTrace: "\tat com.example.shop.Cart.add(Cart.java:42)\n"},
+		"a Go panic's stack":           {StackTrace: "panic: bad state\n\n" + goTrace},
+		"a message that is all values": {Message: "42"},
+	} {
+		got, ok := FingerprintExceptions([]Event{real, ex})
+		if !ok || got.Key == want.Key {
+			t.Errorf("%s: key %s %v, want one of its own", name, got.Key, ok)
+		}
+	}
+	// A Go stack that is not a panic's is keyed as if the event had none.
+	a := mustFingerprint(t, Event{Type: "E", Message: "locked", StackTrace: goTrace})
+	if b := mustFingerprint(t, Event{Type: "E", Message: "locked"}); a.Key != b.Key || a.Rung != RungMessage {
+		t.Errorf("with a message: %s on %s, want %s", a.Key, a.Rung, b.Key)
+	}
+	a = mustFingerprint(t, Event{Type: "E", StackTrace: goTrace})
+	if b := mustFingerprint(t, Event{Type: "E"}); a.Key != b.Key || a.Rung != RungType {
+		t.Errorf("with a type alone: %s on %s, want %s", a.Key, a.Rung, b.Key)
 	}
 }
 
@@ -793,8 +850,8 @@ func TestRootException(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got, ok := rootException(tc.excs); !ok || got.Type != tc.want {
-				t.Errorf("root = %s, want %s", got.Type, tc.want)
+			if got, ok := rootException(tc.excs); !ok || got.typ != tc.want {
+				t.Errorf("root = %s, want %s", got.typ, tc.want)
 			}
 		})
 	}

@@ -102,8 +102,8 @@ type ExceptionFingerprint struct {
 
 // FingerprintExceptions computes the grouping key for the exception events
 // of one span. The event is the root of the cause chain, the last one where
-// no chain is marked (rootException); false when no event says anything
-// about an exception.
+// no chain is marked (rootException); false when no event gives anything a
+// reader can use (exceptionReading.empty).
 func FingerprintExceptions(excs []Event) (ExceptionFingerprint, bool) {
 	root, ok := rootException(excs)
 	if !ok {
@@ -111,20 +111,16 @@ func FingerprintExceptions(excs []Event) (ExceptionFingerprint, bool) {
 	}
 	fp := ExceptionFingerprint{
 		Rung:      RungType,
-		EventType: strings.TrimSpace(root.Type),
-		Message:   ParameterizeMessage(root.Message),
+		EventType: root.typ,
+		Message:   root.message,
 	}
 	fp.Type = fp.EventType
 
 	// The type and the frames of a key come from one exception. Below the
 	// frame rungs that is the event's, which the message belongs to as well.
-	all, rootType, atFault := parseStack(root.StackTrace)
-	if !atFault {
-		// A Go trace that is not a panic's: where the error was seen.
-		all = nil
-	}
-	if rootType != "" && len(all) > 0 {
-		fp.Type = rootType
+	all := root.frames
+	if root.rootType != "" && len(all) > 0 {
+		fp.Type = root.rootType
 	}
 	var evidence []string
 	if app := topFrames(all, frameInApp, isPassThrough); len(app) > 0 {
@@ -201,35 +197,62 @@ func appendKeyField(b []byte, field string) []byte {
 	return append(b, field...)
 }
 
-// rootException picks the event a span's fingerprint is computed from, of
-// those that say something about an exception (saysNothing); false when
-// none does: the last event flagged exception.is_caused_by_root, else the
-// last event. Instrumentation that records a chain flags its root; without
-// a flag the last event is the exception the span ended with.
-func rootException(excs []Event) (Event, bool) {
-	var last *Event
-	for i := len(excs) - 1; i >= 0; i-- {
-		if saysNothing(excs[i]) {
-			continue
-		}
-		if excs[i].Root {
-			return excs[i], true
-		}
-		if last == nil {
-			last = &excs[i]
-		}
-	}
-	if last == nil {
-		return Event{}, false
-	}
-	return *last, true
+// exceptionReading is what is read of one event: its type without the
+// space around it, its message parameterised, and the frames of its root
+// cause with the type the stack text gives that. A Go trace that is not a
+// panic's shows where the error was seen and has no frames here.
+type exceptionReading struct {
+	typ      string
+	message  string
+	frames   []StackFrame
+	rootType string
 }
 
-// saysNothing reports whether an event has no type, no message and no stack
-// trace. A key for it would be the same for every such event of every
+func readException(ex Event) exceptionReading {
+	r := exceptionReading{typ: strings.TrimSpace(ex.Type), message: ParameterizeMessage(ex.Message)}
+	if frames, rootType, atFault := parseStack(ex.StackTrace); atFault {
+		r.frames, r.rootType = frames, rootType
+	}
+	return r
+}
+
+// empty reports whether an event gives nothing a reader can use: no type,
+// no message once that is parameterised, and no frame. Stack text that no
+// reader can use gives nothing, and neither does a Go stack that is not a
+// panic's. A key for such an event would be the same for every one of every
 // service, and as the last event of a span it would stand in for the real
 // one before it.
-func saysNothing(ex Event) bool {
-	return strings.TrimSpace(ex.Type) == "" && strings.TrimSpace(ex.Message) == "" &&
-		strings.TrimSpace(ex.StackTrace) == ""
+func (r exceptionReading) empty() bool {
+	return r.typ == "" && r.message == "" && len(r.frames) == 0
+}
+
+// rootException picks the event a span's fingerprint is computed from, of
+// those that give something a reader can use (exceptionReading.empty);
+// false when none does: the last event flagged exception.is_caused_by_root,
+// else the last event. Instrumentation that records a chain flags its root;
+// without a flag the last event is the exception the span ended with.
+//
+// An event is read once, and only where the choice needs it: one with a
+// type counts unread, and is read when it is chosen.
+func rootException(excs []Event) (exceptionReading, bool) {
+	last, read := -1, exceptionReading{}
+	for i := len(excs) - 1; i >= 0 && (last < 0 || !excs[last].Root); i-- {
+		if last >= 0 && !excs[i].Root {
+			continue
+		}
+		if strings.TrimSpace(excs[i].Type) != "" {
+			last, read = i, exceptionReading{}
+			continue
+		}
+		if r := readException(excs[i]); !r.empty() {
+			last, read = i, r
+		}
+	}
+	if last < 0 {
+		return exceptionReading{}, false
+	}
+	if read.empty() {
+		read = readException(excs[last])
+	}
+	return read, true
 }
