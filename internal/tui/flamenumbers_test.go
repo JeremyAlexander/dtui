@@ -19,13 +19,19 @@ import (
 // words is the screen as one line of words: a line of it may wrap.
 func words(a *app) string { return strings.Join(strings.Fields(screen(a)), " ") }
 
-// fullFlame is the walk graph with room for the root, main and a only: the
-// rest of every stack is folded.
+// fullFlame is the walk graph with room for three frames. The heaviest stack
+// is main;a, which dtctl does not put first: the graph keeps the root, main
+// and a, and folds the rest of five stacks.
 func fullFlame(t *testing.T) (*app, *flameView) {
 	t.Helper()
 	flameMaxFrames = 3
 	t.Cleanup(func() { flameMaxFrames = flame.MaxFrames })
-	a, fv := walkFlame(t)
+	a, _, fv, _ := openFlame(t)
+	answerFlame(a, fv, stackRecords("2026-07-15T12:00:00Z", append(flameWalk[:len(flameWalk):len(flameWalk)], "main;a 150,50")...), nil)
+	if fv.graph == nil {
+		t.Fatal("the stacks did not become a graph")
+	}
+	fv.graph.ClearSearch() // the function the table handed over
 	a.Update(tea.WindowSizeMsg{Width: 160, Height: 40})
 	return a, fv
 }
@@ -68,10 +74,11 @@ func TestFlameGraphTreatsARemainderAsNoFunction(t *testing.T) {
 	if !strings.Contains(out, "paths the one call path kept reaches this function: the graph is full, and others may be among the frames not kept") {
 		t.Errorf("the paths line of a function in a full graph:\n%s", screen(a))
 	}
-	if !strings.Contains(out, "53.8% in frames that were not kept") {
+	if !strings.Contains(out, "25.0% in frames that were not kept") {
 		t.Errorf("the callees of main do not say what was folded:\n%s", screen(a))
 	}
 	press(a, flameKey("down"))
+	press(a, flameKey("right"))
 	tree, sel := fv.graph.Tree(), fv.graph.Selected()
 	if !tree.IsRest(sel) {
 		t.Fatalf("the fixture: selected %v", tree.Path(sel))
@@ -244,5 +251,38 @@ func TestFlameGraphRootDetails(t *testing.T) {
 	a.Update(tea.WindowSizeMsg{Width: 160, Height: 40})
 	if out := words(a); !strings.Contains(out, "starts in 35.3% b 35.3% c 11.8% a and 2 more") {
 		t.Errorf("the root's details:\n%s", screen(a))
+	}
+}
+
+// A full graph keeps the stacks that weigh most over all thread states.
+// dtctl orders them by running samples alone: kept in that order, the graph
+// of the waiting threads would lose its heaviest stack to the running tail.
+func TestFlameTreeKeepsTheHeaviestStacksOfEveryState(t *testing.T) {
+	flameMaxFrames = 3
+	t.Cleanup(func() { flameMaxFrames = flame.MaxFrames })
+	rows := stackRecords("2026-07-15T12:00:00Z", "run;a 10,0", "run;b 9,0", "idle;park 0,100", "run;c 9,0")[1:]
+	tree := flameTree(rows, len(catalog.HotspotStates()))
+	var kept []string
+	for n := flame.NodeID(1); int(n) < tree.Len(); n++ {
+		if !tree.IsRest(n) {
+			kept = append(kept, strings.Join(tree.Path(n), ";"))
+		}
+	}
+	if got := strings.Join(kept, " "); got != "idle idle;park" {
+		t.Errorf("kept %q, want the stack with 100 samples", got)
+	}
+	if tree.Total(flame.Root, 0) != 28 || tree.Total(flame.Root, 1) != 100 || tree.Folded() != 3 {
+		t.Errorf("totals %d and %d, folded %d", tree.Total(flame.Root, 0), tree.Total(flame.Root, 1), tree.Folded())
+	}
+	// Equal stacks stay in the order they came in, and sums do not wrap.
+	big := float64(math.MaxInt64)
+	states := catalog.HotspotStates()
+	rows = []map[string]any{
+		{catalog.ProfStack: "small;x", states[0]: 5.0},
+		{catalog.ProfStack: "huge;y", states[0]: big, states[1]: big},
+	}
+	tree = flameTree(rows, len(states))
+	if got := tree.Path(1); len(got) != 1 || got[0] != "huge" {
+		t.Errorf("a stack whose sum is beyond an integer is not the heaviest: first %v", got)
 	}
 }

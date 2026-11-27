@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"sort"
 	"strings"
 	"time"
 
@@ -517,16 +518,35 @@ func (v *flameView) arrived(msg dataMsg) tea.Cmd {
 
 // flameTree builds the call tree of a stacks result: one stack per row,
 // split into frames, weighed once per thread state.
+//
+// The stacks are added heaviest first over all thread states. A tree that
+// fills up keeps the frames that arrive first, and dtctl orders the stacks
+// by their running samples alone: in that order a full tree would keep the
+// tail of the running stacks and fold the heaviest waiting ones. A tree that
+// does not fill up is the same in any order.
 func flameTree(rows []map[string]any, lenses int) *flame.Tree {
 	states := catalog.HotspotStates()
+	weights := make([]int64, len(rows)*lenses)
+	sums := make([]int64, len(rows))
+	order := make([]int, len(rows))
+	for r, row := range rows {
+		order[r] = r
+		for i := range lenses {
+			n := flameCount(row[states[i]])
+			weights[r*lenses+i] = n
+			if sums[r] > math.MaxInt64-n {
+				sums[r] = math.MaxInt64 // a sum does not wrap
+			} else {
+				sums[r] += n
+			}
+		}
+	}
+	// Equal stacks stay in the order they came in.
+	sort.SliceStable(order, func(i, j int) bool { return sums[order[i]] > sums[order[j]] })
 	b := flame.NewBuilder(lenses)
 	b.Limit(flameMaxFrames)
-	weights := make([]int64, lenses)
-	for _, row := range rows {
-		for i := range weights {
-			weights[i] = flameCount(row[states[i]])
-		}
-		b.Add(strings.Split(catalog.Str(row, catalog.ProfStack), catalog.ProfStackSep), weights)
+	for _, r := range order {
+		b.Add(strings.Split(catalog.Str(rows[r], catalog.ProfStack), catalog.ProfStackSep), weights[r*lenses:(r+1)*lenses])
 	}
 	return b.Tree()
 }
