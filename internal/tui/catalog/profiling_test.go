@@ -520,3 +520,13 @@ func TestShortFrameCutsOnlyATrailingParameterList(t *testing.T) {
 		t.Errorf("a caller in an allocation path reads %q, want its receiver and method", got)
 	}
 }
+
+// A row without a function name is no function to focus, and is not "the
+// function in focus" of a table that has none.
+func TestFocusTargetOfARowWithoutAFunction(t *testing.T) {
+	for _, s := range []Scope{{}, {Arg: "a.B.c"}} {
+		if fn, why := FocusTarget(s, map[string]any{}); fn != "" || why != "" {
+			t.Errorf("focus %q: a row without a function gives (%q, %q), want neither", s.Arg, fn, why)
+		}
+	}
+}

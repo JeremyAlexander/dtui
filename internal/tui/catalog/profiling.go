@@ -404,6 +404,8 @@ func FocusTarget(s Scope, rec map[string]any) (fn, why string) {
 		return "", ""
 	}
 	switch fn = Str(rec, ProfFunction); fn {
+	case "":
+		return "", ""
 	case profRootCaller:
 		return "", profRootCaller + " is where the stacks start, not a function"
 	case s.Arg:
