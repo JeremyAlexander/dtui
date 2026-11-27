@@ -164,7 +164,7 @@ func (v *tableView) hasField(field string) bool {
 	if v.sample != nil {
 		// The rows of a sampled view are computed; the fields are those of
 		// the records they were computed from.
-		return slices.Contains(v.sample.fields, field)
+		return v.sample.keys[field]
 	}
 	for _, rec := range v.all {
 		if _, ok := rec[field]; ok {
@@ -190,11 +190,10 @@ func (v *tableView) facetCandidates() []string {
 		}
 		return dims
 	}
-	fields := scalarFacetFields(v.all)
 	if v.sample != nil {
-		fields = v.sample.fields
+		return v.orderCandidates(v.sample.fields, v.tagCandidates())
 	}
-	return v.orderCandidates(fields, v.tagCandidates())
+	return v.orderCandidates(scalarFacetFields(v.all), v.tagCandidates())
 }
 
 // scalarFacetFields lists the scalar attribute keys of fetched records,

@@ -41,6 +41,9 @@ type sampleFacts struct {
 	// fields are the scalar fields of the fetched records, sorted: the facet
 	// picker's candidates, which the computed rows no longer carry.
 	fields []string
+	// keys are all fields of the fetched records, arrays and records
+	// included: what a facet sent from another view may name (hasField).
+	keys map[string]bool
 }
 
 // sampleWindow words a timeframe for the header.
@@ -62,6 +65,14 @@ func takeSample(s *catalog.SampleSpec, window string, records []map[string]any, 
 		cut:     cutFor(notices),
 		sampled: sampled || samplingNoticed(notices),
 		fields:  scalarFacetFields(records),
+		keys:    map[string]bool{},
+	}
+	for _, rec := range records {
+		for k := range rec {
+			if !facts.keys[k] && !strings.HasPrefix(k, "__") {
+				facts.keys[strings.Clone(k)] = true
+			}
+		}
 	}
 	if facts.cut == cutNone && int64(len(records)) >= s.Rows {
 		facts.cut = cutRows

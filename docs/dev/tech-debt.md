@@ -71,12 +71,6 @@ sort would narrow the scan before sampling. Fix: offer the facet on a
 sampled view without projecting the field, once a bucket-filtered sample
 was checked on a live environment.
 
-## The empty-table text says "last" before a custom window
-
-`renderTable` writes "no data in timeframe (last <label>)" for every
-window, so a custom one reads "last 2026-07-15 10:00→11:00 UTC". Fix: word
-the window with `sampleWindow`, which already tells the two apart.
-
 ## An exception issue has no detail page
 
 `d` on an exceptions row opens the inspector on the row's three real fields

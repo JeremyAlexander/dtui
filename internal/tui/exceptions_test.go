@@ -14,6 +14,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/dynatrace-oss/dtctl/pkg/exec"
 	"github.com/dynatrace-oss/dtui/internal/tui/catalog"
@@ -921,5 +922,150 @@ func TestExceptionsFilterFindsAHiddenService(t *testing.T) {
 	}
 	if issue, _ := catalog.IssueOf(tv.rows[0]); !slices.Contains(issue.Services, "checkout") {
 		t.Errorf("/checkout kept %+v", issue)
+	}
+}
+
+// J cycles through the columns and back to the fetch order, which on this
+// view is a ranking: loudest issue first. A column sort must not leave its
+// order behind in the fetched rows.
+func TestSortCycleEndsInTheFetchedOrder(t *testing.T) {
+	a := testApp(t, "exceptions")
+	tv := seedSample(t, a, issueSample(), nil)
+	keys := func() []string {
+		var out []string
+		for _, row := range tv.rows {
+			issue, _ := catalog.IssueOf(row)
+			out = append(out, issue.Key)
+		}
+		return out
+	}
+	fetched := keys()
+	changed := false
+	for range tv.columns() {
+		press(a, key("J"))
+		changed = changed || !reflect.DeepEqual(keys(), fetched)
+		press(a, key("K"))
+		changed = changed || !reflect.DeepEqual(keys(), fetched)
+	}
+	if !changed {
+		t.Fatal("no column sort changed the order: the case proves nothing")
+	}
+	press(a, key("J"))
+	if tv.sortCol != -1 || a.status != "sort: fetch order" {
+		t.Fatalf("after the cycle: sortCol=%d status=%q", tv.sortCol, a.status)
+	}
+	if got := keys(); !reflect.DeepEqual(got, fetched) {
+		t.Errorf("fetch order after a sort cycle = %q\nwant %q", got, fetched)
+	}
+	// The same under a filter that keeps every row.
+	press(a, key("J"))
+	tv.setFilter("e")
+	tv.sortCol = -1
+	tv.setFilter("")
+	if got := keys(); !reflect.DeepEqual(got, fetched) {
+		t.Errorf("fetch order after a filtered sort = %q\nwant %q", got, fetched)
+	}
+}
+
+// A filter that matches nothing counts what it was tried on, and those are
+// rows: the line above the table counts spans.
+func TestExceptionsFilterMissCountsRows(t *testing.T) {
+	a := testApp(t, "exceptions")
+	seedSample(t, a, issueSample(), nil)
+	press(a, key("/"))
+	typeText(a, "zzzz")
+	out := screen(a)
+	if !strings.Contains(out, `no rows match "zzzz" (of 6 rows — esc clears the filter)`) || strings.Contains(out, "6 fetched") {
+		t.Errorf("filter miss:\n%s", out)
+	}
+}
+
+// Workspace primary tags are columns of projected entity rows. The rows of
+// a sampled view are computed and carry none.
+func TestExceptionsViewTakesNoPrimaryTagColumns(t *testing.T) {
+	a := testApp(t, "exceptions")
+	a.ds.primaryTags = []string{"team", "env"}
+	tv := seedSample(t, a, issueSpans(), nil)
+	var titles []string
+	for _, c := range tv.columns() {
+		titles = append(titles, c.Title)
+	}
+	if want := []string{"COUNT", "LAST", "EXCEPTION", "MESSAGE", "SERVICE", "BY"}; !reflect.DeepEqual(titles, want) {
+		t.Errorf("columns = %q, want %q", titles, want)
+	}
+}
+
+// A facet sent from a span inspector lands on any field the sampled spans
+// carry, an array like span.events included; the picker still offers the
+// scalar ones only.
+func TestExceptionsAcceptsAFacetOnAnArrayField(t *testing.T) {
+	a := testApp(t, "exceptions")
+	tv := seedSample(t, a, issueSpans(), nil)
+	if !tv.hasField("span.events") || !tv.hasField("dt.service.name") {
+		t.Errorf("hasField: span.events=%v dt.service.name=%v, want both", tv.hasField("span.events"), tv.hasField("dt.service.name"))
+	}
+	if tv.hasField("k8s.namespace.name") || tv.hasField("__issue") {
+		t.Error("hasField accepts a field no sampled span carries")
+	}
+	if slices.Contains(tv.facetCandidates(), "span.events") {
+		t.Errorf("the picker offers an array field: %q", tv.facetCandidates())
+	}
+}
+
+// The line above the table names the window the fetch ran over, also for a
+// timeframe other than the default.
+func TestExceptionsSampleLineNamesTheFetchedWindow(t *testing.T) {
+	pinSnapshotClock(t)
+	a := testApp(t, "exceptions")
+	tv := a.top().(*tableView)
+	a.ds.runFn = func(string) ([]map[string]any, error) { return issueSpans(), nil }
+	tf, ok := catalog.ParseTimeframe("7d")
+	if !ok {
+		t.Fatal("no 7d timeframe")
+	}
+	a.setTimeframe(tf)
+	a.Update(tv.Refresh()())
+	if out := screen(a); !strings.Contains(out, "all 3 exception spans · last 7d") {
+		t.Errorf("the sample line does not name the window:\n%s", out)
+	}
+	// And an empty sample says the same window, not "last" before a range.
+	from := time.Date(2026, 7, 15, 10, 0, 0, 0, time.UTC)
+	abs := catalog.AbsoluteTimeframe(from, from.Add(2*time.Hour), snapshotNow)
+	a.setTimeframe(abs)
+	a.ds.runFn = func(string) ([]map[string]any, error) { return nil, nil }
+	a.Update(tv.Refresh()())
+	out := screen(a)
+	if !strings.Contains(out, "no data in timeframe ("+abs.Label+")") || strings.Contains(out, "(last "+abs.Label) {
+		t.Errorf("the empty table words the window wrong:\n%s", out)
+	}
+}
+
+// The open picker shows the whole of each entry: the note on the Notebook
+// entry ends in the word that matters.
+func TestOpenPickerShowsTheWholeExitNote(t *testing.T) {
+	p := &openPicker{list: []linkOption{
+		{Label: "Distributed Tracing", URL: "https://tenant.example.invalid/a"},
+		{Label: "query in a Notebook (the sampled exception spans, ungrouped)", URL: "https://tenant.example.invalid/b"},
+	}}
+	if out := p.View(120, 30); !strings.Contains(out, "ungrouped)") {
+		t.Errorf("the picker cut the note:\n%s", out)
+	}
+	// On a screen too narrow for it the entry is cut, not the box broken.
+	for _, line := range strings.Split(p.View(50, 30), "\n") {
+		if lipgloss.Width(line) > 50 {
+			t.Errorf("picker line wider than the screen: %q", line)
+		}
+	}
+}
+
+// Where enter leaves for another view, the folded preview does not promise
+// that it opens the record.
+func TestExceptionsFoldedPreviewNamesTheKeyThatOpensTheRecord(t *testing.T) {
+	a := testApp(t, "exceptions")
+	a.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
+	seedSample(t, a, issueSample(), nil)
+	out := screen(a)
+	if strings.Contains(out, "enter opens the full record") || !strings.Contains(out, "… (d opens the full record)") {
+		t.Errorf("the fold of the preview:\n%s", out)
 	}
 }

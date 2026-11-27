@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -174,7 +175,9 @@ func (v *tableView) baseColumns() []catalog.Column {
 // key name. No Enrich — these are flat fields already present in the record.
 func (v *tableView) primaryTagColumns() []catalog.Column {
 	keys := v.ds.primaryTags
-	if len(keys) == 0 {
+	// The rows of a sampled view are computed and carry no tag: a column
+	// for one would be empty on every row.
+	if len(keys) == 0 || v.spec.Sample != nil {
 		return nil
 	}
 	cols := make([]catalog.Column, 0, len(keys))
@@ -1063,6 +1066,11 @@ func (v *tableView) pageSize() int {
 func (v *tableView) applyFilter() {
 	if v.filter == "" {
 		v.rows = v.all
+		if v.sortCol >= 0 {
+			// A column sort orders a copy: the fetched order is what J
+			// cycles back to, and on some views it is a ranking.
+			v.rows = slices.Clone(v.all)
+		}
 	} else {
 		needle := strings.ToLower(v.filter)
 		v.rows = nil
@@ -1094,7 +1102,7 @@ func (v *tableView) View(width, height int) string {
 	if v.reader {
 		return v.renderReader(width, height)
 	}
-	return previewLayout(v.ds.previewOn(), width, height, v.renderTable, v.previewLines)
+	return previewLayout(v.ds.previewOn(), width, height, v.renderTable, v.previewLines, v.foldHint())
 }
 
 func (v *tableView) renderTable(width, height int) string {
@@ -1199,19 +1207,25 @@ func (v *tableView) renderTable(width, height int) string {
 	}
 	if len(v.rows) == 0 && !v.loading {
 		if v.filter != "" && len(v.all) > 0 {
-			b.WriteString(theme.Dim.Render(fmt.Sprintf("  no rows match %q (%d fetched — esc clears the filter)", v.filter, len(v.all))))
+			of := fmt.Sprintf("%d fetched", len(v.all))
+			if v.spec.Sample != nil {
+				// What was fetched is counted in the line above; these are
+				// the rows computed from it.
+				of = fmt.Sprintf("of %d rows", len(v.all))
+			}
+			b.WriteString(theme.Dim.Render(fmt.Sprintf("  no rows match %q (%s — esc clears the filter)", v.filter, of)))
 		} else if _, cut := v.sampleLine(); !cut {
 			// A sample that was cut short is not known to be empty: its
 			// line above the header says what happened, and nothing here
 			// may add that the timeframe holds no data.
-			empty := "∅ no data in timeframe (last " + v.scope.Timeframe.Label + ")"
+			window := sampleWindow(v.scope.Timeframe)
+			empty := "∅ no data in timeframe (" + window + ")"
 			if len(v.spec.Lenses) > 0 {
 				what := v.spec.LensAt(v.scope.Lens).Name
 				if what == "all" {
 					what = "data" // "no all in timeframe" reads broken
 				}
-				empty = fmt.Sprintf("∅ no %s in timeframe (last %s) — [/] switches lens",
-					what, v.scope.Timeframe.Label)
+				empty = fmt.Sprintf("∅ no %s in timeframe (%s) — [/] switches lens", what, window)
 			}
 			b.WriteString("\n" + lipgloss.PlaceHorizontal(width, lipgloss.Center, theme.Dim.Render(empty)))
 		}
