@@ -567,18 +567,41 @@ func TestExceptionsFilterFindsAKeyAndEnterKeepsItLocal(t *testing.T) {
 	}
 }
 
-// alt+enter is the explicit way to narrow what is sampled by text.
-func TestExceptionsAltEnterSearchesTheSpans(t *testing.T) {
+// ctrl+s is the explicit way to narrow what is sampled by text: a key every
+// host delivers, the browser side panel included, which keeps Alt chords to
+// itself. It adds a term to those already active.
+func TestExceptionsCtrlSSearchesTheSpans(t *testing.T) {
 	a := testApp(t, "exceptions")
 	tv := seedSample(t, a, issueSpans(), nil)
+	tv.searches = []string{"preset-term", "second"}
 	press(a, key("/"))
+	if out := screen(a); !strings.Contains(out, "ctrl+s server search") || strings.Contains(out, "alt+enter") {
+		t.Errorf("the filter hints do not name ctrl+s:\n%s", out)
+	}
 	typeText(a, "locked")
-	press(a, tea.KeyMsg{Type: tea.KeyEnter, Alt: true})
-	if len(tv.searches) != 1 || tv.searches[0] != "locked" || tv.filter != "" {
-		t.Errorf("searches=%q filter=%q, want one server search and no filter", tv.searches, tv.filter)
+	press(a, tea.KeyMsg{Type: tea.KeyCtrlS})
+	if want := []string{"preset-term", "second", "locked"}; !reflect.DeepEqual(tv.searches, want) || tv.filter != "" || tv.filtering {
+		t.Errorf("searches=%q filter=%q filtering=%v, want %q and no filter", tv.searches, tv.filter, tv.filtering, want)
 	}
 	if !strings.Contains(tv.DQL(), "\n| search \"*locked*\"\n") {
 		t.Errorf("the search did not reach the query:\n%s", tv.DQL())
+	}
+	// Enter says which key searches.
+	press(a, key("/"))
+	typeText(a, "cart")
+	press(a, key("enter"))
+	if !strings.Contains(a.status, "ctrl+s searches the exception spans") {
+		t.Errorf("status after enter = %q", a.status)
+	}
+	// On every other table ctrl+s adds a term as enter does.
+	logs := testApp(t, "logs")
+	lv := logs.top().(*tableView)
+	lv.searches = []string{"first"}
+	press(logs, key("/"))
+	typeText(logs, "boom")
+	press(logs, tea.KeyMsg{Type: tea.KeyCtrlS})
+	if want := []string{"first", "boom"}; !reflect.DeepEqual(lv.searches, want) {
+		t.Errorf("logs searches after ctrl+s = %q, want %q", lv.searches, want)
 	}
 }
 

@@ -555,7 +555,7 @@ func (v *tableView) Hints() []keyHint {
 	}
 	if v.filtering {
 		if v.spec.Sample != nil {
-			return []keyHint{{"type", "filter rows"}, {"enter", "keep filter"}, {"alt+enter", "server search"}, {"esc", "clear"}}
+			return []keyHint{{"type", "filter rows"}, {"enter", "keep filter"}, {"ctrl+s", "server search"}, {"esc", "clear"}}
 		}
 		return []keyHint{{"type", "filter rows"}, {"enter", "add server search"}, {"alt+enter", "replace"}, {"esc", "clear"}}
 	}
@@ -808,7 +808,7 @@ func (v *tableView) handleKey(msg tea.KeyMsg) tea.Cmd {
 	}
 	if v.filtering {
 		switch msg.String() {
-		case "enter", "alt+enter":
+		case "enter", "alt+enter", "ctrl+s":
 			v.filtering = false
 			v.filterInput.Blur()
 			// Enter promotes the typed text to a server-side search over the
@@ -817,7 +817,9 @@ func (v *tableView) handleKey(msg tea.KeyMsg) tea.Cmd {
 			// client filter clears: server-matched rows may match on fields
 			// no column shows, and hiding them again would lie. Terms stack
 			// (each is a chained | search stage); alt+enter replaces the
-			// active terms with this one instead.
+			// active terms with this one instead. ctrl+s adds one like
+			// enter, on every table: it is the key that says "search", for
+			// the views where enter does not.
 			if term := strings.TrimSpace(v.filter); term != "" {
 				// A view without a query has nothing to inject a server
 				// search into — the client filter stays as the narrowing.
@@ -827,9 +829,11 @@ func (v *tableView) handleKey(msg tea.KeyMsg) tea.Cmd {
 				// The rows of a sampled view are computed here: the text may
 				// name what no fetched record holds (an issue key), and a
 				// server search for it would empty the view. Enter keeps the
-				// filter on the rows; alt+enter still searches the records.
+				// filter on the rows; ctrl+s searches the records. Not an
+				// Alt chord: the browser side panel keeps those, and a
+				// terminal sends one only when Option is set to act as Meta.
 				if v.spec.Sample != nil && msg.String() == "enter" {
-					return status(fmt.Sprintf("filter %q kept on the rows (alt+enter searches the %ss)", term, v.spec.Sample.Noun))
+					return status(fmt.Sprintf("filter %q kept on the rows (ctrl+s searches the %ss)", term, v.spec.Sample.Noun))
 				}
 				v.filterInput.SetValue("")
 				v.filter = ""
