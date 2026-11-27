@@ -222,12 +222,23 @@ func TestAutoRefreshWaitsForTheAnswerInFlight(t *testing.T) {
 	if !rearmed {
 		t.Error("a tick that waits must still arm the next one")
 	}
+	// The pause is the tick's alone: r refreshes at once, also while the
+	// view waits (a query can hang for minutes before the client gives up).
+	_, cmd := a.Update(key("r"))
+	if cmd == nil || queries != 1 {
+		t.Fatalf("r while the view waits: cmd=%v, %d queries so far", cmd != nil, queries)
+	}
+	byHand, ok := cmd().(dataMsg)
+	if !ok || queries != 2 {
+		t.Fatalf("r while the view waits issued no query (%d in all)", queries)
+	}
+	first[0] = byHand
 	a.Update(first[0])
 	if tv.loading || len(tv.rows) != 1 || catalog.Str(tv.rows[0], "id") != "HOST-2" {
 		t.Errorf("the slow answer did not paint: loading=%v rows=%v", tv.loading, tv.rows)
 	}
 	// With the answer in, the next tick refreshes again.
-	if third, _ := runTick(t, a); len(third) != 1 || queries != 2 {
+	if third, _ := runTick(t, a); len(third) != 1 || queries != 3 {
 		t.Errorf("the tick after the answer issued %d queries (%d in all), want one more", len(third), queries)
 	}
 }

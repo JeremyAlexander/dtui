@@ -765,8 +765,8 @@ func TestExceptionsLateResultOfAnEarlierRefreshIsDropped(t *testing.T) {
 
 // A refresh while issues are on screen: the commands group on their own
 // goroutines, here even over the same span records, while the update loop
-// draws and takes results in whatever order they finish. Run under the race
-// detector (make test).
+// draws, rewires the data source and takes results in whatever order they
+// finish. Run under the race detector (make test).
 func TestExceptionsRefreshWhileOnScreenIsRaceFree(t *testing.T) {
 	a := testApp(t, "exceptions")
 	tv := a.top().(*tableView)
@@ -776,9 +776,14 @@ func TestExceptionsRefreshWhileOnScreenIsRaceFree(t *testing.T) {
 
 	const refreshes = 6
 	results := make(chan tea.Msg, refreshes)
-	for range refreshes {
+	for i := range refreshes {
 		cmd := tv.Refresh()
 		go func() { results <- cmd() }()
+		// What a segment toggle and a context switch write on the update
+		// loop while the command runs: it must have taken its wiring when
+		// it was created.
+		a.ds.segments = []exec.FilterSegmentRef{{ID: fmt.Sprintf("uid-%d", i)}}
+		a.ds.exec, a.ds.sources = nil, map[string]Source{}
 		screen(a)
 	}
 	for range refreshes {
