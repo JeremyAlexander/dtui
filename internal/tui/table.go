@@ -40,9 +40,10 @@ type tableView struct {
 	cancel      context.CancelFunc
 	parked      bool
 	interrupted bool
-	// started is when the view began to wait, and progress what the source
-	// said last about the call in flight. Both last as long as the wait does,
-	// through every fetch that replaces the call (Refresh).
+	// started is when the view began to wait for the reading it shows next:
+	// it lasts through a fetch that replaces the call (Refresh) and starts
+	// again when the reading is dropped (dropReading). progress is what the
+	// source said last about the call in flight, and each call has its own.
 	progress *callProgress
 	started  time.Time
 	// fresh marks the next API call as a fresh read (Reload).
@@ -358,7 +359,7 @@ func (v *tableView) Refresh() tea.Cmd {
 	v.interrupted = false
 	v.seq++
 	if !v.loading {
-		v.started, v.progress = catalog.Now(), &callProgress{}
+		v.started = catalog.Now()
 	}
 	v.loading = true
 	v.err = nil
@@ -440,6 +441,9 @@ func (v *tableView) fetch() tea.Cmd {
 		if v.fresh {
 			ctx, v.fresh = WithFreshRead(ctx), false
 		}
+		// A line of its own for every call: a source may go on reporting to
+		// a call that was replaced, and that must not reach this one's.
+		v.progress = &callProgress{}
 		return v.ds.call(withProgress(ctx, v.progress), v, v.seq, v.spec.API, v.scope, v.dql)
 	}
 	if v.spec.RecordCap > 0 {
@@ -517,6 +521,9 @@ func (v *tableView) dropReading() bool {
 	}
 	v.all, v.rows, v.summary = nil, nil, nil
 	v.cursor, v.offset = 0, 0
+	// The duration was of those rows, and the wait for the next ones starts
+	// here: whether they are another analysis only the source knows.
+	v.elapsed, v.started = "", catalog.Now()
 	return true
 }
 

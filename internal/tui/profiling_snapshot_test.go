@@ -573,23 +573,70 @@ func TestProfilingFailedRefreshLeavesNoRows(t *testing.T) {
 	}
 }
 
-// The wait is counted from when the view started waiting, and what the source
-// said last stays: a lens switch replaces the call, not the analysis. Another
-// window is another analysis and starts the count again.
-func TestProfilingWaitSurvivesALensSwitch(t *testing.T) {
+// A lens or a window is another reading, and the view cannot tell whether it
+// is another analysis too (allocations is, a thread state is not). So the
+// wait is counted from the switch, and every call has a progress line of its
+// own: the source says again what a running analysis said last, and a call
+// that was replaced, which its analysis may still report to, reaches no
+// line that is shown.
+func TestProfilingWaitIsOfTheCallInFlight(t *testing.T) {
 	pinSnapshotClock(t)
-	a, tv := openProfiling(t, loadProfilingScenario(t, "hotspots-running"))
-	tv.started = catalog.Now().Add(-41 * time.Second)
-	tv.progress.set("the environment accepted the analysis")
-	press(a, key("]"))
+	a, tv, calls, _ := profilingCalls(t)
+	tv.scope.Entity.Name = "shop-backend"
+	tv.started = catalog.Now().Add(-90 * time.Second)
+	ReportProgress((*calls)[0], "the environment accepted the analysis")
 	if got, want := strings.Join(tv.loadingText(), "|"),
-		"analysing the hotspots of shop-backend, which can take minutes — 41s|the environment accepted the analysis"; got != want {
-		t.Errorf("after a lens switch the view says\n %q, want\n %q", got, want)
+		"analysing the hotspots of shop-backend, which can take minutes — 1m|the environment accepted the analysis"; got != want {
+		t.Fatalf("while waiting the view says\n %q, want\n %q", got, want)
+	}
+	for i, l := range tv.spec.Lenses {
+		if l.Name == "allocations" {
+			deliver(a, tv.setLens(i, true))
+		}
+	}
+	if len(*calls) != 2 {
+		t.Fatalf("%d calls after the lens switch, want 2", len(*calls))
+	}
+	const want = "analysing the allocations of shop-backend, which can take minutes — 0s"
+	if got := strings.Join(tv.loadingText(), "|"); got != want {
+		t.Errorf("after the switch to allocations the view says\n %q, want\n %q", got, want)
+	}
+	// The hotspots analysis is still running and reports to the call it
+	// was asked by, cancelled or not.
+	ReportProgress((*calls)[0], "hotspots: still running")
+	if got := strings.Join(tv.loadingText(), "|"); got != want {
+		t.Errorf("a note for the replaced call reached the view:\n %q", got)
+	}
+	ReportProgress((*calls)[1], "allocations: accepted")
+	if got := strings.Join(tv.loadingText(), "|"); got != want+"|allocations: accepted" {
+		t.Errorf("the note of the call in flight is not shown:\n %q", got)
 	}
 	deliver(a, a.setTimeframe(catalog.Timeframe{Label: "30m", Dur: 30 * time.Minute}))
-	if got, want := strings.Join(tv.loadingText(), "|"),
-		"analysing the hotspots of shop-backend, which can take minutes — 0s"; got != want {
+	if got := strings.Join(tv.loadingText(), "|"); got != want {
 		t.Errorf("after a timeframe switch the view says\n %q, want\n %q", got, want)
+	}
+}
+
+// The head line's duration is of the rows under it. A reading that was
+// dropped for the next one takes it along: "0 rows · 38s" named a wait that
+// was over.
+func TestProfilingDroppedReadingTakesItsDuration(t *testing.T) {
+	pinSnapshotClock(t)
+	sc := loadProfilingScenario(t, "hotspots-running")
+	a, tv := openProfiling(t, sc)
+	sc.answer(tv)
+	a.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	if tv.elapsed == "" {
+		t.Fatal("an answered view states no duration")
+	}
+	head := func() string { return strings.Split(ansi.Strip(tv.View(120, 30)), "\n")[0] }
+	answered := head()
+	if !strings.Contains(answered, " · "+tv.elapsed) {
+		t.Fatalf("the answered head line reads %q, want the duration %s in it", answered, tv.elapsed)
+	}
+	press(a, key("]"))
+	if got := strings.TrimSpace(head()); !strings.HasSuffix(got, "0 rows") {
+		t.Errorf("after a lens switch the head line reads %q, want it to end at the row count", got)
 	}
 }
 
