@@ -258,7 +258,14 @@ func TestScanFileSaysWhenItWasCutBeforeAnAnswer(t *testing.T) {
 		{"a method past the byte bound", "Big.java", jvmFrame, "",
 			io.MultiReader(strings.NewReader("class Big {\n"), &filler{maxFileBytes}, strings.NewReader("  void work() {}\n}\n")),
 			Match{Path: "Big.java"}, holds{}, partly},
-		// A frame with no name to look for is missing nothing.
+		// The method is the answer, also where the type's line was not seen.
+		{"a method before the byte bound, without its type", "Big.java", jvmFrame, "",
+			io.MultiReader(strings.NewReader("  void work() {}\n"), &filler{maxFileBytes}),
+			Match{Path: "Big.java", Line: 1, How: Declaration}, holds{function: true}, read},
+		// A frame with no name to look for is looked up by its type.
+		{"a type past the byte bound", "Big.java", Parse("com.example.Big.<clinit>"), "",
+			io.MultiReader(&filler{maxFileBytes}, strings.NewReader("class Big {\n")),
+			Match{Path: "Big.java"}, holds{}, partly},
 		{"a frame without a name", "Big.java", Parse("com.example.Big.<clinit>"), "",
 			io.MultiReader(strings.NewReader("class Big {\n"), &filler{maxFileBytes}),
 			Match{Path: "Big.java", Line: 1, How: TypeOnly}, holds{}, read},
