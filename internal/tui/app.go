@@ -464,7 +464,11 @@ func (a *app) dispatch(msg tea.Msg) tea.Cmd {
 		return tea.Batch(cmds...)
 
 	case pushViewMsg:
-		return a.navigate(a.narrowedTable(msg.spec, msg.scope, msg.filter, msg.searches, msg.facets), msg.replace)
+		v, err := a.narrowedTable(msg.spec, msg.scope, msg.filter, msg.searches, msg.facets)
+		if err != nil {
+			return statusErr(err.Error())
+		}
+		return a.navigate(v, msg.replace)
 
 	case NavigateMsg:
 		return a.navigateExternal(msg)
@@ -927,20 +931,26 @@ func (a *app) launchPage(msg NavigateMsg, tf catalog.Timeframe, warns *[]string)
 			*warns = append(*warns, fmt.Sprintf("%s has no %q lens", spec.Name, msg.Lens))
 		}
 	}
-	return a.narrowedTable(spec, scope, strings.TrimSpace(msg.Filter), msg.Searches, facets), nil
+	v, err := a.narrowedTable(spec, scope, strings.TrimSpace(msg.Filter), msg.Searches, facets)
+	if err != nil {
+		return nil, err
+	}
+	return v, nil
 }
 
 // narrowedTable builds a catalog table with its filter and server narrowing
 // in place: they must be set before navigate runs Init, which composes and
-// fires the query.
-func (a *app) narrowedTable(spec *catalog.Spec, scope catalog.Scope, filter string, searches []string, facets []catalog.Facet) *tableView {
+// fires the query. It fails on an argument the view cannot take (setArg).
+func (a *app) narrowedTable(spec *catalog.Spec, scope catalog.Scope, filter string, searches []string, facets []catalog.Facet) (*tableView, error) {
 	v := newTableView(a.ds, spec, scope)
 	if filter != "" {
-		v.setArg(filter)
+		if err := v.setArg(filter); err != nil {
+			return nil, err
+		}
 	}
 	v.searches = searches
 	v.facets = facets
-	return v
+	return v, nil
 }
 
 // lensIndexByName returns the index of the named lens in the spec, or -1.
@@ -966,8 +976,12 @@ func (a *app) jumpTo(name, filter string) tea.Cmd {
 	named := false
 	if tv, ok := view.(*tableView); ok {
 		if filter != "" {
-			tv.setArg(filter)
-			named = tv.spec.EntityArg && tv.scope.Entity != nil
+			// An argument the view cannot take opens nothing: neither a
+			// pinned entity nor the row filter stands in for it.
+			if err := tv.setArg(filter); err != nil {
+				return statusErr(err.Error())
+			}
+			named = tv.spec.EntityArg
 		} else {
 			restored = a.applyLastFilter(tv)
 		}

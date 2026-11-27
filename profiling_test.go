@@ -1264,9 +1264,9 @@ func TestLaunchingProfilingNeedsAProcessID(t *testing.T) {
 		{"hot", "PROCESS_GROUP_INSTANCE-000000000000A001", ""},
 		{"hotspots", "PROCESS_GROUP-000000000000A001", ""},
 		{"hotspots", "", "hotspots needs the process to analyse: dtui hotspots PROCESS-<16 hex digits>"},
-		{"hotspots", "process-000000000000a001", `hotspots: "process-000000000000a001" is not a process id (PROCESS-<16 hex digits>, upper case)`},
-		{"hotspots", "checkout", `hotspots: "checkout" is not a process id (PROCESS-<16 hex digits>, upper case)`},
-		{"hotspots", "SERVICE-000000000000B001", "hotspots: SERVICE-000000000000B001 is not a process: an analysis runs on a PROCESS, a PROCESS_GROUP_INSTANCE or a PROCESS_GROUP"},
+		{"hotspots", "process-000000000000a001", `hotspots: "process-000000000000a001" is not an entity id (TYPE-<16 hex digits>, upper case)`},
+		{"hotspots", "checkout", `hotspots: "checkout" is not an entity id (TYPE-<16 hex digits>, upper case)`},
+		{"hotspots", "SERVICE-000000000000B001", "hotspots does not take a SERVICE (SERVICE-000000000000B001)"},
 	} {
 		msg := tui.NavigateMsg{Target: tc.view}
 		err := resolveLaunchArg(&msg, tc.arg)

@@ -47,7 +47,9 @@ func loadProfilingScenario(t *testing.T, name string) profilingScenario {
 }
 
 // openProfiling opens a scenario's view the way the command bar does
-// (`:hotspots PROCESS-…`), in the scenario's timeframe and lens, still loading.
+// (`:hotspots PROCESS-…`), in the scenario's timeframe and lens, still
+// loading. An entity the command bar refuses arrives the way one still can:
+// as the scope of a view pushed onto the stack.
 func openProfiling(t *testing.T, sc profilingScenario) (*app, *tableView) {
 	t.Helper()
 	a := testApp(t, "home")
@@ -60,7 +62,12 @@ func openProfiling(t *testing.T, sc profilingScenario) (*app, *tableView) {
 	if sc.Entity != nil {
 		nav.Filter = sc.Entity.ID
 	}
-	_, cmd := a.Update(nav)
+	var msg tea.Msg = nav
+	if spec := catalog.Lookup(sc.View); sc.Entity != nil && CheckEntityArg(spec, sc.Entity.ID) != nil {
+		msg = pushViewMsg{spec: spec, replace: true,
+			scope: catalog.Scope{Timeframe: tf, Entity: &catalog.Entity{ID: sc.Entity.ID, Type: sc.Entity.Type}}}
+	}
+	_, cmd := a.Update(msg)
 	deliver(a, cmd)
 	tv := a.top().(*tableView)
 	if sc.Entity != nil && tv.scope.Entity != nil {
@@ -356,7 +363,10 @@ func hintFor(v *tableView, k string) string {
 	return ""
 }
 
-// `:hotspots PROCESS-…` scopes the view; any other argument filters it.
+// `:hotspots PROCESS-…` scopes the view. Its argument is the process and
+// nothing else: one that is no id of a process opens nothing, wherever it
+// comes from, so it is never a row filter on a view that has no rows without
+// its process, and a pinned process never stands in for it.
 func TestProfilingArgumentIsTheProcess(t *testing.T) {
 	a := testApp(t, "home")
 	_, cmd := a.Update(NavigateMsg{Target: "hotspots", Filter: "PROCESS-000000000000A001"})
@@ -365,10 +375,43 @@ func TestProfilingArgumentIsTheProcess(t *testing.T) {
 	if tv.scope.Entity == nil || tv.scope.Entity.ID != "PROCESS-000000000000A001" || tv.filter != "" {
 		t.Fatalf("entity %+v, filter %q", tv.scope.Entity, tv.filter)
 	}
-	_, cmd = a.Update(NavigateMsg{Target: "hotspots", Filter: "jackson"})
-	deliver(a, cmd)
-	if tv := a.top().(*tableView); tv.scope.Entity != nil || tv.filter != "jackson" {
-		t.Fatalf("a word is a filter: entity %+v, filter %q", tv.scope.Entity, tv.filter)
+	pinned := &catalog.Entity{ID: "PROCESS-000000000000A001", Name: "shop-backend", Type: "PROCESS"}
+	for arg, want := range map[string]string{
+		"jackson":                  `hotspots: "jackson" is not an entity id (TYPE-<16 hex digits>, upper case)`,
+		"process-000000000000b002": `hotspots: "process-000000000000b002" is not an entity id (TYPE-<16 hex digits>, upper case)`,
+		"PROCESS-$(id)":            `hotspots: "PROCESS-$(id)" is not an entity id (TYPE-<16 hex digits>, upper case)`,
+		"SERVICE-000000000000B001": "hotspots does not take a SERVICE (SERVICE-000000000000B001)",
+	} {
+		for _, pin := range []*catalog.Entity{nil, pinned} {
+			// From the command bar.
+			a := testApp(t, "home")
+			calls := 0
+			a.ds.sources = map[string]Source{"hotspots": func(context.Context, catalog.Scope, string) ([]map[string]any, error) {
+				calls++
+				return nil, nil
+			}}
+			a.pin = pin
+			home := a.top()
+			deliver(a, a.jumpTo("hotspots", arg))
+			if a.top() != home || calls != 0 || a.status != want {
+				t.Errorf(":hotspots %s (pin %v): opened %T, %d source calls, status %q; want nothing opened and %q",
+					arg, pin != nil, a.top(), calls, a.status, want)
+			}
+			// As a page request: a deep link, and one an agent sent, whose
+			// reply must name the error (ADR-0019).
+			a.status = ""
+			_, cmd := a.Update(NavigateMsg{Target: "hotspots", Filter: arg})
+			deliver(a, cmd)
+			if a.top() != home || calls != 0 || a.status != "navigate: "+want {
+				t.Errorf("a deep link to hotspots %s: opened %T, %d source calls, status %q", arg, a.top(), calls, a.status)
+			}
+			for _, open := range []bool{true, false} {
+				r := remoteDo(t, a, RemoteRequest{Page: NavigateMsg{Target: "hotspots", Filter: arg}, Open: open, SaveAs: map[bool]string{false: "p"}[open]})
+				if r.err == nil || r.err.Error() != want || r.res.Page != "" || a.top() != home || calls != 0 {
+					t.Errorf("a sent page hotspots %s (open=%v): reply %+v, opened %T, %d source calls; want the error %q", arg, open, r, a.top(), calls, want)
+				}
+			}
+		}
 	}
 	// Other views keep reading an entity id as filter text.
 	_, cmd = a.Update(NavigateMsg{Target: "processes", Filter: "PROCESS-000000000000A001"})

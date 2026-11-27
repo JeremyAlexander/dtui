@@ -569,14 +569,42 @@ func (v *tableView) Crumb() string {
 }
 
 // setArg applies a command-bar or launch argument: the entity to analyse on
-// an EntityArg spec when it is shaped like an entity id, the incremental
-// filter otherwise.
-func (v *tableView) setArg(arg string) {
-	if v.spec.EntityArg && entityIDRe.MatchString(arg) {
-		v.scope.Entity = entityFromID(arg)
-		return
+// an EntityArg spec, the incremental filter on every other. An EntityArg
+// view has no rows without its entity, so an argument that names none is
+// refused (entityArg) and never becomes a filter.
+func (v *tableView) setArg(arg string) error {
+	if !v.spec.EntityArg {
+		v.setFilter(arg)
+		return nil
 	}
-	v.setFilter(arg)
+	e, err := entityArg(v.spec, arg)
+	if err != nil {
+		return err
+	}
+	v.scope.Entity = e
+	return nil
+}
+
+// entityArg reads the argument of an EntityArg view: the id of an entity the
+// spec can scope to (Spec.Scopable).
+func entityArg(spec *catalog.Spec, arg string) (*catalog.Entity, error) {
+	if !entityIDRe.MatchString(arg) {
+		return nil, fmt.Errorf("%s: %q is not an entity id (TYPE-<16 hex digits>, upper case)", spec.Name, arg)
+	}
+	e := entityFromID(arg)
+	if spec.Scopable != nil && !spec.Scopable(*e) {
+		return nil, fmt.Errorf("%s does not take a %s (%s)", spec.Name, e.Type, arg)
+	}
+	return e, nil
+}
+
+// CheckEntityArg reports why arg cannot be the argument of the EntityArg
+// view spec (nil: it can), for a caller that still has someone to tell: the
+// command line of a launch or a send. A page request is checked again when
+// it opens.
+func CheckEntityArg(spec *catalog.Spec, arg string) error {
+	_, err := entityArg(spec, arg)
+	return err
 }
 
 // setFilter pre-fills the incremental filter (command-bar args, home jumps).
