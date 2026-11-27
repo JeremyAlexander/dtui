@@ -93,3 +93,55 @@ stops with "no license file" and leaves both files truncated. Fix: when
 the `replace` lines go and `go.mod` requires a dtctl release that has the
 profiling package, run `make third-party-licenses` (it downloads the
 released modules) and commit the result. Do not edit the files by hand.
+
+## History restores a trail on one window, and can merge two inspectors
+
+A history entry keeps one window, so the covered pages of a restored trail
+come back on the top page's window; its identity omits the lens, and two
+inspectors of allocation rows are told apart by fields those rows do not
+have (`internal/tui/history.go`). True for every view. On the profiling view
+a wrong window costs an analysis of minutes. Fix: store the window and the
+lens per page, and give an API row an identity its spec names.
+
+## Tenant text reaches the screen unsanitised outside the table
+
+`catalog.SafeText` and `oneLine` cover cells, crumbs, captions, the footer
+echo, the status line and a table's error. Not covered, in every view: the
+pin label (`internal/tui/app.go`), the inspector title
+(`internal/tui/inspector.go`) and the history picker, which draws a stored
+trail through `pad` only and so replays a raw name from the history file
+(`internal/tui/history.go`). `SafeText` itself handles C0 and C1 controls
+and lets bidirectional override characters through, which matters most for
+an echo that is copied as it is. Other echoes are not safe to paste either:
+`internal/tui/datasource.go` wraps the DQL in single quotes without escaping
+one inside it and appends segment ids bare, and
+`internal/tui/catalog/livedebugger.go` interpolates an argument bare. Fix:
+pass the three labels through `oneLine`, add the bidirectional controls to
+`SafeText`, and quote every echoed value with `shellSingleQuote`
+(`internal/tui/catalog/patterns.go`).
+
+## Frame labels are fitted before they are made safe
+
+`shortFrame` and `cutLeft` (`internal/tui/catalog/profiling.go`) fit a label
+to its cell by rune and by cell width, and `SafeText` runs afterwards. A
+control character then widens the fitted text, `cutLeft` can split a
+combining sequence and leave the mark on the ellipsis, and an empty package
+segment loses a dot. Hostile or malformed labels only. Fix: make the label
+safe first and cut by grapheme cluster.
+
+## Below 24 lines a table shows its header and no rows
+
+At 80x10 the screen keeps its height but the profiling view draws the
+column header and no row; `tableView.pageSize` returns 10 when the body fits
+only the chrome. 80x24 is the smallest supported size
+(`docs/design/tui.md`). Fix: decide what a table gives up first below it
+(the lens strip, the caption, the footnote) and test at 80x12.
+
+## A profiling answer of another shape reads as an idle process
+
+dtctl's `checkResult` accepts any JSON object as a finished analysis, so an
+answer such as `{"unrelated":1}` reaches the view as "no samples" and is
+kept. The cure is in dtctl. Owed here once dtctl refuses such an answer: a
+test in `profiling_test.go` that sends it through the recorded transport
+and expects `profileMalformed`; `TestProfilingAnswerThatIsNoAnalysis` is
+the place.
