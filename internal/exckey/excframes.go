@@ -438,6 +438,15 @@ func hasAnyPrefix(s string, prefixes []string) bool {
 	return false
 }
 
+func containsAny(s string, parts []string) bool {
+	for _, p := range parts {
+		if strings.Contains(s, p) {
+			return true
+		}
+	}
+	return false
+}
+
 func firstNonEmpty(parts ...string) string {
 	for _, p := range parts {
 		if p != "" {

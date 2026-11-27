@@ -1288,6 +1288,19 @@ func TestJavaTraceWithoutLineNumbers(t *testing.T) {
 			t.Errorf("%s: key %s type %q frames %+v, want %s", name, got.Key, got.Type, got.Frames, lines.Key)
 		}
 	}
+	// However many of its first frames have no line: the notation is voted
+	// on the first lines alone.
+	var mixed strings.Builder
+	mixed.WriteString("java.lang.IllegalStateException: checkout failed\n")
+	for i := range 9 {
+		fmt.Fprintf(&mixed, "\tat shop.Step%d.run(Step%d.java)\n", i, i)
+	}
+	for i := range 26 {
+		fmt.Fprintf(&mixed, "\tat shop.Deep%d.run(Deep%d.java:%d)\n", i, i, i+1)
+	}
+	if got := ParseStackFrames(mixed.String()); len(got) != 35 || got[0].Syntax != StackJava || got[0].Module != "shop.Step0" {
+		t.Errorf("nine frames without lines above 26 with: %d frames, the first %+v", len(got), got[:min(1, len(got))])
+	}
 	// A .NET parameter list still reads as one, whatever its types end in.
 	for _, params := range []string{"System.String", "Shop.Java", "Shop.Source.java, Int32", "SourceFile file"} {
 		stack := "Example.Shop.CheckoutException: failed\n ---> System.InvalidOperationException: Cart 7 is locked\n" +
@@ -1368,6 +1381,106 @@ func TestJavaProseCauseLineChangesNothing(t *testing.T) {
 	prose := mustFingerprint(t, Event{Type: "java.lang.RuntimeException", StackTrace: trace("Caused by: connection reset by peer\n")})
 	if plain.Type != "java.lang.IllegalArgumentException" || prose.Type != plain.Type || prose.Key != plain.Key {
 		t.Errorf("plain %s (%s), with a line of prose %s (%s)", plain.Key, plain.Type, prose.Key, prose.Type)
+	}
+}
+
+// A suppressed exception is left out with everything in it. Its message
+// may take a second line, which the JVM prints at the left margin: that
+// ends nothing, only a line of the exception around the block does. The
+// traces are OpenJDK 21's, of a resource whose close throws.
+func TestJavaSuppressedBlockWithATwoLineMessage(t *testing.T) {
+	const second = "second line\n"
+	plain := func(extra string) string {
+		return "java.lang.IllegalArgumentException: no stock\n\tat Sup.run(Sup.java:9)\n\tat Sup.main(Sup.java:18)\n" +
+			"\tSuppressed: java.lang.IllegalStateException: close failed\n" + extra +
+			"\t\tat Sup$Conn.close(Sup.java:5)\n\t\tat Sup.run(Sup.java:8)\n\t\t... 1 more\n"
+	}
+	chain := func(extra string) string {
+		return "java.lang.RuntimeException: checkout failed\n\tat Sup.outer(Sup.java:13)\n\tat Sup.main(Sup.java:20)\n" +
+			"Caused by: java.lang.IllegalArgumentException: no stock\n\tat Sup.run(Sup.java:9)\n\t... 2 more\n" +
+			"\tSuppressed: java.lang.IllegalStateException: close failed\n" + extra +
+			"\t\tat Sup$Conn.close(Sup.java:5)\n\t\tat Sup.run(Sup.java:8)\n\t\t... 2 more\n"
+	}
+	for name, tc := range map[string]struct {
+		stack string
+		want  []StackFrame
+	}{
+		"one line":           {plain(""), frames(StackJava, "Sup", "run", "Sup", "main")},
+		"two lines":          {plain(second), frames(StackJava, "Sup", "run", "Sup", "main")},
+		"in a chain":         {chain(""), frames(StackJava, "Sup", "run", "Sup", "outer", "Sup", "main")},
+		"two lines in chain": {chain(second), frames(StackJava, "Sup", "run", "Sup", "outer", "Sup", "main")},
+		// What follows the block at the indentation of the exception
+		// around it is that exception's again.
+		"a cause after the block": {plain(second) + "Caused by: java.io.IOException: disk\n\tat Sup.read(Sup.java:30)\n\t... 2 more\n",
+			frames(StackJava, "Sup", "read", "Sup", "run", "Sup", "main")},
+		"a bare frame after it":  {plain(second) + "Sup.late (Sup.java:40)\n", frames(StackJava, "Sup", "run", "Sup", "main", "Sup", "late")},
+		"a frame count after it": {chain(second) + "... 1 more\n", frames(StackJava, "Sup", "run", "Sup", "main")},
+	} {
+		if got := ParseStackFrames(tc.stack); !reflect.DeepEqual(got, tc.want) {
+			t.Errorf("%s: %+v, want %+v", name, got, tc.want)
+		}
+	}
+}
+
+// Lines that only look like the JVM's: a count of something else in a
+// message, a cause that names a number.
+func TestJavaLinesOfAMessageThatReadLikeStructure(t *testing.T) {
+	const enclosing = "com.example.shop.WrapException: wrapped\n\tat com.example.shop.Wrap.wrap(Wrap.java:9)\n\tat com.example.shop.Api.post(Api.java:4)\n"
+	got, typ, _ := parseStack(enclosing + "Caused by: java.lang.IllegalStateException: rejected\n... 2 more errors in payload\n" +
+		"\tat com.example.shop.Cart.fail(Cart.java:12)\n")
+	if want := frames(StackJava, "com.example.shop.Cart", "fail"); !reflect.DeepEqual(got, want) || typ != "java.lang.IllegalStateException" {
+		t.Errorf("a count in a message: %+v (%s), want %+v", got, typ, want)
+	}
+	for _, more := range []string{"... 1 more", "... 1 common frames omitted"} {
+		got, _, _ = parseStack(enclosing + "Caused by: java.lang.IllegalStateException: rejected\n\tat com.example.shop.Cart.fail(Cart.java:12)\n\t" + more + "\n")
+		if want := frames(StackJava, "com.example.shop.Cart", "fail", "com.example.shop.Api", "post"); !reflect.DeepEqual(got, want) {
+			t.Errorf("%s: %+v, want %+v", more, got, want)
+		}
+	}
+	// No type starts with a digit: the line is one of the message.
+	a := mustFingerprint(t, Event{Type: "T", StackTrace: enclosing + "Caused by: java.io.IOException: upstream\n" +
+		"Caused by: 503: Service Unavailable\n\tat com.example.shop.Http.get(Http.java:7)\n\t... 1 more\n"})
+	if a.Type != "java.io.IOException" {
+		t.Errorf("a status after Caused by: type %q", a.Type)
+	}
+	for _, line := range []string{"Caused by: 503: Service Unavailable", "Caused by: 503", "Caused by: 4xx.Error: x"} {
+		if javaCauseRe.MatchString(line) {
+			t.Errorf("%q names a type", line)
+		}
+	}
+	for _, line := range []string{"Caused by: _T: x", "Caused by: $Proxy12", "Caused by: a.B2: x"} {
+		if !javaCauseRe.MatchString(line) {
+			t.Errorf("%q names no type", line)
+		}
+	}
+}
+
+// Generated names of Scala and of Android's D8, written by hand from the
+// compilers' naming: a closure of a method named in any script, and the
+// class D8 generates for a lambda, which is plumbing like the JVM's.
+func TestJavaGeneratedNamesOfOtherCompilers(t *testing.T) {
+	for line, want := range map[string][2]string{
+		"at shop.Cart$$anonfun$size$1.apply(Cart.scala:12)":                {"shop.Cart", "size"},
+		"at shop.Cart$$anonfun$größe$1.apply(Cart.scala:12)":               {"shop.Cart", "größe"},
+		"at shop.Cart$$anonfun$größe$2.apply(Cart.scala:14)":               {"shop.Cart", "größe"},
+		"at shop.Cart.$anonfun$größe$1(Cart.scala:12)":                     {"shop.Cart", "größe"},
+		"at shop.Cart.$anonfun$größe$3$adapted(Cart.scala:12)":             {"shop.Cart", "größe"},
+		"at shop.Cart$$ExternalSyntheticLambda0.run(D8$$SyntheticClass:0)": {javaSyntheticClass, "run"},
+		"at shop.Cart$$ExternalSyntheticLambda3.run(Unknown Source:2)":     {javaSyntheticClass, "run"},
+	} {
+		f, ok := javaFrame(line)
+		if !ok || f.Module != want[0] || f.Function != want[1] {
+			t.Errorf("%s: %q %q %v, want %q %q", line, f.Module, f.Function, ok, want[0], want[1])
+		}
+	}
+	trace := func(n string) string {
+		return "java.lang.IllegalStateException: locked\n\tat shop.Cart.lambda$add$0(Cart.java:12)\n" +
+			"\tat shop.Cart$$ExternalSyntheticLambda" + n + ".run(Unknown Source:2)\n\tat android.os.Handler.handleCallback(Handler.java:942)\n"
+	}
+	a := mustFingerprint(t, Event{Type: "T", StackTrace: trace("0")})
+	b := mustFingerprint(t, Event{Type: "T", StackTrace: trace("3")})
+	if want := frames(StackJava, "shop.Cart", "add"); a.Key != b.Key || !reflect.DeepEqual(a.Frames, want) {
+		t.Errorf("two D8 lambda ordinals: %s %+v and %s", a.Key, a.Frames, b.Key)
 	}
 }
 

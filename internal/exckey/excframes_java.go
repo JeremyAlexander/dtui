@@ -12,11 +12,13 @@ import (
 // after it.
 
 var (
-	javaMoreRe = regexp.MustCompile(`^\.\.\. (\d+) (?:more|common frames omitted)`)
+	// The whole of its line: "... 2 more errors in payload" is a message's.
+	javaMoreRe = regexp.MustCompile(`^\.\.\. (\d+) (?:more|common frames omitted)$`)
 	// The type a "Caused by:" line names, before its message. Words that no
 	// colon follows are prose ("Caused by: connection reset by peer"): no
 	// type, and above the frames of a section a line of its message.
-	javaCauseRe = regexp.MustCompile(`^Caused by: ([\p{L}\p{N}_.$]+)(?::|$)`)
+	// No type starts with a digit ("Caused by: 503: Service Unavailable").
+	javaCauseRe = regexp.MustCompile(`^Caused by: ([\p{L}_$][\p{L}\p{N}_.$]*)(?::|$)`)
 
 	// Classes generated at run time are named after the class they stand in
 	// for plus a suffix that differs in every process: CGLIB subclasses
@@ -31,8 +33,8 @@ var (
 	javaLambdaRe    = regexp.MustCompile(`^lambda\$(.+)\$\d+$`)
 	// A Scala closure is a class "Owner$$anonfun$method$1" up to 2.11 and a
 	// method "$anonfun$method$1" since; either way it is code of the method.
-	javaScalaClassRe  = regexp.MustCompile(`^(.*?)\$\$anonfun\$(\w+)\$\d+`)
-	javaScalaMethodRe = regexp.MustCompile(`^\$anonfun\$(\w+)\$\d+(?:\$adapted)?$`)
+	javaScalaClassRe  = regexp.MustCompile(`^(.*?)\$\$anonfun\$([\p{L}\p{N}_]+)\$\d+`)
+	javaScalaMethodRe = regexp.MustCompile(`^\$anonfun\$([\p{L}\p{N}_]+)\$\d+(?:\$adapted)?$`)
 )
 
 // javaVendorPrefixes are the packages that are never the application's:
@@ -186,6 +188,14 @@ func javaOwns(line string) bool {
 // and is in no root cause.
 const javaSyntheticClass = "$$Lambda"
 
+// javaSyntheticClasses are what the name of such a class holds: the JVM's
+// own, and the one Android's D8 generates
+// ("Cart$$ExternalSyntheticLambda0.run").
+var javaSyntheticClasses = []string{javaSyntheticClass, "$$ExternalSyntheticLambda"}
+
+// javaSuppressedPrefix starts the line of a suppressed exception.
+const javaSuppressedPrefix = "Suppressed:"
+
 // javaFramePrefix starts a frame line as the JVM prints it. Such a line
 // that the reader cannot read as a frame, below the first frame of its
 // section, is still a frame the JVM printed: it holds a place in the
@@ -198,7 +208,7 @@ func javaFrame(line string) (StackFrame, bool) {
 	if !ok {
 		return StackFrame{}, false
 	}
-	if strings.Contains(name, javaSyntheticClass) {
+	if strings.Contains(name, "$$") && containsAny(name, javaSyntheticClasses) {
 		return StackFrame{Module: javaSyntheticClass, Function: name[strings.LastIndexByte(name, '.')+1:], Syntax: StackJava}, true
 	}
 	// Module and class-loader prefixes: "java.base/", "app//".
@@ -261,8 +271,11 @@ type javaSection struct {
 // A "Suppressed:" block is left out with everything in it, including its own
 // "Caused by:" sections. The block reaches as far as the lines are indented
 // at least as deep as its first: Java indents a suppressed exception and its
-// causes one step further than the exception they belong to. A trace whose
-// indentation was stripped therefore ends at its first suppressed block.
+// causes one step further than the exception they belong to. Only a line of
+// the trace's structure ends it (javaStructureLine): the second line of a
+// suppressed exception's message stands at the left margin and ends
+// nothing. A trace whose indentation was stripped therefore ends at its
+// first suppressed block.
 func javaRootCause(lines []string) (root []StackFrame, typ string, atFault bool) {
 	var frames []StackFrame
 	sections := []javaSection{{more: -1, enclosing: -1}}
@@ -297,13 +310,13 @@ func javaRootCause(lines []string) (root []StackFrame, typ string, atFault bool)
 		line := strings.TrimSpace(raw)
 		indent := len(raw) - len(strings.TrimLeft(raw, " \t"))
 		if suppressed >= 0 {
-			if line == "" || indent >= suppressed {
+			if line == "" || indent >= suppressed || !javaStructureLine(line) {
 				continue
 			}
 			suppressed = -1
 		}
 		switch {
-		case strings.HasPrefix(line, "Suppressed:"):
+		case strings.HasPrefix(line, javaSuppressedPrefix):
 			suppressed = indent
 		case strings.HasPrefix(line, javaCausePrefix):
 			cause := javaSection{more: -1, start: len(frames)}
@@ -354,6 +367,17 @@ func javaRootCause(lines []string) (root []StackFrame, typ string, atFault bool)
 		}
 	}
 	return root, typ, true
+}
+
+// javaStructureLine reports whether a line, already trimmed, is one the JVM
+// builds the trace of an exception of: a frame, a count of shared frames,
+// or the header of a cause. Anything else is a line of a message.
+func javaStructureLine(line string) bool {
+	if strings.HasPrefix(line, "...") || strings.HasPrefix(line, javaCausePrefix) {
+		return true
+	}
+	_, ok := javaFrameName(line)
+	return ok
 }
 
 func javaInApp(f StackFrame) bool {
