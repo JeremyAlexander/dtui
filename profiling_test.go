@@ -1105,6 +1105,9 @@ func TestProfilingRefusesAWindowInTheFuture(t *testing.T) {
 			"the selected window starts in the future: there is nothing to analyse yet — t picks another window"},
 		{"open, starting ahead", catalog.Timeframe{From: scenarioNow.Add(time.Hour), Dur: time.Hour},
 			"the selected window starts in the future: there is nothing to analyse yet — t picks another window"},
+		// A window that starts now holds no past time either.
+		{"open, starting now", catalog.Timeframe{From: scenarioNow},
+			"the selected window starts in the future: there is nothing to analyse yet — t picks another window"},
 		{"closed, ending ahead", catalog.Timeframe{From: scenarioNow.Add(-time.Hour), To: scenarioNow.Add(time.Hour), Dur: 2 * time.Hour},
 			"the selected window ends in the future: an analysis covers past time only — t picks another window"},
 		{"empty", catalog.Timeframe{From: scenarioNow.Add(-time.Hour), To: scenarioNow.Add(-time.Hour)},
@@ -1890,4 +1893,103 @@ func waiters(runs *profileRuns) int {
 		n += len(run.waiters)
 	}
 	return n
+}
+
+// longReading is an analysis with more rows than a view shows: n functions,
+// n allocation paths, and for any function n callers and n callees.
+type longReading struct{ n int }
+
+func (r longReading) Functions(string) ([]functionRow, int, string, error) {
+	rows := make([]functionRow, r.n)
+	for i := range rows {
+		rows[i] = functionRow{Function: fmt.Sprintf("com.example.F%04d.run", i), Self: r.n - i, Total: r.n - i}
+	}
+	return rows, r.n * r.n, "", nil
+}
+
+func (r longReading) Focus(_, function string) ([]focusRow, string, error) {
+	rows := []focusRow{
+		{Relation: catalog.ProfRelTotal, Function: function, Samples: r.n},
+		{Relation: "self", Function: function, Samples: 1},
+	}
+	for _, rel := range []string{catalog.ProfRelCaller, catalog.ProfRelCallee} {
+		for i := range r.n {
+			rows = append(rows, focusRow{Relation: rel, Function: fmt.Sprintf("com.example.%s%04d.run", rel, i), Samples: r.n - i})
+		}
+	}
+	return rows, "", nil
+}
+
+func (r longReading) Paths() ([]allocationRow, int64, int64, string) {
+	rows := make([]allocationRow, r.n)
+	for i := range rows {
+		rows[i] = allocationRow{Site: fmt.Sprintf("com.example.S%04d.make", i), AllocBytes: int64(r.n - i), AllocCount: 1}
+	}
+	return rows, int64(r.n * r.n), 0, ""
+}
+
+type longProfiler struct {
+	recordingProfiler
+	n int
+}
+
+func (p *longProfiler) Hotspots(context.Context, profileQuery) (hotspotReading, error) {
+	return longReading{p.n}, nil
+}
+
+func (p *longProfiler) Allocations(context.Context, profileQuery) (allocationReading, error) {
+	return longReading{p.n}, nil
+}
+
+// A view shows the first 300 rows of a reading and 25 callers and 25 callees
+// of a focused function, the largest of each, and its summary keeps the
+// number there were. The recording stays under these caps, so the readings
+// here are built to pass them by one.
+func TestProfilingReadingsAreCapped(t *testing.T) {
+	const rowCap, focusCap = 300, 25 // what the view states; not read from the code under test
+	scope := catalog.Scope{Entity: shopProcess, Timeframe: timeframe(t, "2h")}
+	read := func(n int, lens, arg string) (map[string]any, []map[string]any) {
+		t.Helper()
+		hotspots, allocations := sourcesAt(&longProfiler{n: n})
+		src, s := hotspots, scope
+		if lens == "allocations" {
+			src = allocations
+		}
+		s.Arg = arg
+		records, err := src(context.Background(), s, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return catalog.SplitSummary(records)
+	}
+	for _, lens := range []string{"running", "allocations"} {
+		first := catalog.ProfFunction
+		if lens == "allocations" {
+			first = catalog.ProfSite
+		}
+		for _, n := range []int{rowCap, rowCap + 1} {
+			summary, rows := read(n, lens, "")
+			if len(rows) != rowCap || summary[catalog.ProfSumRows] != float64(n) {
+				t.Errorf("%s with %d rows: %d shown, summary says %v; want %d shown of %d",
+					lens, n, len(rows), summary[catalog.ProfSumRows], rowCap, n)
+			}
+			if got := catalog.Str(rows[0], first); !strings.Contains(got, "0000") {
+				t.Errorf("%s: the first row is %s, want the largest", lens, got)
+			}
+		}
+	}
+	for _, n := range []int{focusCap, focusCap + 1} {
+		summary, rows := read(n, "running", "com.example.Hub.run")
+		count := map[string]int{}
+		for _, row := range rows {
+			count[catalog.Str(row, catalog.ProfRelation)]++
+		}
+		if count[catalog.ProfRelCaller] != focusCap || count[catalog.ProfRelCallee] != focusCap || len(rows) != 2*focusCap+2 {
+			t.Errorf("focus with %d each way: rows by relation %v, want %d callers, %d callees, total and self", n, count, focusCap, focusCap)
+		}
+		if summary[catalog.ProfSumCallers] != float64(n) || summary[catalog.ProfSumCallees] != float64(n) {
+			t.Errorf("focus with %d each way: summary says %v callers and %v callees",
+				n, summary[catalog.ProfSumCallers], summary[catalog.ProfSumCallees])
+		}
+	}
 }
