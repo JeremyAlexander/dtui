@@ -447,3 +447,15 @@ func TestAllocationBarIsAShareOfAllBytes(t *testing.T) {
 		t.Errorf("the bar sorts as %v, want 0.25", k)
 	}
 }
+
+// A reason for an empty result that the view does not know is named: it must
+// not read as the generic "nothing in this timeframe" of a query.
+func TestUnknownEmptyReasonIsNamed(t *testing.T) {
+	got := hotspotsSpec.Empty(Scope{}, map[string]any{ProfSumEmpty: "app_only"})
+	if want := "the analysis has no rows to show, for a reason dtui has no words for (app_only)"; got != want {
+		t.Errorf("an unknown reason reads %q, want %q", got, want)
+	}
+	if got := hotspotsSpec.Empty(Scope{}, map[string]any{}); got != "" {
+		t.Errorf("a result that gives no reason reads %q, want the view's own wording", got)
+	}
+}

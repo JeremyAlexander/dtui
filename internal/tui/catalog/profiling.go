@@ -267,8 +267,11 @@ func profileEmpty(s Scope, summary map[string]any) string {
 			where = "with this function on the stack"
 		}
 		return fmt.Sprintf("no %s samples %s — [ and ] switch the thread state", HotspotState(s), where)
+	case "":
+		return ""
 	}
-	return ""
+	// A reason the source passed on from dtctl and this view does not know.
+	return fmt.Sprintf("the analysis has no rows to show, for a reason dtui has no words for (%s)", Str(summary, ProfSumEmpty))
 }
 
 var hotspotsSpec = &Spec{
