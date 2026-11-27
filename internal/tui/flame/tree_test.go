@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"unsafe"
 )
 
 // build makes a tree from folded lines, "a;b;c 3" or, for several lenses,
@@ -300,7 +301,7 @@ func TestTreeIsBounded(t *testing.T) {
 	b.Add([]string{"a", "b"}, []int64{8})
 	b.Add([]string{"a", "z", "q"}, []int64{16})
 	tree := b.Tree()
-	want := "all 0/31\n  (frames not kept) 4/4\n  a 0/27\n    (frames not kept) 18/18\n    b 8/9\n      (frames not kept) 1/1\n"
+	want := "all 0/31\n  a 0/27\n    b 8/9\n      (frames not kept) 1/1\n    (frames not kept) 18/18\n  (frames not kept) 4/4\n"
 	if got := dump(tree); got != want {
 		t.Errorf("got:\n%swant:\n%s", got, want)
 	}
@@ -392,5 +393,39 @@ func TestBuilderOutlivesItsTree(t *testing.T) {
 	}
 	if got := dump(b.Tree()); got != "all 0/3\n  a 1/1\n  b 0/2\n    c 2/2\n" {
 		t.Errorf("the second tree:\n%s", got)
+	}
+}
+
+// A full tree keeps the names of the frames it keeps, and no others: the
+// bound is on what the tree holds, not on its frames alone. And a name it
+// keeps is its own copy, not a piece of the stack it came in, which would
+// keep the whole stack alive.
+func TestFullTreeKeepsNoLabelWithoutAFrame(t *testing.T) {
+	b := NewBuilder(1)
+	b.Limit(3)
+	b.Add([]string{"a", "b"}, []int64{1})
+	for i := range 1000 {
+		b.Add([]string{"a", fmt.Sprintf("dropped%d", i)}, []int64{1})
+	}
+	b.Add([]string{"new", "b"}, []int64{1}) // b is known, but not under a new frame
+	tree := b.Tree()
+	if tree.Len() != 5 || len(tree.labels) != 4 || len(b.labelIDs) != 2 {
+		t.Errorf("%d frames, %d labels (%d interned); want the root, a, b and two remainders, and the names of those", tree.Len(), len(tree.labels), len(b.labelIDs))
+	}
+	if tree.Folded() != 1001 {
+		t.Errorf("%d stacks folded, want 1001", tree.Folded())
+	}
+	g := New(tree)
+	if g.SearchLabel("dropped7") || g.Searching() {
+		t.Error("a function without a frame was found")
+	}
+
+	stack := strings.Repeat("x", 4096) + ";leaf"
+	frames := strings.Split(stack, ";")
+	b = NewBuilder(1)
+	b.Add(frames, []int64{1})
+	kept := b.Tree().Label(2)
+	if kept != "leaf" || unsafe.StringData(kept) == unsafe.StringData(frames[1]) {
+		t.Errorf("the label %q shares its bytes with the stack it came in", kept)
 	}
 }

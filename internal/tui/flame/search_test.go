@@ -215,3 +215,17 @@ func TestSearchPassesOverAMarker(t *testing.T) {
 		}
 	}
 }
+
+// A search for a function finds a frame, not a name: a name the tree holds
+// without a frame of it is not found.
+func TestSearchLabelNeedsAFrame(t *testing.T) {
+	tree := build(t, 1, "a;b 1")
+	tree.labels = append(tree.labels, "ghost")
+	g := New(tree)
+	if g.SearchLabel("ghost") || g.Searching() || g.SearchedFunction() != "" {
+		t.Errorf("a name without a frame was found: pattern %q", g.Pattern())
+	}
+	if !g.SearchLabel("b") || g.SearchedFunction() != "b" {
+		t.Error("a function with a frame was not found")
+	}
+}

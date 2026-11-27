@@ -32,8 +32,8 @@ func TestFunction(t *testing.T) {
 		{"a leaf", []string{"main", "b"}, 0, Function{
 			Paths: 1, Self: 6, Total: 6, Callers: []Share{{"main", 6}},
 		}},
-		{"callers of a frame under the root are the root", []string{"main"}, 0, Function{
-			Paths: 1, Self: 0, Total: 15, Callers: []Share{{RootLabel, 15}},
+		{"a frame under the root has no caller: it starts its stacks", []string{"main"}, 0, Function{
+			Paths: 1, Self: 0, Total: 15, Starts: 15,
 			Callees: []Share{{"a", 9}, {"b", 6}},
 		}},
 	} {

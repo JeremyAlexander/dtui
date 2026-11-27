@@ -10,6 +10,7 @@ package flame
 import (
 	"math"
 	"slices"
+	"strings"
 )
 
 // NodeID names one frame of a Tree: one function at one place in the call
@@ -50,8 +51,8 @@ const (
 type Tree struct {
 	lenses int
 	labels []string
-	// nodes are in preorder with the children of a frame ordered by label,
-	// so one frame's subtree is the run of nodes from itself to its end.
+	// nodes are in preorder with the children of a frame ordered by label
+	// and its remainder last, so one frame's subtree is the run of nodes from itself to its end.
 	nodes []node
 	// self and total hold lenses values per node, node by node.
 	self, total []int64
@@ -127,13 +128,13 @@ func (b *Builder) Add(frames []string, weights []int64) {
 		if frame == "" {
 			continue
 		}
-		label, known := b.labelIDs[frame]
-		if !known {
-			label = int32(len(b.labels))
-			b.labelIDs[frame] = label
-			b.labels = append(b.labels, frame)
+		// The bound is looked at before the name is kept: a full tree
+		// keeps no name it has no frame for.
+		label, named := b.labelIDs[frame]
+		child, known := int32(0), false
+		if named {
+			child, known = b.children[edge{at, label}]
 		}
-		child, known := b.children[edge{at, label}]
 		if !known && len(b.nodes)-b.rests >= b.maxNodes {
 			// The tree is full: what is left of the stack weighs on the
 			// remainder of the deepest frame it reached. A frame has one
@@ -146,6 +147,14 @@ func (b *Builder) Add(frames []string, weights []int64) {
 			at = rest
 			b.folded++
 			break
+		}
+		if !named {
+			// A copy of its own: frame is a piece of the whole stack, and
+			// would keep all of it alive for as long as the tree lives.
+			frame = strings.Clone(frame)
+			label = int32(len(b.labels))
+			b.labelIDs[frame] = label
+			b.labels = append(b.labels, frame)
 		}
 		if !known {
 			child = b.child(at, label)
@@ -190,6 +199,14 @@ func (b *Builder) Tree() *Tree {
 	}
 	for i := range n {
 		slices.SortFunc(kids[first[i]:first[i+1]], func(x, y int32) int {
+			// A remainder is no function and stands after the functions,
+			// whatever its label would sort like.
+			if rx, ry := b.nodes[x].label == restLabelID, b.nodes[y].label == restLabelID; rx != ry {
+				if rx {
+					return 1
+				}
+				return -1
+			}
 			switch lx, ly := b.labels[b.nodes[x].label], b.labels[b.nodes[y].label]; {
 			case lx < ly:
 				return -1

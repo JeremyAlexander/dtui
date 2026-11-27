@@ -20,8 +20,16 @@ type Function struct {
 	// one caller and at most one callee, as in the functions table's callers
 	// and callees: the caller is the frame above the function's outermost
 	// call on the stack, and the callee the frame under its innermost one.
-	// So the callers add up to Total, and the callees with Self do.
+	// So the callers with Starts add up to Total, and the callees with Self
+	// and Folded do.
 	Callers, Callees []Share
+	// Starts is the weight of the stacks the function is the outermost
+	// frame of: they have no caller. The root is every stack, not a
+	// function, and is not listed as one.
+	Starts int64
+	// Folded is the weight of the stacks that go on under the function into
+	// frames a full tree did not keep: callees there is no name for.
+	Folded int64
 }
 
 // Share is a function and a weight it accounts for.
@@ -30,11 +38,11 @@ type Share struct {
 	Weight int64
 }
 
-// Function adds up the function of a frame over the whole tree. The root is
-// no function: for it, for no frame and for an unknown lens the answer is
-// empty. It reads every frame once.
+// Function adds up the function of a frame over the whole tree. The root
+// and a remainder are no function: for them, for no frame and for an
+// unknown lens the answer is empty. It reads every frame once.
 func (t *Tree) Function(n NodeID, lens int) Function {
-	if !t.has(n) || n == Root || lens < 0 || lens >= t.lenses {
+	if !t.has(n) || n == Root || t.IsRest(n) || lens < 0 || lens >= t.lenses {
 		return Function{}
 	}
 	label := t.nodes[n].label
@@ -63,6 +71,11 @@ func (t *Tree) Function(n NodeID, lens int) Function {
 		}
 		if nd.label != label {
 			if nd.parent != Root && t.nodes[nd.parent].label == label {
+				if nd.label == restLabelID {
+					// A remainder is no function, and has nothing under it.
+					f.Folded = satAdd(f.Folded, total)
+					continue
+				}
 				callees[nd.label] = satAdd(callees[nd.label], total)
 				under = append(under, subtree{callee: nd.label, end: nd.end})
 			}
@@ -79,7 +92,11 @@ func (t *Tree) Function(n NodeID, lens int) Function {
 		if i >= inside {
 			f.Total = satAdd(f.Total, total)
 			inside = nd.end
-			callers[t.nodes[nd.parent].label] = satAdd(callers[t.nodes[nd.parent].label], total)
+			if nd.parent == Root {
+				f.Starts = satAdd(f.Starts, total)
+			} else {
+				callers[t.nodes[nd.parent].label] = satAdd(callers[t.nodes[nd.parent].label], total)
+			}
 		}
 	}
 	for callee, weight := range callees {

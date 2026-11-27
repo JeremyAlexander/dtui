@@ -131,7 +131,7 @@ func TestGraphWalk(t *testing.T) {
 		{"zoom out returns to the zoom before", "down zoom down zoom out", "+++++", "sel=main;a zoom=main top=0"},
 		{"zoom out of the first zoom is no zoom", "down zoom down zoom out out out", "++++++-", "sel=main zoom=all top=0"},
 		{"unzoom leaves every zoom, the selection on the last one", "down zoom down zoom down unzoom unzoom", "++++++-", "sel=main;a zoom=all top=0"},
-		{"zooming into a caller of the zoom is a zoom like any other", "down down zoom up zoom out", "++++++", "sel=main zoom=main;a top=0"},
+		{"zooming into a caller of the zoom forgets the zoom under it", "down down zoom up zoom out", "++++++", "sel=main zoom=all top=0"},
 		{"reset is the graph as first shown", "down down zoom search:a reset clear", "++++.-", "sel=all zoom=all top=0"},
 
 		{"a lens moves a selection without weight to its nearest caller on screen", "down down right lens:1", "+++.", "sel=main zoom=all top=0"},
@@ -234,7 +234,7 @@ func TestGraphInfo(t *testing.T) {
 		{"callees narrower than a cell are counted", "", m, Info{Self: 41, Total: 100, All: 200, Zoom: 200, Hidden: 2, HiddenWeight: 4}},
 		{"zoomed, the zoom is the second whole", "down zoom", m, Info{Self: 41, Total: 100, All: 200, Zoom: 100, Hidden: 2, HiddenWeight: 4}},
 		{"with room for them, no callee is hidden", "size:100x10 down zoom", m, Info{Self: 41, Total: 100, All: 200, Zoom: 100}},
-		{"a frame that is not on screen has no hidden callees to speak of", "down right zoom", m, Info{Self: 41, Total: 100, All: 200, Zoom: 100}},
+		{"a frame outside the zoom has no share of it and no hidden callees to speak of", "down right zoom", m, Info{Self: 41, Total: 100, All: 200}},
 		{"another lens", "lens:1", a, Info{Self: 1, Total: 1, All: 10, Zoom: 10}},
 		{"a callee without weight in the lens is not hidden, it is not there", "lens:1", m, Info{Total: 1, All: 10, Zoom: 10}},
 		{"a frame narrower than a cell", "", b, Info{Self: 2, Total: 2, All: 200, Zoom: 200}},
@@ -293,5 +293,124 @@ func TestGraphKeepsItsLayout(t *testing.T) {
 		if g.Layout() == before {
 			t.Errorf("%s kept the old layout", step)
 		}
+	}
+}
+
+// A caller of the zoomed frame is no part of it: it has no share of the
+// zoomed frame (which would be over 100%), and the callees the zoom left
+// out are not "too narrow to draw".
+func TestGraphInfoOfACallerOfTheZoom(t *testing.T) {
+	tree := build(t, 1, "main;a 50", "main;b 50")
+	g := New(tree)
+	g.Resize(40, 10)
+	run(t, g, "down down zoom up")
+	main, a := find(t, tree, "main"), find(t, tree, "main", "a")
+	if g.Zoom() != a || g.Selected() != main {
+		t.Fatalf("the fixture: %s", where(g))
+	}
+	if got, want := g.Info(main), (Info{Total: 100, All: 100}); got != want {
+		t.Errorf("the caller of the zoom: %+v, want %+v", got, want)
+	}
+	if got, want := g.Info(Root), (Info{Total: 100, All: 100}); got != want {
+		t.Errorf("the root above a zoom: %+v, want %+v", got, want)
+	}
+	if got, want := g.Info(a), (Info{Self: 50, Total: 50, All: 100, Zoom: 50}); got != want {
+		t.Errorf("the zoomed frame: %+v, want %+v", got, want)
+	}
+}
+
+// down goes to the heaviest callee on screen, as flamelens does, also where
+// rounding gave a lighter one the wider cell; the leftmost of equals.
+func TestGraphMovesDownToTheHeaviest(t *testing.T) {
+	tree := build(t, 1, "top 93", "top;p 3", "top;q 4")
+	g := New(tree)
+	g.Resize(40, 10)
+	run(t, g, "down")
+	p, q := find(t, tree, "top", "p"), find(t, tree, "top", "q")
+	l := g.Layout()
+	cp, okp := l.Find(tree, p)
+	cq, okq := l.Find(tree, q)
+	if !okp || !okq {
+		t.Fatalf("both callees are to be on screen at 40 cells: %v %v", okp, okq)
+	}
+	if run(t, g, "down"); g.Selected() != q {
+		t.Errorf("down went to %s (cells: p %d, q %d), want the heavier q", where(g), cp.W, cq.W)
+	}
+	even := New(build(t, 1, "top;p 5", "top;q 5"))
+	even.Resize(40, 10)
+	if run(t, even, "down down"); where(even) != "sel=top;p zoom=all top=0" {
+		t.Errorf("of equals: %s", where(even))
+	}
+}
+
+// Zooming into a caller of the zoomed frame leaves the deeper zoom behind:
+// backspace then goes out, never in.
+func TestGraphZoomIntoACallerForgetsTheDeeperZoom(t *testing.T) {
+	g := New(build(t, 2, walkLines...))
+	g.Resize(20, 10)
+	if got := run(t, g, "down down zoom up zoom out"); got != "+++++"+"+" {
+		t.Fatalf("answers %q", got)
+	}
+	if where(g) != "sel=main zoom=all top=0" {
+		t.Errorf("after zoom main;a, up, zoom main, out: %s", where(g))
+	}
+	// A zoom deeper inside the zoom still returns to the one around it.
+	g.Reset()
+	run(t, g, "down zoom down zoom out")
+	if where(g) != "sel=main;a zoom=main top=0" {
+		t.Errorf("after zoom main, zoom main;a, out: %s", where(g))
+	}
+}
+
+// A remainder is not a function: it is no other call of the selected
+// remainder, it is not zoomed into, and it stands after the functions.
+func TestGraphTreatsARemainderAsNoFunction(t *testing.T) {
+	b := NewBuilder(1)
+	b.Limit(3)
+	b.Add([]string{"a", "b"}, []int64{4})
+	b.Add([]string{"a", "c"}, []int64{2})
+	b.Add([]string{"b", "d"}, []int64{2})
+	b.Add([]string{"a", "b", "e"}, []int64{1})
+	tree := b.Tree()
+	want := "all 0/9\n  a 0/7\n    b 4/5\n      (frames not kept) 1/1\n    (frames not kept) 2/2\n  (frames not kept) 2/2\n"
+	if got := dump(tree); got != want {
+		t.Fatalf("a remainder is to stand after the functions:\n%swant:\n%s", got, want)
+	}
+	g := New(tree)
+	g.Resize(90, 10)
+	rest := find(t, tree, RestLabel)
+	if run(t, g, "down right"); g.Selected() != rest || !tree.IsRest(rest) {
+		t.Fatalf("the fixture: %s", where(g))
+	}
+	for n := NodeID(0); int(n) < tree.Len(); n++ {
+		if g.SameAsSelected(n) {
+			t.Errorf("%v is marked as another call of the selected remainder", tree.Path(n))
+		}
+	}
+	if g.ZoomIn() || g.Zoomed() {
+		t.Errorf("a remainder was zoomed into: %s", where(g))
+	}
+	f := tree.Function(find(t, tree, "a"), 0)
+	for _, callee := range f.Callees {
+		if callee.Label == RestLabel {
+			t.Errorf("the remainder is listed among the callees: %+v", f.Callees)
+		}
+	}
+	if f.Folded != 2 || f.Total != 7 || len(f.Callees) != 1 {
+		t.Errorf("a: %+v; want one callee and 2 of its 7 samples in frames that were not kept", f)
+	}
+}
+
+// The root is not a function, so it is nobody's caller: what starts a stack
+// has no caller, and Starts says how much of it.
+func TestFunctionHasNoCallerNamedAfterTheRoot(t *testing.T) {
+	tree := build(t, 1, "main;work 30", "work 15", "x;main 5")
+	main := tree.Function(find(t, tree, "main"), 0)
+	if len(main.Callers) != 1 || main.Callers[0] != (Share{Label: "x", Weight: 5}) || main.Starts != 30 || main.Total != 35 {
+		t.Errorf("main: callers %+v, starts %d of %d", main.Callers, main.Starts, main.Total)
+	}
+	work := tree.Function(find(t, tree, "work"), 0)
+	if len(work.Callers) != 1 || work.Callers[0] != (Share{Label: "main", Weight: 30}) || work.Starts != 15 {
+		t.Errorf("work: callers %+v, starts %d", work.Callers, work.Starts)
 	}
 }

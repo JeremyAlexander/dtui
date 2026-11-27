@@ -54,11 +54,11 @@ func refFunction(stacks []refStack, label string, lens int) (f Function, callers
 			}
 		}
 		f.Total += w
-		caller := RootLabel
 		if first > 0 {
-			caller = s.frames[first-1]
+			callers[s.frames[first-1]] += w
+		} else {
+			f.Starts += w // the outermost frame of its stack has no caller
 		}
-		callers[caller] += w
 		if last == len(s.frames)-1 {
 			f.Self += w
 		} else {
@@ -108,7 +108,7 @@ func TestTreeAgreesWithTheStacks(t *testing.T) {
 				}
 				got := tree.Function(n, lens)
 				want, callers, callees := refFunction(stacks, tree.Label(n), lens)
-				if got.Paths != want.Paths || got.Self != want.Self || got.Total != want.Total ||
+				if got.Paths != want.Paths || got.Self != want.Self || got.Total != want.Total || got.Starts != want.Starts || got.Folded != 0 ||
 					fmt.Sprint(shareMap(got.Callers)) != fmt.Sprint(callers) || fmt.Sprint(shareMap(got.Callees)) != fmt.Sprint(callees) {
 					t.Fatalf("seed %d, lens %d, function %s:\n got  %+v\n want %+v callers %v callees %v\n of %v",
 						seed, lens, tree.Label(n), got, want, callers, callees, stacks)

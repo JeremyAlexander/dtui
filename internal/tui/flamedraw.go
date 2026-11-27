@@ -116,7 +116,14 @@ func (v *flameView) View(width, height int) string {
 	case v.err != nil:
 		// It may repeat tenant data: one safe line, wrapped under itself.
 		b.WriteString("\n")
-		for i, line := range flameWrap(oneLine(v.err.Error()), width-2, " ") {
+		lines := flameWrap(oneLine(v.err.Error()), width-2, " ")
+		// The strip and a blank line are above it. What does not fit the
+		// body is cut, and the cut is marked.
+		if room := max(height-2, 1); len(lines) > room {
+			lines = lines[:room]
+			lines[room-1] = ansi.Truncate(lines[room-1], max(width-3, 1), "") + "…"
+		}
+		for i, line := range lines {
 			lead := "  "
 			if i == 0 {
 				lead = "✗ "
@@ -251,9 +258,12 @@ func (v *flameView) captionLines() []string {
 		}
 		text = strings.Join(v.spec.Caption(v.scope, summary), " · ")
 	}
+	// That the graph is full is said first: it is the one disclosure of a
+	// graph that does not show every frame, and the end of a caption is
+	// what a narrow screen cuts.
 	if tree := v.graph.Tree(); !v.loading && tree.Folded() > 0 {
-		text += fmt.Sprintf(" · the graph is full: it keeps %s frames, the deeper frames of %s stacks are folded into %s",
-			catalog.GroupInt(int64(flameMaxFrames)), catalog.GroupInt(int64(tree.Folded())), flame.RestLabel)
+		text = fmt.Sprintf("the graph is full: it keeps %s frames, the deeper frames of %s stacks are folded into %s · %s",
+			catalog.GroupInt(int64(flameMaxFrames)), catalog.GroupInt(int64(tree.Folded())), flame.RestLabel, text)
 	}
 	lines := flameWrap(oneLine(text), v.width-2, " ")
 	if len(lines) > 2 {
@@ -323,10 +333,10 @@ func (v *flameView) renderGraph(b *strings.Builder, width int) {
 // of the graph it matches, counting each stack once.
 func (v *flameView) matchLine() string {
 	g := v.graph
-	share, whole := g.Share(), g.Info(flame.Root)
-	text := fmt.Sprintf("%s samples · %s of all", catalog.GroupInt(share.All), percent(share.All, whole.All))
+	share, tree := g.Share(), g.Tree()
+	text := fmt.Sprintf("%s samples · %s of all", catalog.GroupInt(share.All), percent(share.All, tree.Total(flame.Root, g.Lens())))
 	if g.Zoomed() {
-		text += fmt.Sprintf(" · %s of the zoomed frame", percent(share.Zoom, whole.Zoom))
+		text += fmt.Sprintf(" · %s of the zoomed frame", percent(share.Zoom, tree.Total(g.Zoom(), g.Lens())))
 	}
 	if share.All == 0 {
 		text = "no " + catalog.HotspotState(v.scope) + " samples"
@@ -364,12 +374,17 @@ func (v *flameView) nameLines() []string {
 func (v *flameView) numberLines() []string {
 	g := v.graph
 	info := g.Info(g.Selected())
+	own := "self "
+	if g.Tree().IsRest(g.Selected()) {
+		own = "folded " // a remainder runs nothing itself
+	}
 	parts := []string{
-		"self " + catalog.GroupInt(info.Self),
+		own + catalog.GroupInt(info.Self),
 		"total " + catalog.GroupInt(info.Total),
 		percent(info.Total, info.All) + " of all",
 	}
-	if g.Zoomed() {
+	// A caller of the zoomed frame is not part of it: it has no share of it.
+	if g.Zoomed() && info.Zoom > 0 {
 		parts = append(parts, percent(info.Total, info.Zoom)+" of the zoomed frame")
 	}
 	if info.Hidden > 0 {
@@ -455,6 +470,9 @@ func (p *flamePaint) row(b *strings.Builder, cells []flame.Cell, level int) {
 		}
 		label := tree.Label(c.Node)
 		ink, edge := p.ramp[theme.FlameStep(label)], flameEdge
+		if tree.IsRest(c.Node) {
+			ink = p.more // not a function: none of their colours
+		}
 		switch {
 		case c.Node == p.g.Selected():
 			ink, edge = p.selected, flameEdgeSel

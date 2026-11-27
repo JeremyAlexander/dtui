@@ -32,7 +32,7 @@ type Direction int
 const (
 	// Up moves to the caller.
 	Up Direction = iota
-	// Down moves to the widest callee on screen, the leftmost of equals.
+	// Down moves to the heaviest callee on screen, the leftmost of equals.
 	Down
 	// Left moves to the frame before this one on its level, whoever called it.
 	Left
@@ -160,10 +160,12 @@ func (g *Graph) Move(d Direction) bool {
 	case Up:
 		to = g.tree.Parent(g.sel)
 	case Down:
-		widest := 0
+		// By weight, not by width: rounding to cells can give the lighter
+		// of two callees the wider one.
+		heaviest := int64(0)
 		for c := g.tree.FirstChild(g.sel); c != None; c = g.tree.NextSibling(c) {
-			if cell, ok := l.Find(g.tree, c); ok && cell.W > widest {
-				to, widest = c, cell.W
+			if _, ok := l.Find(g.tree, c); ok && g.tree.Total(c, g.lens) > heaviest {
+				to, heaviest = c, g.tree.Total(c, g.lens)
 			}
 		}
 	case Left, Right:
@@ -240,16 +242,25 @@ func (g *Graph) follow() {
 }
 
 // ZoomIn draws the selected frame across the whole width and remembers the
-// zoom it replaces, for ZoomOut. Zooming into the root is no zoom at all and
-// forgets every zoom. It reports whether the screen changed.
+// zooms around it, for ZoomOut: a zoom that is not a caller of the new one
+// (the reader went up from it) is forgotten, so that zooming out never
+// zooms in. Zooming into the root is no zoom at all and forgets every zoom,
+// and a remainder is no frame to zoom into. It reports whether the screen
+// changed.
 func (g *Graph) ZoomIn() bool {
-	switch g.sel {
-	case g.Zoom():
+	switch {
+	case g.sel == g.Zoom() || g.tree.IsRest(g.sel):
 		return false
-	case Root:
+	case g.sel == Root:
 		g.zooms = nil
 	default:
-		g.zooms = append(g.zooms, g.sel)
+		around := g.zooms[:0]
+		for _, z := range g.zooms {
+			if z != g.sel && g.tree.Within(z, g.sel) {
+				around = append(around, z)
+			}
+		}
+		g.zooms = append(around, g.sel)
 	}
 	g.invalidate()
 	g.settle()
@@ -295,11 +306,14 @@ type Info struct {
 	// Self and Total are the frame's weights in the graph's lens.
 	Self, Total int64
 	// All is the root's total and Zoom the zoomed frame's: the two wholes a
-	// frame's share is read against.
+	// frame's share is read against. Zoom is 0 for a frame that is not
+	// inside the zoomed frame: a caller of it has no share of it.
 	All, Zoom int64
 	// Hidden counts the frames it called that are narrower than a cell, for
-	// a frame on screen, and HiddenWeight is what they weigh together.
-	// Zooming in shows them.
+	// a frame on screen inside the zoom, and HiddenWeight is what they
+	// weigh together. Zooming in shows them. The callees of a caller of the
+	// zoomed frame that the zoom leaves out are not among them: they are
+	// not too narrow, they are not asked for.
 	Hidden       int
 	HiddenWeight int64
 }
@@ -310,8 +324,11 @@ func (g *Graph) Info(n NodeID) Info {
 		Self:  g.tree.Self(n, g.lens),
 		Total: g.tree.Total(n, g.lens),
 		All:   g.tree.Total(Root, g.lens),
-		Zoom:  g.tree.Total(g.Zoom(), g.lens),
 	}
+	if !g.tree.Within(g.Zoom(), n) {
+		return info
+	}
+	info.Zoom = g.tree.Total(g.Zoom(), g.lens)
 	l := g.Layout()
 	if _, shown := l.Find(g.tree, n); !shown {
 		return info

@@ -2,6 +2,7 @@ package flame
 
 import (
 	"regexp"
+	"slices"
 )
 
 // search is a pattern and the labels it matches. A label is matched once,
@@ -56,12 +57,12 @@ func (g *Graph) SearchLabel(label string) bool {
 	if err := g.Search("^" + regexp.QuoteMeta(label) + "$"); err != nil {
 		return false
 	}
-	for i, hit := range g.search.labels {
-		// The root's label names no function, whatever it is spelled like.
-		if hit && i != 0 {
-			g.search.function = label
-			return true
-		}
+	// A frame is asked for, not a name: the root's label names no function
+	// whatever it is spelled like, and a name without a frame is not there.
+	hits := g.search.labels
+	if slices.ContainsFunc(g.tree.nodes[1:], func(nd node) bool { return hits[nd.label] }) {
+		g.search.function = label
+		return true
 	}
 	g.ClearSearch()
 	return false
@@ -104,7 +105,7 @@ func (g *Graph) Matches(n NodeID) bool {
 // function, the thing to highlight while no search says otherwise.
 func (g *Graph) SameAsSelected(n NodeID) bool {
 	return g.sel != Root && n != g.sel && n != Root && g.tree.has(n) &&
-		g.tree.nodes[n].label == g.tree.nodes[g.sel].label
+		g.tree.nodes[n].label == g.tree.nodes[g.sel].label && g.tree.nodes[n].label != restLabelID
 }
 
 // Share is the weight the search matches, in the lens and zoom of the

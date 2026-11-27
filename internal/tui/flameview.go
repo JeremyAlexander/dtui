@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -399,6 +400,9 @@ func (v *flameView) Selection() (map[string]any, *catalog.Entity) {
 // YankText copies the selected frame's function, spelled out.
 func (v *flameView) YankText() (text, label string, ok bool) {
 	fn, ok := v.selectedFunction()
+	if ok && v.graph.Tree().IsRest(v.graph.Selected()) {
+		return "", "", false // a remainder is no function
+	}
 	return fn, "function", ok
 }
 
@@ -423,7 +427,7 @@ func (v *flameView) Hints() []keyHint {
 	hints := []keyHint{{"↑↓←→", "move"}, {"enter", "zoom"}}
 	// The key is offered where it has a chance: on a frame that may have a
 	// file under the directory dtui was started in.
-	if fn, ok := v.selectedFunction(); ok && v.ds.source.likely(fn) {
+	if fn, ok := v.selectedFunction(); ok && !g.Tree().IsRest(g.Selected()) && v.ds.source.likely(fn) {
 		hints = append(hints, keyHint{"O", "open source"})
 	}
 	hints = append(hints, keyHint{"tab", "functions"}, keyHint{"/", "search"})
@@ -520,12 +524,26 @@ func flameTree(rows []map[string]any, lenses int) *flame.Tree {
 	weights := make([]int64, lenses)
 	for _, row := range rows {
 		for i := range weights {
-			n, _ := catalog.FloatValue(row[states[i]])
-			weights[i] = int64(n)
+			weights[i] = flameCount(row[states[i]])
 		}
 		b.Add(strings.Split(catalog.Str(row, catalog.ProfStack), catalog.ProfStackSep), weights)
 	}
 	return b.Tree()
+}
+
+// flameCount is a sample count as an integer. The counts arrive as floating
+// point numbers: one beyond the largest integer (dtctl stops its sums there)
+// is that integer, and what is no count is none. Converting such a number
+// unchecked is left to the processor, and gives a negative count on some.
+func flameCount(v any) int64 {
+	n, _ := catalog.FloatValue(v)
+	switch {
+	case n != n || n < 1: // not a number, or nothing
+		return 0
+	case n >= math.MaxInt64:
+		return math.MaxInt64
+	}
+	return int64(n)
 }
 
 // built shows a new analysis. The graph starts at its root; a search that
@@ -608,6 +626,9 @@ func (v *flameView) handleKey(msg tea.KeyMsg) tea.Cmd {
 	case "G", "end":
 		g.ScrollBottom()
 	case "enter":
+		if g.Tree().IsRest(g.Selected()) {
+			return status("frames that were not kept are not a frame to zoom into: there is nothing under them")
+		}
 		g.ZoomIn()
 	case "O":
 		if g.Tree().IsRest(g.Selected()) {
@@ -672,6 +693,8 @@ func (v *flameView) stepMatch(forward bool) tea.Cmd {
 	}
 	found, wrapped := v.graph.NextMatch(forward)
 	switch {
+	case !found && v.graph.Share().All < 1:
+		return status("nothing matches the search in this thread state: / searches for something else, esc clears it")
 	case !found:
 		return status("no match is wide enough to draw here: zoom in, or widen the terminal")
 	case wrapped && forward:
