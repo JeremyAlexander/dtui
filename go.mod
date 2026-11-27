@@ -83,7 +83,7 @@ require (
 	golang.org/x/text v0.44.0 // indirect
 )
 
-// TEMPORARY, prototype only: the profiling views read code-level profiling
+// TEMPORARY, prototype only: the profiling view reads code-level profiling
 // through dtctl's pkg/resources/profiling, which is not in a dtctl release
 // yet. Until one carries it these two lines build against a local dtctl
 // checkout, and the versions required above are the ones that checkout

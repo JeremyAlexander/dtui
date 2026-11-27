@@ -82,8 +82,8 @@ dtctl exec profiling allocations PROCESS-… --raw -o json > allocations.json
    the pane would only narrow the table. dtctl's app-only filter has no key.
 8. **Seams added to `catalog.Spec`:** `EntityArg`, `ArgLabel`, `NoPreview`,
    `CancelOnLeave`, `Caption`, `Empty`, `Loading`, `Footnote`, and a leading
-   `__summary` record that a source may return and that is read only for a
-   spec that sets one of the last four. `CanScope` takes a pin for a view
+   `__summary` record that a source may return and that is read only for an
+   API spec that sets `Caption`, `Empty` or `Footnote` (`ReadsSummary`). `CanScope` takes a pin for a view
    without a query when its `Scopable` says so.
 
 ## Open questions for the first live run

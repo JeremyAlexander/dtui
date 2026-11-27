@@ -336,7 +336,10 @@ type Spec struct {
 	// Scopable refines CanScope for views whose query composes a filter that
 	// is present but useless for some entity types — traces filter by a
 	// dt.smartscape.* field spans only carry for some types. nil = rely on
-	// the query-diff check alone.
+	// the query-diff check alone. It has a second meaning on a view without
+	// a Query (an API view): there is no query to compare, so Scopable alone
+	// decides, and it is what lets such a view take a pin or an EntityArg at
+	// all. nil there = the view takes no entity.
 	Scopable func(e Entity) bool
 	// Inspect marks rows that, on enter, open the module detail page rather
 	// than navigating to the row's Entity detail page (nil = never). It is for
@@ -433,6 +436,10 @@ type Spec struct {
 	// Empty words an empty result ("" = the generic "no data in timeframe").
 	Empty func(s Scope, summary map[string]any) string
 	// Loading words the wait for a slow first result ("" = spinner only).
+	// Setting it also declares the view slow, which changes what the table
+	// does: a lens, a timeframe or an error empties the view and restarts
+	// its wait clock (tableView.dropReading), where every other view keeps
+	// its rows in sight until the refetch answers.
 	Loading func(s Scope) string
 	// Footnote renders one line under the rows ("" = none): a caveat on a
 	// column, or the selected row's untruncated identity.

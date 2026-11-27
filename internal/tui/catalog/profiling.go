@@ -69,7 +69,8 @@ const (
 	ProfAllocShare = "__share.alloc"
 
 	// ProfEntityID / ProfEntityName name the analysed process on every row, so
-	// a row can hand its process to the sibling view, the pin and the web UI.
+	// a row can hand its process to a focus drill, the pin and the o exit
+	// (the process in Smartscape).
 	// Hidden from the inspector like every "__" key (ADR-0016).
 	ProfEntityID   = "__process.id"
 	ProfEntityName = "__process.name"

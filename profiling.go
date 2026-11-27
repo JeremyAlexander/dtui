@@ -15,9 +15,8 @@ import (
 // dtui's own terms. Everything here is independent of dtctl: the sources below turn a
 // profiler's readings into the rows and the summary record the catalog specs
 // render, word the failures, and share one analysis between the lenses and
-// focus drills of a view. The profiler itself — dtctl's profiling package, or
-// a recorded analysis — is in profiling_dtctl.go, the only file that knows
-// dtctl's types.
+// focus drills of a view. The profiler itself, dtctl's profiling package, is in
+// profiling_dtctl.go, the only file that knows dtctl's types.
 
 // profiler runs profiling analyses of one process. Every request it sends is
 // a GET (ADR-0011): an analysis reads samples the agent already collected.

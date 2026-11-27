@@ -273,8 +273,8 @@ func withProgress(ctx context.Context, p *callProgress) context.Context {
 	return context.WithValue(ctx, progressKey{}, p)
 }
 
-// ReportProgress lets a Source say how a slow call is going ("throttled —
-// retrying in 10s"). The view that issued the call shows the latest text next
+// ReportProgress lets a Source say how a slow call is going ("the analysis is
+// still running on the server"). The view that issued the call shows the latest text next
 // to its loading line; a call nobody watches drops it. Exported because
 // sources live in the main package.
 func ReportProgress(ctx context.Context, text string) {

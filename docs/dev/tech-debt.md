@@ -35,12 +35,12 @@ keeps growing, split section 1 (DQL facts) by data object.
 ## Profiling analyses outlive a host that keeps running
 
 A profiling view cancels its analysis when it leaves the breadcrumb trail,
-but quitting or switching the context does not (`internal/tui/app.go`,
-`handleCtxSwitched` and the quit path). The native binary exits, so nothing
-is left running. The browser host does not exit; it answers the view with
-"not available" today (`cmd/web/sources.go`). Fix: cancel every
-`CancelOnLeave` view when the stacks are dropped, in the change that wires
-the profiling source into `cmd/web`.
+and a context switch does that too (`handleCtxSwitched` navigates home).
+Quitting does not (the quit path in `internal/tui/app.go`). The native
+binary exits, so nothing is left running. The browser host does not exit; it
+answers the view with "not available" today (`cmd/web/sources.go`). Fix:
+cancel every `CancelOnLeave` view on quit, in the change that wires the
+profiling source into `cmd/web`.
 
 ## A deferred navigation can land after a context switch
 
@@ -53,11 +53,11 @@ sequence and drop the stale ones in `app.Update`.
 
 ## Wrapped error text is laid out per view
 
-A table view makes its error one safe line and continues it under its own
-text (`renderTable` in `internal/tui/table.go`). Seven other views wrap the
-raw text with the continuation under the mark: `metrics.go`, `inspector.go`,
-`reader.go`, `navrender.go`, `timeline.go`, `relations.go`, `waterfall.go`.
-Fix: one `errorBlock(err, width)` helper, used by all eight.
+A table view lays its error out with `errorLines` (`internal/tui/table.go`):
+each line safe and wrapped on its own, under its own text, within the body.
+Seven other views wrap the raw text with the continuation under the mark:
+`metrics.go`, `inspector.go`, `reader.go`, `navrender.go`, `timeline.go`,
+`relations.go`, `waterfall.go`. Fix: use `errorLines` in all eight.
 
 ## Profiling view: unmeasured per-key work
 

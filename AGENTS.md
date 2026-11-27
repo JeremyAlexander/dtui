@@ -63,6 +63,7 @@ belongs in a shared file; a third copy is a bug.
 | Show tenant-supplied text safely | `catalog.SafeText` (`internal/tui/catalog/format.go`); `sanitizeFrame` (`internal/tui/sanitize.go`) is the last guard |
 | Tenant text on one line of chrome (crumb, caption, footer) | `oneLine` (`internal/tui/table.go`) |
 | Centre or wrap a message in a table body | `placeNote` (`internal/tui/table.go`) |
+| Float to `int64` without overflow; "is this an entity id" | `catalog.Int64`, `catalog.EntityID` (`internal/tui/catalog/format.go`) |
 | Severity colors | `internal/tui/catalog/severity.go` |
 | Sparklines | `internal/tui/catalog/spark.go` |
 | Render typed values (ids, timestamps, durations, JSON) | `internal/tui/render.go` |
