@@ -275,10 +275,10 @@ func TestCaptionSaysWhatTheRowCapKept(t *testing.T) {
 // The SELF and TOTAL bars of the functions table share one scale, the share
 // of all samples: equal shares draw equal bars, and a flat profile looks flat.
 func TestHotspotBarsShareOneScale(t *testing.T) {
-	rows := hotspotsSpec.Decode([]map[string]any{
-		{ProfSelf: 40.0, ProfSelfPct: 4.0, ProfTotal: 500.0, ProfTotalPct: 50.0},
-		{ProfSelf: 20.0, ProfSelfPct: 2.0, ProfTotal: 40.0, ProfTotalPct: 4.0},
-	})
+	rows := []map[string]any{
+		{ProfSelfShare: 0.04, ProfTotalShare: 0.5},
+		{ProfSelfShare: 0.02, ProfTotalShare: 0.04},
+	}
 	selfBar, totalBar := hotspotsSpec.Columns[2], hotspotsSpec.Columns[5]
 	for _, tc := range []struct {
 		name string
@@ -432,10 +432,10 @@ func TestProfileWindowLabelReadsTheAnalysis(t *testing.T) {
 // The allocations bar is on the scale of the other bars: a share of all
 // bytes allocated, not of the largest row.
 func TestAllocationBarIsAShareOfAllBytes(t *testing.T) {
-	rows := hotspotsSpec.Decode([]map[string]any{
-		{ProfAllocBytes: 250.0, ProfAllocPct: 25.0},
-		{ProfAllocBytes: 125.0, ProfAllocPct: 12.5},
-	})
+	rows := []map[string]any{
+		{ProfAllocBytes: 250.0, ProfAllocShare: 0.25},
+		{ProfAllocBytes: 125.0, ProfAllocShare: 0.125},
+	}
 	bar := allocationColumns[1]
 	if got := bar.TextAt(rows[0], 8); got != "██" {
 		t.Errorf("a quarter of the bytes draws %q, want %q", got, "██")

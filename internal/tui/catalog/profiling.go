@@ -54,9 +54,19 @@ const (
 	ProfSite          = "site"    // allocation site: the allocating frame
 	ProfCallers       = "callers" // []any of frames, innermost caller first
 	ProfAllocBytes    = "allocBytes"
-	ProfAllocPct      = "allocPct" // percent of all bytes allocated
 	ProfSurvivedBytes = "survivedBytes"
 	ProfAllocCount    = "allocCount"
+
+	// The shares the bars draw, 0..1 and unrounded, computed by the source
+	// from the counts: of all samples counted (self, total), of the focused
+	// function's total (focus rows), of all bytes allocated. They are dtui's
+	// own figures, so they are hidden from the inspector like every "__" key
+	// (ADR-0016); the percentages beside them are dtctl's, rounded to one
+	// decimal.
+	ProfSelfShare  = "__share.self"
+	ProfTotalShare = "__share.total"
+	ProfFocusShare = "__share.focus"
+	ProfAllocShare = "__share.alloc"
 
 	// ProfEntityID / ProfEntityName name the analysed process on every row, so
 	// a row can hand its process to the sibling view, the pin and the web UI.
@@ -284,10 +294,10 @@ var hotspotsSpec = &Spec{
 	Columns: []Column{
 		{Title: "SELF%", Width: 5, Right: true, Field: ProfSelfPct, Value: pctCell(ProfSelfPct)},
 		{Title: "SELF", Width: 7, Right: true, Field: ProfSelf, Value: countCell(ProfSelf)},
-		barColumn("SELF ▇", "__rel."+ProfSelfPct),
+		barColumn("SELF ▇", ProfSelfShare),
 		{Title: "TOTAL%", Width: 6, Right: true, Field: ProfTotalPct, Value: pctCell(ProfTotalPct)},
 		{Title: "TOTAL", Width: 7, Right: true, Field: ProfTotal, Value: countCell(ProfTotal)},
-		barColumn("TOTAL ▇", "__rel."+ProfTotalPct),
+		barColumn("TOTAL ▇", ProfTotalShare),
 		{Title: "PATHS", Width: 5, Right: true, Field: ProfPaths, Value: countCell(ProfPaths)},
 		frameColumn("FUNCTION", ProfFunction),
 	},
@@ -299,23 +309,10 @@ var hotspotsSpec = &Spec{
 		return []Column{
 			{Title: "RELATION", Width: 8, Field: ProfRelation},
 			{Title: "SHARE%", Width: 6, Right: true, Field: ProfShare, Value: pctCell(ProfShare)},
-			barColumn("SHARE ▇", "__rel."+ProfShare),
+			barColumn("SHARE ▇", ProfFocusShare),
 			{Title: "SAMPLES", Width: 8, Right: true, Field: ProfSamples, Value: countCell(ProfSamples)},
 			frameColumn("FUNCTION", ProfFunction),
 		}
-	},
-	Decode: func(records []map[string]any) []map[string]any {
-		// Every bar is a share of what was counted (samples, or bytes
-		// allocated), on one scale, so that equal shares draw equal bars
-		// and a flat profile looks flat.
-		for _, rec := range records {
-			for _, key := range []string{ProfSelfPct, ProfTotalPct, ProfShare, ProfAllocPct} {
-				if pct, ok := FloatValue(rec[key]); ok {
-					rec["__rel."+key] = pct / 100
-				}
-			}
-		}
-		return records
 	},
 	// The command that prints what the view holds: the analysis is asked
 	// for the waiting threads whatever the lens, and dtctl prints fewer
@@ -423,7 +420,7 @@ const survivedCaveat = "* SURVIVED counts bytes once per GC outlived: can exceed
 var allocationColumns = []Column{
 	// "1023.9 MiB" is the widest a byte count gets.
 	{Title: "ALLOC", Width: 10, Right: true, Field: ProfAllocBytes, Value: bytesCell(ProfAllocBytes)},
-	barColumn("ALLOC ▇", "__rel."+ProfAllocPct),
+	barColumn("ALLOC ▇", ProfAllocShare),
 	{Title: "SURVIVED*", Width: 10, Right: true, Field: ProfSurvivedBytes, Value: bytesCell(ProfSurvivedBytes)},
 	{Title: "SURV/ALLOC", Width: 10, Right: true, Value: survivedRatio, Sort: func(rec map[string]any) any {
 		if r, ok := survivedRatioOf(rec); ok {
@@ -472,7 +469,10 @@ func bytesCell(key string) func(map[string]any) string {
 	}
 }
 
-// barColumn renders a 0..1 fraction stored under key as a bar.
+// barColumn renders a 0..1 fraction stored under key as a bar. Every bar of
+// the view is a share of what was counted (samples, or bytes allocated), on
+// one scale, so that equal shares draw equal bars and a flat profile looks
+// flat.
 func barColumn(title, key string) Column {
 	return Column{
 		Title: title, Width: 8, Min: 4,

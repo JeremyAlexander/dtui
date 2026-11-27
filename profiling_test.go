@@ -1450,9 +1450,56 @@ func TestProfilingAllocationRowsCarryTheirShare(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, rows := catalog.SplitSummary(records)
-	pct, ok := catalog.FloatValue(rows[0][catalog.ProfAllocPct])
-	if got := fmt.Sprintf("%.2f", pct); !ok || got != "13.27" {
-		t.Errorf("the top path is %s%% of the bytes (set=%v), want 13.27", got, ok)
+	share, ok := catalog.FloatValue(rows[0][catalog.ProfAllocShare])
+	if got := fmt.Sprintf("%.4f", share); !ok || got != "0.1327" {
+		t.Errorf("the top path is %s of the bytes (set=%v), want 0.1327", got, ok)
+	}
+}
+
+// The bars are drawn from shares the source computes from the counts. The
+// percentages dtctl hands over are rounded to one decimal, so one sample of
+// ten thousand is 0.0% there, and a bar drawn from that would be empty for a
+// function that was measured.
+func TestProfilingBarsAreSharesOfTheCounts(t *testing.T) {
+	const tree = `{"dataRootNodeId":"1","dataNodes":[
+		{"id":"1","classPath":"com.example","className":"Main","methodName":"main","samples":{},"childIds":["2","3"]},
+		{"id":"2","classPath":"com.example","className":"Hot","methodName":"spin","samples":{"RUNNING":9999},"childIds":[]},
+		{"id":"3","classPath":"com.example","className":"Rare","methodName":"once","samples":{"RUNNING":1},"childIds":[]}]}`
+	hotspots, _ := sourcesAt(profilerOver(t, answering(200, nil, tree)))
+	read := func(arg string) map[string]map[string]any {
+		t.Helper()
+		records, err := hotspots(context.Background(), catalog.Scope{Entity: shopProcess, Timeframe: timeframe(t, "2h"), Arg: arg}, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, rows := catalog.SplitSummary(records)
+		by := map[string]map[string]any{}
+		for _, row := range rows {
+			by[catalog.Str(row, catalog.ProfRelation)+" "+catalog.Str(row, catalog.ProfFunction)] = row
+		}
+		return by
+	}
+	spec := catalog.Lookup("hotspots")
+
+	rare := read("")[" com.example.Rare.once"]
+	if rare[catalog.ProfSelfPct] != 0.0 || rare[catalog.ProfSelfShare] != 0.0001 || rare[catalog.ProfTotalShare] != 0.0001 {
+		t.Errorf("one sample of 10,000: %v%% as dtctl rounds it, self share %v, total share %v; want 0, 0.0001, 0.0001",
+			rare[catalog.ProfSelfPct], rare[catalog.ProfSelfShare], rare[catalog.ProfTotalShare])
+	}
+	if bar := spec.Columns[2].TextAt(rare, 8); bar != "▏" {
+		t.Errorf("its SELF bar is %q, want a sliver", bar)
+	}
+	if main := read("")[" com.example.Main.main"]; main[catalog.ProfTotalShare] != 1.0 || main[catalog.ProfSelfShare] != nil {
+		t.Errorf("the root: total share %v, self share %v; want 1 and none for no samples", main[catalog.ProfTotalShare], main[catalog.ProfSelfShare])
+	}
+
+	// A focused function's rows are shares of its own total.
+	focus := read("com.example.Main.main")
+	if got := focus["callee com.example.Rare.once"][catalog.ProfFocusShare]; got != 0.0001 {
+		t.Errorf("a callee with one of the function's 10,000 samples has share %v, want 0.0001", got)
+	}
+	if got := focus["total com.example.Main.main"][catalog.ProfFocusShare]; got != 1.0 {
+		t.Errorf("the function's total row has share %v, want 1", got)
 	}
 }
 

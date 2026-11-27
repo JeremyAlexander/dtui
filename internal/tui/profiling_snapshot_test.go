@@ -333,6 +333,17 @@ func TestEnterOnAnAllocationPathInspects(t *testing.T) {
 	if _, ok := a.top().(*tableView); ok {
 		t.Fatalf("enter on an allocation path left the table on top (%T)", a.top())
 	}
+	// The record is what the analysis returned: nothing dtui computed for
+	// its own bars is listed beside it (ADR-0016).
+	out := screen(a)
+	if !strings.Contains(out, catalog.ProfAllocBytes) {
+		t.Fatalf("the inspector does not list %s:\n%s", catalog.ProfAllocBytes, out)
+	}
+	for _, own := range []string{"allocPct", "share", "__"} {
+		if strings.Contains(out, own) {
+			t.Errorf("the inspector lists %q, a value dtui computed:\n%s", own, out)
+		}
+	}
 }
 
 // hintFor is the label the footer gives a key on the view, "" if none.

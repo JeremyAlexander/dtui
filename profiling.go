@@ -481,6 +481,15 @@ func profileSummary(tf catalog.Timeframe, w catalog.ProfileWindow) map[string]an
 	return summary
 }
 
+// setShare stores part of whole under key as the 0..1 share a bar draws,
+// unrounded, so that anything measured draws at least a sliver. A row with
+// nothing of the whole, or a whole of nothing, gets no share and no bar.
+func setShare(rec map[string]any, key string, part, whole float64) {
+	if part > 0 && whole > 0 {
+		rec[key] = part / whole
+	}
+}
+
 // stampProcess names the analysed process on a row (catalog.ProfEntityID).
 func stampProcess(rec map[string]any, e catalog.Entity) map[string]any {
 	rec[catalog.ProfEntityID] = e.ID
@@ -520,6 +529,12 @@ func hotspotsSource(p profiler, runs *profileRuns) tui.Source {
 				return nil, err
 			}
 			records := []map[string]any{summary}
+			total := 0
+			for _, row := range rows {
+				if row.Relation == catalog.ProfRelTotal {
+					total = row.Samples
+				}
+			}
 			// Callers come first and a function can have hundreds, so each
 			// direction keeps its first rows, which are its largest.
 			callers, callees := 0, 0
@@ -536,12 +551,14 @@ func hotspotsSource(p profiler, runs *profileRuns) tui.Source {
 						continue
 					}
 				}
-				records = append(records, stampProcess(map[string]any{
+				rec := map[string]any{
 					catalog.ProfRelation: row.Relation,
 					catalog.ProfFunction: row.Function,
 					catalog.ProfSamples:  float64(row.Samples),
 					catalog.ProfShare:    row.Share,
-				}, entity))
+				}
+				setShare(rec, catalog.ProfFocusShare, float64(row.Samples), float64(total))
+				records = append(records, stampProcess(rec, entity))
 			}
 			summary[catalog.ProfSumCallers], summary[catalog.ProfSumCallees] = float64(callers), float64(callees)
 			if len(rows) == 0 {
@@ -565,14 +582,17 @@ func hotspotsSource(p profiler, runs *profileRuns) tui.Source {
 		records := make([]map[string]any, 0, len(rows)+1)
 		records = append(records, summary)
 		for _, row := range rows {
-			records = append(records, stampProcess(map[string]any{
+			rec := map[string]any{
 				catalog.ProfFunction: row.Function,
 				catalog.ProfSelf:     float64(row.Self),
 				catalog.ProfSelfPct:  row.SelfPct,
 				catalog.ProfTotal:    float64(row.Total),
 				catalog.ProfTotalPct: row.TotalPct,
 				catalog.ProfPaths:    float64(row.Paths),
-			}, entity))
+			}
+			setShare(rec, catalog.ProfSelfShare, float64(row.Self), float64(samples))
+			setShare(rec, catalog.ProfTotalShare, float64(row.Total), float64(samples))
+			records = append(records, stampProcess(rec, entity))
 		}
 		return records, nil
 	}
@@ -619,9 +639,7 @@ func allocationsSource(p profiler, runs *profileRuns) tui.Source {
 				catalog.ProfSurvivedBytes: float64(row.SurvivedBytes),
 				catalog.ProfAllocCount:    float64(row.AllocCount),
 			}
-			if allocBytes > 0 {
-				rec[catalog.ProfAllocPct] = float64(row.AllocBytes) / float64(allocBytes) * 100
-			}
+			setShare(rec, catalog.ProfAllocShare, float64(row.AllocBytes), float64(allocBytes))
 			records = append(records, stampProcess(rec, entity))
 		}
 		return records, nil
