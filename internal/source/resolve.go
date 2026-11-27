@@ -103,7 +103,7 @@ func (ix *Index) resolve(ctx context.Context, f Frame, locate func(context.Conte
 			found.Unread, found.Late = found.Unread+len(files)-i, true
 			break
 		}
-		if how == refused {
+		if how == refused || how == partly {
 			found.Unread++
 		}
 		if how != read || (need.function && !has.function) || (need.pkg != "" && !has.pkg) {
@@ -286,8 +286,12 @@ type holds struct{ function, pkg bool }
 type reading int
 
 const (
-	// read is a file read to its end, or to the byte bound.
+	// read is a file read to its end, or cut after what was looked for in
+	// it was found.
 	read reading = iota
+	// partly is a file cut at the byte bound or at a line too long to
+	// take, before what was looked for was found: the rest may hold it.
+	partly
 	// gone is a file that is no longer there.
 	gone
 	// refused is a file that is there and was not read.
@@ -323,7 +327,9 @@ func (ix *Index) open(rel string) (*os.File, error) {
 }
 
 // scanFile is locate for the content of the file m names. It reads up to
-// maxFileBytes of it and stops when ctx ends.
+// maxFileBytes of it and stops when ctx ends. A file that was cut before
+// the frame's function (or, for a frame without a name to look for, its
+// type) and the package were found has no answer.
 func scanFile(ctx context.Context, content io.Reader, m Match, f Frame, pkg string) (Match, holds, reading) {
 	var inPackage *regexp.Regexp
 	if pkg != "" {
@@ -334,7 +340,8 @@ func scanFile(ctx context.Context, content io.Reader, m Match, f Frame, pkg stri
 	ext := strings.ToLower(path.Ext(m.Path))
 	function, typ := declaration(ext, f), typeDeclaration(ext, f)
 	found, typeLine := 0, 0
-	scan := bufio.NewScanner(&bounded{ctx: ctx, r: content, left: maxFileBytes})
+	limited := &bounded{ctx: ctx, r: content, left: maxFileBytes}
+	scan := bufio.NewScanner(limited)
 	scan.Buffer(make([]byte, 64<<10), 1<<20)
 	for n := 1; scan.Scan(); n++ {
 		line := scan.Bytes()
@@ -348,14 +355,22 @@ func scanFile(ctx context.Context, content io.Reader, m Match, f Frame, pkg stri
 		}
 		pkgSeen = pkgSeen || (inPackage != nil && inPackage.Match(line))
 	}
-	// A line longer than the scanner takes ends the reading where a byte
-	// bound would: what was found before it stands. Any other failure
-	// leaves a file whose content is not known.
-	if err := scan.Err(); err != nil && !errors.Is(err, bufio.ErrTooLong) {
+	// A line longer than the scanner takes ends the reading where the byte
+	// bound would. Any other failure leaves a file whose content is not
+	// known.
+	err := scan.Err()
+	if err != nil && !errors.Is(err, bufio.ErrTooLong) {
 		if ctx.Err() != nil {
 			return Match{Path: m.Path}, holds{}, cut
 		}
 		return Match{Path: m.Path}, holds{}, refused
+	}
+	if err != nil || limited.more {
+		missing := (function != nil && found == 0) || (function == nil && typ != nil && typeLine == 0) ||
+			(inPackage != nil && !pkgSeen)
+		if missing {
+			return Match{Path: m.Path}, holds{}, partly
+		}
 	}
 	switch {
 	case found == 1:

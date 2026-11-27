@@ -63,10 +63,14 @@ const readChunk = 64 << 10
 
 // bounded reads r a chunk at a time, up to left bytes, and until ctx ends.
 // A file that grows while it is read ends at the byte bound like any other.
+// At the bound it asks r for one byte more, once, and more says whether
+// there was one: a file that goes on was not read to its end.
 type bounded struct {
-	ctx  context.Context
-	r    io.Reader
-	left int64
+	ctx    context.Context
+	r      io.Reader
+	left   int64
+	more   bool
+	probed bool
 }
 
 func (b *bounded) Read(p []byte) (int, error) {
@@ -74,6 +78,15 @@ func (b *bounded) Read(p []byte) (int, error) {
 		return 0, err
 	}
 	if b.left <= 0 {
+		if !b.probed {
+			b.probed = true
+			var one [1]byte
+			n, err := b.r.Read(one[:])
+			b.more = n > 0
+			if n == 0 && err != nil && err != io.EOF {
+				return 0, err
+			}
+		}
 		return 0, io.EOF
 	}
 	p = p[:min(int64(len(p)), b.left, readChunk)]

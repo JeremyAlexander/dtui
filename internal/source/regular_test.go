@@ -176,8 +176,9 @@ func TestOpenRegularLooksBeforeItOpens(t *testing.T) {
 	}
 }
 
-// Only so much of a file is read: a declaration beyond the bound is not
-// found, and the file still counts as read.
+// Only so much of a file is read. A declaration that ends on the bound is
+// found; a file in which it was not found by then, and which goes on, is not
+// known not to hold it and counts as not read.
 func TestResolveReadsAFileUpToTheByteBound(t *testing.T) {
 	const decl = "func main() {}\n"
 	head := "package main\n" + strings.Repeat("// filler\n", maxFileBytes/10)
@@ -193,8 +194,98 @@ func TestResolveReadsAFileUpToTheByteBound(t *testing.T) {
 	}))
 	want := Match{Path: "cmd/a/main.go", Line: strings.Count(onBound, "\n"), How: Declaration}
 	got, unread, late := parts(ix.Resolve(context.Background(), Parse("main.main")))
-	if len(got) != 1 || got[0] != want || unread != 0 || late {
-		t.Errorf("%+v, %d unread, late %v; want %+v, the declaration that ends on the bound, and not the one past it", got, unread, late, want)
+	if len(got) != 1 || got[0] != want || unread != 1 || late {
+		t.Errorf("%+v, %d unread, late %v; want %+v, the declaration that ends on the bound, and the file with one past it unread", got, unread, late, want)
+	}
+}
+
+// filler is a file's content made as it is read: n bytes of comment lines,
+// held nowhere.
+type filler struct{ n int }
+
+func (f *filler) Read(p []byte) (int, error) {
+	if f.n <= 0 {
+		return 0, io.EOF
+	}
+	const line = "// filler\n"
+	n := min(len(p), f.n)
+	for i := range n {
+		p[i] = line[(f.n-i)%len(line)]
+	}
+	f.n -= n
+	return n, nil
+}
+
+// A file that is cut, at the byte bound or at a line too long to take, is
+// read only if what was looked for was found before the cut. Otherwise the
+// rest of it may hold the frame: the file has no answer and is not read.
+func TestScanFileSaysWhenItWasCutBeforeAnAnswer(t *testing.T) {
+	const pkg, decl = "package main\n", "func main() {}\n"
+	goFrame, jvmFrame := Parse("main.main"), Parse("com.example.Big.work")
+	long := strings.Repeat("x", 1<<20+1) + "\n"
+	for _, tc := range []struct {
+		name    string
+		path    string
+		f       Frame
+		pkg     string
+		content io.Reader
+		want    Match
+		has     holds
+		how     reading
+	}{
+		{"the function past the byte bound", "main.go", goFrame, "main",
+			io.MultiReader(strings.NewReader(pkg), &filler{maxFileBytes}, strings.NewReader(decl)),
+			Match{Path: "main.go"}, holds{}, partly},
+		{"the function before the byte bound", "main.go", goFrame, "main",
+			io.MultiReader(strings.NewReader(pkg+decl), &filler{maxFileBytes}),
+			Match{Path: "main.go", Line: 2, How: Declaration}, holds{function: true, pkg: true}, read},
+		{"a file that ends on the byte bound", "main.go", goFrame, "",
+			&filler{maxFileBytes},
+			Match{Path: "main.go"}, holds{}, read},
+		{"a file one byte longer", "main.go", goFrame, "",
+			&filler{maxFileBytes + 1},
+			Match{Path: "main.go"}, holds{}, partly},
+		{"the function after a line too long", "main.go", goFrame, "main",
+			strings.NewReader(pkg + long + decl),
+			Match{Path: "main.go"}, holds{}, partly},
+		{"the function before a line too long", "main.go", goFrame, "main",
+			strings.NewReader(pkg + decl + long + decl),
+			Match{Path: "main.go", Line: 2, How: Declaration}, holds{function: true, pkg: true}, read},
+		{"the package past the byte bound", "main.go", goFrame, "main",
+			io.MultiReader(strings.NewReader(decl), &filler{maxFileBytes}, strings.NewReader(pkg)),
+			Match{Path: "main.go"}, holds{}, partly},
+		// The type's line is no answer while the method may be further on.
+		{"a method past the byte bound", "Big.java", jvmFrame, "",
+			io.MultiReader(strings.NewReader("class Big {\n"), &filler{maxFileBytes}, strings.NewReader("  void work() {}\n}\n")),
+			Match{Path: "Big.java"}, holds{}, partly},
+		// A frame with no name to look for is missing nothing.
+		{"a frame without a name", "Big.java", Parse("com.example.Big.<clinit>"), "",
+			io.MultiReader(strings.NewReader("class Big {\n"), &filler{maxFileBytes}),
+			Match{Path: "Big.java", Line: 1, How: TypeOnly}, holds{}, read},
+	} {
+		m, has, how := scanFile(context.Background(), tc.content, Match{Path: tc.path}, tc.f, tc.pkg)
+		if m != tc.want || has != tc.has || how != tc.how {
+			t.Errorf("%s: %+v, %+v, reading %d; want %+v, %+v, reading %d", tc.name, m, has, how, tc.want, tc.has, tc.how)
+		}
+	}
+}
+
+// A file that was cut before an answer is counted with the files not read,
+// and is not a match.
+func TestResolveCountsAFileCutBeforeAnAnswer(t *testing.T) {
+	ix := scan(t, tree(t, map[string]string{
+		"cmd/a/main.go": "package main\n\nfunc main() {}\n",
+		"cmd/b/main.go": "package main\n",
+		"cmd/c/main.go": "package main\n",
+	}))
+	found := ix.resolve(context.Background(), Parse("main.main"), func(ctx context.Context, rel string, f Frame, pkg string) (Match, holds, reading) {
+		if rel == "cmd/b/main.go" {
+			return Match{Path: rel}, holds{}, partly
+		}
+		return ix.locate(ctx, rel, f, pkg)
+	})
+	if len(found.Matches) != 1 || found.Matches[0].Path != "cmd/a/main.go" || found.Unread != 1 || found.Late {
+		t.Errorf("%+v; want the first file and 1 unread", found)
 	}
 }
 
@@ -248,7 +339,8 @@ func TestBoundedStopsAtTheBoundOnAFileThatGrows(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer file.Close()
-	g := &grower{t: t, file: file, budget: 3 * bound, mayRead: bound}
+	// One byte past the bound is read, to tell whether the file goes on.
+	g := &grower{t: t, file: file, budget: 3 * bound, mayRead: bound + 1}
 	b, buf, n := &bounded{ctx: context.Background(), r: g, left: bound}, make([]byte, 4*readChunk), 0
 	// More reads than the bound has chunks is a reader that does not stop.
 	for reads := 0; err == nil && reads < 8; reads++ {
@@ -256,17 +348,33 @@ func TestBoundedStopsAtTheBoundOnAFileThatGrows(t *testing.T) {
 		got, err = b.Read(buf)
 		n += got
 	}
-	if n != bound || err != io.EOF {
-		t.Errorf("read %d bytes of a file that grows, %v; want %d and the end", n, err, bound)
+	if n != bound || err != io.EOF || !b.more {
+		t.Errorf("read %d bytes of a file that grows, %v, more %v; want %d, the end, and that there is more", n, err, b.more, bound)
 	}
 	if g.largest != readChunk {
 		t.Errorf("the largest read asked for %d bytes, want %d", g.largest, readChunk)
 	}
-	if info, err := os.Stat(p); err != nil || info.Size() != readChunk+bound {
+	if info, err := os.Stat(p); err != nil || info.Size() != readChunk+bound+1 {
 		t.Errorf("the file grew to %d bytes, %v; want what it held and what was read", info.Size(), err)
 	}
-	if n, err := (&bounded{ctx: context.Background(), r: g, left: 0}).Read(make([]byte, 8)); n != 0 || err != io.EOF {
-		t.Errorf("a read at the bound: %d, %v", n, err)
+	if g.read != bound+1 {
+		t.Errorf("%d bytes were read of the file, want the bound and the one byte past it", g.read)
+	}
+	// A reader that ends on the bound has no more, and one whose reading
+	// fails there has failed.
+	for _, tc := range []struct {
+		r    io.Reader
+		more bool
+		err  error
+	}{
+		{strings.NewReader(""), false, io.EOF},
+		{strings.NewReader("x"), true, io.EOF},
+		{&failing{r: strings.NewReader(""), err: io.ErrUnexpectedEOF}, false, io.ErrUnexpectedEOF},
+	} {
+		at := &bounded{ctx: context.Background(), r: tc.r, left: 0}
+		if n, err := at.Read(make([]byte, 8)); n != 0 || err != tc.err || at.more != tc.more {
+			t.Errorf("a read at the bound: %d, %v, more %v; want 0, %v, more %v", n, err, at.more, tc.err, tc.more)
+		}
 	}
 }
 
