@@ -55,6 +55,9 @@ var (
 // javaVendorPrefixes).
 var dotnetVendorPrefixes = []string{
 	"System.", "Microsoft.", "Newtonsoft.", "Grpc.", "OpenTelemetry.", "Dynatrace.",
+	// Further frameworks and libraries.
+	"Polly.", "MediatR.", "MassTransit.", "Castle.", "Autofac.", "Serilog.", "NLog.", "AutoMapper.",
+	"RabbitMQ.Client.", "Confluent.Kafka.",
 	// Database drivers.
 	"Npgsql.", "MySql.", "MySqlConnector.", "Oracle.ManagedDataAccess.", "MongoDB.", "StackExchange.Redis.", "Dapper.",
 	// Cloud SDKs.

@@ -50,9 +50,13 @@ var javaVendorPrefixes = []string{
 	"io.netty.", "io.grpc.", "io.undertow.", "io.vertx.", "io.quarkus.", "io.micrometer.", "io.opentelemetry.",
 	"reactor.", "akka.", "okhttp3.", "ch.qos.logback.", "com.fasterxml.", "com.google.common.", "com.zaxxer.",
 	"com.dynatrace.",
-	// Database drivers.
+	// Further frameworks and libraries.
+	"io.micronaut.", "io.ktor.", "org.aspectj.", "net.bytebuddy.", "io.reactivex.", "com.google.gson.",
+	"com.rabbitmq.", "com.stripe.", "io.sentry.", "com.squareup.", "retrofit2.",
+	// Database drivers and mappers.
 	"org.postgresql.", "com.mysql.", "org.mariadb.", "oracle.jdbc.", "com.microsoft.sqlserver.", "org.h2.",
 	"com.mongodb.", "org.bson.", "redis.clients.", "io.lettuce.", "com.datastax.", "org.neo4j.driver.",
+	"org.jooq.", "org.mybatis.",
 	// Cloud SDKs.
 	"software.amazon.", "com.amazonaws.", "com.azure.", "com.microsoft.azure.", "com.google.cloud.",
 	"com.google.api.", "com.google.protobuf.",

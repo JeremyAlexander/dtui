@@ -2377,6 +2377,42 @@ func TestJavaSharedFramesAtTheirEdges(t *testing.T) {
 	}
 }
 
+// Frameworks and libraries that are not the application, by the frames a
+// trace shows of them.
+func TestCommonLibrariesAreNotTheApplication(t *testing.T) {
+	for _, module := range []string{
+		"io.micronaut.http.server.netty.RoutingInBoundHandler", "io.ktor.server.netty.NettyApplicationCallHandler",
+		"org.aspectj.runtime.reflect.JoinPointImpl", "net.bytebuddy.implementation.MethodDelegation",
+		"io.reactivex.internal.operators.observable.ObservableMap", "io.reactivex.rxjava3.core.Observable",
+		"com.google.gson.Gson", "com.rabbitmq.client.impl.ChannelN", "org.jooq.impl.AbstractQuery",
+		"org.mybatis.spring.SqlSessionTemplate", "com.stripe.net.LiveStripeResponseGetter", "io.sentry.Sentry",
+		"com.squareup.okhttp.Call", "retrofit2.OkHttpCall",
+	} {
+		if frameInApp(StackFrame{Module: module, Function: "run", Syntax: StackJava}) {
+			t.Errorf("Java: %s counts as the application's", module)
+		}
+	}
+	for _, module := range []string{
+		"Polly.Policy", "MediatR.Mediator", "MassTransit.Middleware.ConsumerMessageFilter", "Castle.DynamicProxy.AbstractInvocation",
+		"Autofac.Core.Resolving.ResolveOperation", "Serilog.Core.Logger", "NLog.Logger", "AutoMapper.Mapper",
+		"RabbitMQ.Client.Impl.ModelBase", "Confluent.Kafka.Consumer",
+	} {
+		if frameInApp(StackFrame{Module: module, Function: "Run", Syntax: StackDotNet}) {
+			t.Errorf(".NET: %s counts as the application's", module)
+		}
+	}
+	// A prefix is whole names: what only starts like one is the
+	// application's.
+	for _, f := range []StackFrame{
+		{Module: "PollyShop.Cart", Function: "Add", Syntax: StackDotNet}, {Module: "RabbitMQ.Shop.Cart", Function: "Add", Syntax: StackDotNet},
+		{Module: "io.sentryshop.Cart", Function: "add", Syntax: StackJava}, {Module: "retrofit2shop.Cart", Function: "add", Syntax: StackJava},
+	} {
+		if !frameInApp(f) {
+			t.Errorf("%s does not count as the application's", f.Module)
+		}
+	}
+}
+
 // Two notations that own as many lines: the one whose line comes first.
 func TestStackNotationTieGoesToTheFirstLine(t *testing.T) {
 	java, dotnet := "\tat com.example.shop.Cart.add(Cart.java:42)\n", "   at Example.Shop.Cart.Add(String sku)\n"

@@ -43,7 +43,7 @@ d5a6d4ca15c96042	var dotnetMainRe
 6fcd57cef7b2c913	var dotnetMonoParamsRe
 df771b28c2809e59	var dotnetPassThrough
 b52bf883845e3239	var dotnetTypeArgsRe
-ca633138620f561e	var dotnetVendorPrefixes
+af36cd4f9845fedd	var dotnetVendorPrefixes
 f0adf6a90bda193b	var goArgsRe
 02bbcc03877b5fc6	var goDependencyRe
 aca5a1c7628ab6b2	var goFileRe
@@ -71,7 +71,7 @@ d1480b8b600e1ede	var javaProxyPkgRe
 1e84be1777150b10	var javaScalaMethodRe
 3ba34a941d910148	var javaSourceExtensions
 4cddab68acdd3f44	var javaSyntheticClasses
-80003382760e7f1c	var javaVendorPrefixes
+2cdaeba123ec7aea	var javaVendorPrefixes
 18cc13e6954d86f1	var jsAliasRe
 2a20b26a3e902e9d	var jsAtSignRe
 389c77fa0c6503b8	var jsBareRe
