@@ -49,7 +49,8 @@ nothing about the format.
   loads the file from the launch directory and resolves it for the host of the
   selected context, derived as dtctl derives it (the lowercase hostname,
   without port, path or a trailing dot), not with dtui's own `envKey`. It
-  hands `internal/tui` a value of a type `internal/tui` declares: the entry's
+  hands `internal/tui` a value of a type `internal/tui` declares, as a message
+  after the first paint, at launch as at a switch: the entry's
   name, its segments as `exec.FilterSegmentRef`, a function from a composed
   query to the rewritten query with an outcome and a reason, and the warning
   to show. The value is built again on every context switch and travels on
@@ -91,8 +92,9 @@ nothing about the format.
   is not applied to the trace waterfall, the home panels, `:agentlogs`,
   `:records` or a segment's variable query. An entry's segments are sent with
   the waterfall's query as with every query, so a trace opened under them can
-  show only the spans they admit, and a span whose parent they exclude is
-  drawn as a root.
+  show only the spans they admit, a span whose parent they exclude is drawn as
+  a root, and a waterfall they empty is fetched once more over a wider window,
+  as today.
 - **DQL the user hands to dtui is scoped as dtctl scopes it.** `:query`,
   `dtui query <dql>`, `--dql` and `-f` go through the same rewrite, with the
   claim or the reason for no claim in the header. An agent hands off the text
@@ -114,7 +116,10 @@ nothing about the format.
   pinned process group and a named workload would refuse the filter while a
   pinned process, a namespace without a resolved name and every `:traces` pin
   would be ANDed with it, mostly to an empty page. Nobody can predict that
-  from the screen.
+  from the screen. The entry's segments are still sent on such a page, as the
+  workspace's are today, so a pin on something they do not admit shows no
+  rows; the header then names the entry's segments and says that the filter
+  was left out.
 - **Otherwise `InsertFilter` decides.** It leaves a query unchanged when one
   of the query's own `filter` or `filterOut` stages names a field the entry
   binds for that data object, such as `service.name` or `k8s.workload.name`;
@@ -134,25 +139,28 @@ nothing about the format.
   holds only segments inserts no filter and leaves the default lens as it is.
 - **An entry's segments are part of the repo scope.** They are sent with every
   DQL query of the session, as the segments of `.dtui.yaml` and of the picker
-  are; an entry that holds only segments inserts no filter and narrows every
-  such view. This is dtctl's rule: one entry, one switch. They are sent
-  together with the user's: a segment both name is sent once, with the user's
-  variables, because what the user chose wins over what is committed. More
-  than ten in total is the platform's limit; the entry is then not applied at
-  all and the header says why, since dropping some segments would change the
-  rows unseen. They belong to the scope, not to the selection: `alt+s` pauses
-  the user's segments only, the picker shows the entry's as locked rows, and
-  the switch for the scope switches them with the filter. While `alt+s` pauses
-  the user's segments, a segment both name is sent as the entry's, with the
-  entry's variables, and with the user's again when the pause ends. Before a
-  scoped query is sent dtui checks, once per context and not per view or per
-  query, that the environment returns each of the entry's segments to this
-  user. If one is missing or not readable, the whole entry is not applied,
-  filter included: half a scope shows rows that look scoped. If the check
-  itself fails, the entry is not applied either, the header says the check
-  failed, and a refresh tries again. dtctl fails the command in that last
-  case; dtui shows the page, because a header is read on every page where a
-  script reads only an exit code.
+  are, the session's lookup queries included; an entry that holds only
+  segments inserts no filter and narrows every such view. This is dtctl's
+  rule: one entry, one switch. They are sent together with the user's: a
+  segment both name is sent once, with the user's variables, because what the
+  user chose wins over what is committed. More than ten in total is the
+  platform's limit; the entry is then not applied at all and the header says
+  why, since dropping some segments would change the rows unseen. The limit is
+  counted over the user's selection whether it is paused or not, so pausing
+  never switches the entry on. They belong to the scope, not to the selection:
+  `alt+s` pauses the user's segments only, the picker shows the entry's as
+  locked rows, and the switch for the scope switches them with the filter.
+  While `alt+s` pauses the user's segments, a segment both name is sent as the
+  entry's, with the entry's variables, and with the user's again when the
+  pause ends. Before a scoped query is sent dtui checks, once per context and
+  not per view or per query, that the environment returns each of the entry's
+  segments to this user. If one is missing or not readable, the whole entry is
+  not applied, filter included: half a scope shows rows that look scoped. If
+  the check itself fails, the entry is not applied either, the header says the
+  check failed, and the user's own refresh and a context switch try again. An
+  auto-refresh tick does not, and one check is in flight per context. dtctl
+  fails the command in that last case; dtui shows the page, because a header
+  is read on every page where a script reads only an exit code.
 - **The workspace's segments stay independent.** `.dtui.yaml` segments and the
   entry's filter are ANDed and neither replaces the other.
 - **Claim what was sent.** The header names the entry on every view whose
@@ -263,7 +271,10 @@ header. A view that carries neither shows no scope.
   segments to a command that already names them. The variable works under
   every stability floor and is ignored by a dtctl older than the feature; the
   flag does neither. The prefix is POSIX shell syntax, so the echo is not a
-  command for other shells.
+  command for other shells. The catalog invariant that every view's echo
+  starts with `dtctl ` (`TestEveryViewHasBothExits`,
+  [ADR-0012](0012-navigate-analyze-mutate.md)) is restated: the echo is a
+  dtctl command, behind the variable where an entry resolves.
 - dtui scopes by default where dtctl, under a stability floor that hides the
   experimental flags, does not. The header says what dtui sent, and the echo's
   prefix makes the pasted command send the same request in the same context.
@@ -285,7 +296,12 @@ header. A view that carries neither shows no scope.
   query it cannot hold instead of cutting it.
 - The pull request that implements this owes tests for: the echo of a name
   with an apostrophe and of one with two spaces, parsed back by a shell into
-  the query that was sent; a context switch from one host to a second and on
+  the query that was sent; `TestEveryViewHasBothExits` with a resolved entry;
+  the claim and the reason on an 80 column screen, where the header line is
+  cut when it does not fit; a failed segment check followed by an
+  auto-refresh tick, asserting that no second check is sent; eight segments
+  of the user and three of the entry with the user's paused; `o` on `:query`
+  under an applied filter; a context switch from one host to a second and on
   to a host without an entry, asserting the request each executor receives; a
   command of the first context released after the switch, asserting that the
   second executor receives nothing; an entry that holds only segments; an
@@ -314,12 +330,23 @@ empty.
   a scoped view waits where the workspace's segments let it go out, and the
   pattern analysis says in its header that segments, the user's included, do
   not narrow it. dtctl's design document describes the same composition from
-  its side. None of it is agreed.
+  its side. None of it is agreed. Also that owner's to answer: whether a
+  pinned or drilled page keeps the entry's segments when it drops the entry's
+  filter, whether the limit of ten counts segments the user has paused, what
+  `v` does on a locked row, and whether variables an entry binds only in part
+  are expanded as the workspace's are.
+- **Does this much detail belong in `docs/adr/`?** The index asks for a
+  record that can be read in two minutes. If a maintainer asks for a shorter
+  one, the owed tests and the mechanics of the echo move to `docs/design/`
+  and the record keeps the rules.
 - **Which dtctl release does dtui build against?** Nothing here can be
   implemented before a release carries `pkg/reposcope`, and the package may
   change before then. The rules above that quote dtctl (the host form, the
   bound fields, the refusals, how the variable is read, the segment check) are
-  read again against that release. Three things dtui would otherwise copy are
+  read again against that release. Four things dtui would otherwise copy are
   asked of dtctl: an exported derivation of the host key, which today is an
   unexported function of dtctl's `cmd` package, an exported reading of
-  `DTCTL_NO_REPO_SCOPE`, and reasons that do not name a dtctl flag.
+  `DTCTL_NO_REPO_SCOPE`, reasons that do not name a dtctl flag, and an
+  exported spelling of a segment reference with its variables, which the echo
+  prints and only dtctl's unexported flag parser defines. Until dtctl has the
+  last one, dtui owns that spelling and a test pins it against the release.
