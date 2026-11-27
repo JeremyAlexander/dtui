@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unsafe"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -1116,5 +1117,33 @@ func TestFooterShowsAnEchoAsText(t *testing.T) {
 	press(logs, key("c"))
 	if strings.ContainsRune(logs.status, 0x1b) || !strings.Contains(logs.status, "␛[201~") {
 		t.Errorf("logs status after c = %q", logs.status)
+	}
+}
+
+// The facts of a sample outlive its records, like the rows: none of their
+// strings may be cut out of what was fetched, or one field name would keep
+// a whole response alive.
+func TestSampleFactsShareNoStringWithTheRecords(t *testing.T) {
+	buffer := strings.Repeat("x", 64<<10) + "start_time|2026-07-15T11:00:00Z|span.events|dt.service.name"
+	cut := func(part string) string {
+		at := strings.Index(buffer, part)
+		return buffer[at : at+len(part)]
+	}
+	_, facts := takeSample(catalog.Lookup("exceptions").Sample, "last 2h", []map[string]any{{
+		cut("start_time"): cut("2026-07-15T11:00:00Z"), cut("span.events"): []any{}, cut("dt.service.name"): "cart",
+	}}, nil, false)
+	kept := []string{facts.oldest}
+	for k := range facts.keys {
+		kept = append(kept, k)
+	}
+	kept = append(kept, facts.fields...)
+	if facts.oldest == "" || len(facts.keys) != 3 || len(facts.fields) == 0 {
+		t.Fatalf("the case lost its facts: %+v", facts)
+	}
+	lo := uintptr(unsafe.Pointer(unsafe.StringData(buffer)))
+	for _, text := range kept {
+		if at := uintptr(unsafe.Pointer(unsafe.StringData(text))); at >= lo && at < lo+uintptr(len(buffer)) {
+			t.Errorf("%q points into the fetched buffer: the facts keep it alive", text)
+		}
 	}
 }

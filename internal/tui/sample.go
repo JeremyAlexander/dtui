@@ -67,6 +67,10 @@ func takeSample(s *catalog.SampleSpec, window string, records []map[string]any, 
 		fields:  scalarFacetFields(records),
 		keys:    map[string]bool{},
 	}
+	// The facts outlive the records: no string of theirs may be a record's.
+	for i, field := range facts.fields {
+		facts.fields[i] = strings.Clone(field)
+	}
 	for _, rec := range records {
 		for k := range rec {
 			if !facts.keys[k] && !strings.HasPrefix(k, "__") {
