@@ -14,8 +14,9 @@ import (
 
 var (
 	// The method name, the space Mono puts after it, the parameters, and
-	// what follows them.
-	dotnetFrameRe = regexp.MustCompile("^at ([\\p{L}\\p{N}_.<>|$`\\[\\],+]+)( ?)\\(([^()]*)\\)(.*)$")
+	// what follows them. A hyphen stands in a generated name only
+	// (dotnetInterfaceDot).
+	dotnetFrameRe = regexp.MustCompile("^at ([\\p{L}\\p{N}_.<>|$`\\[\\],+-]+)( ?)\\(([^()]*)\\)(.*)$")
 	// Mono's notation is close to prose ("at checkout (final step)") and to
 	// V8's "at fn (location)". So there the name must be qualified, and
 	// either the offset Mono prints after the parameters follows
@@ -96,6 +97,11 @@ const (
 	dotnetAsyncMark     = "d"
 	dotnetAsyncOrdinals = "__"
 	dotnetAsyncEnd      = ".MoveNext"
+	// dotnetInterfaceDot is what the compiler writes for a dot inside the
+	// brackets: the state machine of a method that implements an
+	// interface explicitly is "<Shop-ICart-Add>d__12", and the method is
+	// "Shop.ICart.Add" wherever it is printed itself.
+	dotnetInterfaceDot = '-'
 	// dotnetArity precedes the number of type parameters.
 	dotnetArity = '`'
 	// dotnetUnwrapped marks, while a name is unwrapped, the place of an
@@ -166,27 +172,33 @@ func dotnetFrame(line string) (StackFrame, bool) {
 // deep the brackets nest. Brackets that hold no method name, or that
 // nothing generated follows, stay as they are written.
 func dotnetUnwrap(name string) string {
-	// open is a bracket not closed yet: where it stands in out, and
-	// whether all that followed it so far is a method's name.
+	// open is a bracket not closed yet: where it stands in out, whether
+	// all that followed it so far is a method's name, and how many
+	// hyphens were seen before it.
 	type open struct {
-		at     int
-		method bool
+		at      int
+		method  bool
+		hyphens int
 	}
 	out := make([]byte, 0, len(name))
 	var opens []open
+	var hyphens []int // where in out the hyphens inside open brackets stand
 	unwrapped := false
 	for i, size := 0, 0; i < len(name); i += size {
 		c, top := name[i], len(opens)-1
 		size = 1
 		switch {
 		case c == '<':
-			opens = append(opens, open{at: len(out), method: true})
+			opens = append(opens, open{at: len(out), method: true, hyphens: len(hyphens)})
 		case c == '>' && top >= 0:
 			o := opens[top]
 			opens = opens[:top]
 			top--
 			if local, n := dotnetGeneratedSuffix(name[i+1:]); n > 0 && o.method && len(out) > o.at+1 {
 				out[o.at], unwrapped = dotnetUnwrapped, true
+				for _, at := range hyphens[o.hyphens:] {
+					out[at] = '.'
+				}
 				if local != "" {
 					out = append(append(out, '.'), local...)
 				}
@@ -197,6 +209,8 @@ func dotnetUnwrap(name string) string {
 			if top >= 0 {
 				opens[top].method = false
 			}
+		case c == dotnetInterfaceDot && top >= 0:
+			hyphens = append(hyphens, len(out))
 		case c >= utf8.RuneSelf:
 			var r rune
 			if r, size = utf8.DecodeRuneInString(name[i:]); top >= 0 && !isNameRune(r) {

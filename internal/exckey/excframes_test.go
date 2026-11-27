@@ -1502,6 +1502,13 @@ func TestDotNetGeneratedNames(t *testing.T) {
 		{"at Example.Shop.Cart.<Step2>g__Check3|1_0()", "Example.Shop.Cart.Step2", "Check3"},
 		// A method that implements an interface explicitly is named with it.
 		{"at Example.Shop.Cart.<Example.Shop.ICart.Add>b__3_0()", "Example.Shop.Cart.Example.Shop.ICart", "Add"},
+		// In the name of a generated type the compiler writes the dots of
+		// the interface as hyphens. Written by hand from that rule.
+		{"at Example.Shop.Cart.<Example-Shop-ICart-AddItemAsync>d__12.MoveNext()", "Example.Shop.Cart.Example.Shop.ICart", "AddItemAsync"},
+		{"at Example.Shop.Cart.<Example-Shop-ICart-AddItemAsync>d__13.MoveNext()", "Example.Shop.Cart.Example.Shop.ICart", "AddItemAsync"},
+		{"at Example.Shop.Cart.<Add-Item>x()", "Example.Shop.Cart", "<Add-Item>x"},
+		{"at Example.Shop.Cart.<Add-Item>x.<Run>b__0()", "Example.Shop.Cart.<Add-Item>x", "Run"},
+		{"at Example.Shop.Cart.<<Example-Shop-ICart-Add>b__0>d.MoveNext()", "Example.Shop.Cart.Example.Shop.ICart", "Add"},
 		// The ordinals end where the next name starts.
 		{"at Example.Shop.Cart.<Run>g__Check|1_0<Add>b__2()", "Example.Shop.Cart.Run", "CheckAdd"},
 		// A name in any script: an ordinal behind it goes like any other.
