@@ -492,3 +492,31 @@ func TestSaturatedFiguresStayPositive(t *testing.T) {
 		}
 	}
 }
+
+// A parameter list is what a label ends with. A parenthesis elsewhere is part
+// of the name: a Go method keeps its receiver and its name, a path keeps its
+// directories.
+func TestShortFrameCutsOnlyATrailingParameterList(t *testing.T) {
+	for _, tc := range []struct {
+		label string
+		width int
+		want  string
+	}{
+		{"github.com/org/app/server.(*Handler).ServeHTTP", 30, "…p/server.(*Handler).ServeHTTP"},
+		{"main.(*Handler).ServeHTTP", 20, "(*Handler).ServeHTTP"},
+		{"main.(*Handler).ServeHTTP", 12, "…).ServeHTTP"},
+		{"pkg/(lambda)/index.js:handler", 20, "…a)/index.js:handler"},
+		// The last list is the parameters, whatever stands before it.
+		{"com.example.Foo.lambda$run$0(java.util.function.Function)", 20, "Foo.lambda$run$0(…)"},
+		{"com.example.Foo.bar(java.util.Map(K))", 12, "Foo.bar(…)"},
+		{"com.example.Foo.bar)", 7, "…o.bar)"},
+		{"(anonymous)", 6, "…mous)"},
+	} {
+		if got := shortFrame(tc.label, tc.width); got != tc.want {
+			t.Errorf("shortFrame(%q, %d) = %q, want %q", tc.label, tc.width, got, tc.want)
+		}
+	}
+	if got := tailFrame("main.(*Handler).ServeHTTP"); got != "(*Handler).ServeHTTP" {
+		t.Errorf("a caller in an allocation path reads %q, want its receiver and method", got)
+	}
+}

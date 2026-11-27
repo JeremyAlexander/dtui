@@ -553,10 +553,23 @@ func tailFrame(label string) string {
 }
 
 // splitParams cuts a frame label before its parameter list, if it has one:
-// the dots inside "(java.lang.String)" separate no package.
+// the dots inside "(java.lang.String)" separate no package. A parameter list
+// is what the label ends with, from the parenthesis that opens it. One
+// elsewhere is part of the name, as in Go's "pkg.(*Type).Method".
 func splitParams(label string) (head, params string) {
-	if i := strings.IndexByte(label, '('); i > 0 {
-		return label[:i], label[i:]
+	if !strings.HasSuffix(label, ")") {
+		return label, ""
+	}
+	depth := 0
+	for i := len(label) - 1; i > 0; i-- {
+		switch label[i] {
+		case ')':
+			depth++
+		case '(':
+			if depth--; depth == 0 {
+				return label[:i], label[i:]
+			}
+		}
 	}
 	return label, ""
 }
