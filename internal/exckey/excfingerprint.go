@@ -165,7 +165,10 @@ func topFrames(all []StackFrame, counts, handsOn func(StackFrame) bool) []StackF
 	for _, f := range all[1:] {
 		// Dropping the frames between two calls of one function leaves a
 		// repeat behind; it is the same recursion.
-		if left > 0 && counts(f) && !handsOn(f) && top[len(top)-1] != f {
+		// What a frame names decides, as in collapseFrames: a
+		// dependency's method and the wrapper generated for it are one.
+		if last := top[len(top)-1]; left > 0 && counts(f) && !handsOn(f) &&
+			(last.Module != f.Module || last.Function != f.Function || last.Syntax != f.Syntax) {
 			top, counted = append(top, f), true
 			left--
 		}
