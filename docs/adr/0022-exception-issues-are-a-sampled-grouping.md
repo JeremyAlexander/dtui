@@ -139,8 +139,8 @@ rest how the view uses it.
   rung, its count, its times, its services and the display fields of its
   newest member, not the member spans or their stack text. The view builds no
   list of a group's occurrences. A span that has no key (see "One event per
-  span is keyed") is counted in one keyless last row, so the counts add up to
-  the number the sample line gives.
+  span is keyed") is counted in one keyless row, labelled `(no key)` and
+  always last, so the counts add up to the number the sample line gives.
 - **A sample line says what the rows were computed from.** It is built from
   the same response as the rows. When nothing cut the sample it reads `all 3
   exception spans · last 2h`. A sample of one span has no "all" (`1 exception
@@ -155,35 +155,42 @@ rest how the view uses it.
   (`partial result:`), Grail's scan limit (`scan limit:`) and the fetch
   timeout. Where more than one applies the line names the gravest, a timeout
   or a scan limit before a consumption limit, that before a size or a row
-  limit, and the footer's notice follows the same order, so the two do not
-  name different reasons. A response Grail marks as sampled is not called
-  `all`: with no other reason the line starts `sampled read:` and counts the
-  spans `in the part that was read`. The reach (`back to`) is given only when
-  the row or the size limit cut the sample and a span's time can be read: a
-  loud bug can fill it in seconds, and a count alone hides that. After a scan
-  limit or a timeout the spans are not known to be the newest, so the line
-  says `of what was scanned` and gives no reach; after a consumption limit it
-  says `of what was returned`. An empty sample that was cut never reads as "no
-  exceptions": it says that the scan gave up, that no exception span fit the
-  size limit, that `the result was cut and holds no exception spans` (row
-  limit), or `no exception spans in what was returned` (consumption limit).
-  Auto-refresh skips a tick while the view still waits for its sample, so a
-  query slower than the interval is shown and not superseded, and auto-refresh
-  pauses for as long as such a query is outstanding. A group's count is the
-  number of sampled spans with its key, a count within the sample and not
-  within the timeframe. Groups are ordered by count, then by newest span, then
-  by key, so equal counts do not move between refreshes. This extends
-  [ADR-0007](0007-scope-honesty.md) from scope to completeness.
+  limit. The footer's notice follows the same order but reads only notices of
+  severity warning or above, where the line reads every notice. So the two
+  name the same reason when all notices are warnings, and can differ
+  otherwise: an informational scan limit beside a size limit warning gives
+  `scan limit:` on the line and the size limit in the footer, and a cut
+  reported only as information gives a line and no footer notice. A response
+  Grail marks as sampled is not called `all`: with no other reason the line
+  starts `sampled read:` and counts the spans `in the part that was read`; an
+  empty one says `no exception spans in the part that was read`. The reach
+  (`back to`) is given only when the row or the size limit cut the sample and
+  a span's time can be read: a loud bug can fill it in seconds, and a count
+  alone hides that. After a scan limit or a timeout the spans are not known to
+  be the newest, so the line says `of what was scanned` and gives no reach;
+  after a consumption limit it says `of what was returned`. An empty sample
+  that was cut never reads as "no exceptions": it says that the scan gave up,
+  that no exception span fit the size limit, that `the result was cut and
+  holds no exception spans` (row limit), or `no exception spans in what was
+  returned` (consumption limit). Auto-refresh skips a tick while the view
+  still waits for its sample, so a query slower than the interval is shown and
+  not superseded, and auto-refresh pauses for as long as such a query is
+  outstanding. A group's count is the number of sampled spans with its key, a
+  count within the sample and not within the timeframe. Groups are ordered by
+  count, then by newest span, then by key, so equal counts do not move between
+  refreshes. This extends [ADR-0007](0007-scope-honesty.md) from scope to
+  completeness.
 - **Facets and search act on spans; the key is local.** A facet narrows the
   query before sampling, so it uses fields of the fetched spans, collected
   before grouping. The issue is stamped on the row under a `__` key
   ([ADR-0016](0016-detail-panes-show-real-grail-keys.md)) and is never offered
   as a facet or sent to the server. `/` filters the visible groups and matches
-  the key and the full type as well as the cells. On this view Enter keeps
-  that filter local, since a server `search` would look for a key no span
-  holds, and `ctrl+s` sends the text as a server search over the spans, added
-  to the terms already there; `alt+enter` replaces those terms with it, as on
-  every view. `--search` and a preset's searches stay server-side.
+  the key, the full type, the type the event recorded and every service of the
+  group as well as the cells. On this view Enter keeps that filter local,
+  since a server `search` would look for a key no span holds, and `ctrl+s`
+  sends the text as a server search over the spans, added to the terms already
+  there; `alt+enter` replaces those terms with it, as on every view.
+  `--search` and a preset's searches stay server-side.
 - **A row opens its newest span, and the exits hand over the query.** Enter
   opens the trace of the group's newest span, and `l` the logs of that trace.
   `y` yanks the key. `o` opens the primary query in a Notebook and `c` echoes
