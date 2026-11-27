@@ -229,10 +229,13 @@ func profilable(e Entity) bool {
 
 // profileEntityArg is the entity argument of the echoed command: the scoped
 // process, or a placeholder where there is none an analysis runs on, so that
-// what is copied cannot be mistaken for a command that works.
+// what is copied cannot be mistaken for a command that works. The line is
+// made to be pasted into a shell and the id comes from a row of the
+// environment or from the history file, so it is echoed only when all of it
+// is an entity id; the placeholder is no shell syntax either.
 func profileEntityArg(s Scope) string {
-	if s.Entity == nil || s.Entity.ID == "" || !profilable(*s.Entity) {
-		return "<PROCESS-id>"
+	if s.Entity == nil || !profilable(*s.Entity) || !EntityID.MatchString(s.Entity.ID) {
+		return "PROCESS-…"
 	}
 	return s.Entity.ID
 }
@@ -319,6 +322,11 @@ var hotspotsSpec = &Spec{
 	// rows than the view unless told.
 	Echo: func(s Scope, _ string) string {
 		window := profileEchoWindow(s.Timeframe)
+		if ProfileAllocations(s) && s.Arg != "" {
+			// Nothing is read for a focused function on this lens, so no
+			// command prints what the view holds.
+			return ""
+		}
 		if ProfileAllocations(s) {
 			return fmt.Sprintf("dtctl exec profiling allocations %s --limit %d %s", profileEntityArg(s), ProfileRowCap, window)
 		}

@@ -1295,8 +1295,13 @@ func echoArgs(t *testing.T, line string) []string {
 	var args []string
 	var cur strings.Builder
 	quoted, open := false, false
+	// A quote inside a quoted argument is written '\'': close, an escaped
+	// quote, open again.
+	line = strings.ReplaceAll(line, `'\''`, "\x00")
 	for _, r := range line {
 		switch {
+		case r == 0:
+			cur.WriteByte('\'')
 		case r == '\'':
 			quoted, open = !quoted, true
 		case r == ' ' && !quoted:
@@ -1350,6 +1355,7 @@ func TestProfilingEchoReproducesTheRequest(t *testing.T) {
 			{"running", "", 300},
 			{"lock", "", 300},
 			{"wait", "com.example.shop.CartService.total", 25},
+			{"running", "it's a 'name' $(id) `x`", 25},
 			{"allocations", "", 300},
 		} {
 			p := &recordingProfiler{}
@@ -1413,8 +1419,26 @@ func TestProfilingEchoReproducesTheRequest(t *testing.T) {
 
 	// An entity no analysis runs on is not echoed as if it could be pasted.
 	service := catalog.Scope{Timeframe: timeframe(t, "2h"), Entity: &catalog.Entity{ID: "SERVICE-000000000000B001", Type: "SERVICE"}}
-	if got := echoArgs(t, spec.Echo(service, ""))[4]; got != "<PROCESS-id>" {
+	if got := echoArgs(t, spec.Echo(service, ""))[4]; got != "PROCESS-…" {
 		t.Errorf("a service scope echoes %s, want the placeholder", got)
+	}
+	// Nor is an id that is more than an id: it comes from a row of the
+	// environment or from the history file, and the line is made to be pasted
+	// into a shell. The placeholder itself is no shell syntax either.
+	for _, id := range []string{"PROCESS-$(id)", "PROCESS-000000000000A001;id", "PROCESS-000000000000A001 x", "PROCESS-000000000000a001"} {
+		for _, lens := range []string{"running", "allocations"} {
+			echo := spec.Echo(catalog.Scope{Timeframe: timeframe(t, "2h"), Lens: lensIndex(t, lens), Entity: &catalog.Entity{ID: id, Type: "PROCESS"}}, "")
+			if got := echoArgs(t, echo)[4]; got != "PROCESS-…" || strings.ContainsAny(echo, "<>;$") {
+				t.Errorf("the id %q is echoed as %s in\n%s", id, got, echo)
+			}
+		}
+	}
+	// The allocations lens of a focused function reads nothing, so there is
+	// no command that prints it: a whole-process one would print another
+	// table.
+	focused := catalog.Scope{Timeframe: timeframe(t, "2h"), Entity: shopProcess, Lens: lensIndex(t, "allocations"), Arg: "com.example.X.run"}
+	if got := spec.Echo(focused, ""); got != "" {
+		t.Errorf("the allocations lens of a focused function echoes %s, want nothing", got)
 	}
 }
 

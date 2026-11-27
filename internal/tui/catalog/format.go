@@ -4,11 +4,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
 )
+
+// EntityID matches an entity id of either era: Smartscape ("K8S_POD-16HEX")
+// and classic ("CLOUD_APPLICATION-16HEX") ids share the TYPE-16HEX shape.
+var EntityID = regexp.MustCompile(`^[A-Z][A-Z0-9_]*-[0-9A-F]{16}$`)
 
 // SafeText makes a tenant-supplied string safe to display: terminal control
 // characters become visible Control Pictures glyphs (ESC → ␛, BEL → ␇),
