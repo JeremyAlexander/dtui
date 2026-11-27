@@ -283,11 +283,37 @@ func TestErrorTextHangsUnderItself(t *testing.T) {
 			"✗ the environment refused the query",
 			"  because the token lacks a scope",
 		},
-		"first\nsecond\x1b[31m": {"✗ first second␛[31m"},
+		// An error keeps its own lines: dtctl's query errors are paragraphs
+		// with indented examples, and folded into one they cannot be read.
+		"first\nsecond\x1b[31m": {"✗ first", "  second␛[31m"},
+		"segment s requires variable \"v\"\n\nBind it inline:\n\n  dtctl query \"...\" -S \"s?v=x\"\r\n\tor a file": {
+			"✗ segment s requires variable \"v\"",
+			"",
+			"  Bind it inline:",
+			"",
+			"    dtctl query \"...\" -S \"s?v=x\"",
+			"      or a file",
+		},
+		// A long line of an example wraps under its own indentation.
+		"hint:\n  dtctl query 'fetch logs | filter status == \"ERROR\"'": {
+			"✗ hint:",
+			"    dtctl query 'fetch logs | filter",
+			"    status == \"ERROR\"'",
+		},
+		// The indentation counts toward the width, and one deeper than half
+		// of it is cut back, so the text keeps room.
+		"a\n  " + strings.Repeat("x", 19) + " " + strings.Repeat("y", 18) + " z": {
+			"✗ a", "    " + strings.Repeat("x", 19), "    " + strings.Repeat("y", 18) + " z"},
+		"top\n" + strings.Repeat(" ", 30) + "deep text here": {"✗ top", strings.Repeat(" ", 21) + "deep text here"},
+		// No more lines than the body has, and the cut is marked.
+		"1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12": {"✗ 1", "  2", "  3", "  4", "  5", "  6", "  7", "  …"},
 	} {
 		if got := fail(text); !slices.Equal(got, want) {
-			t.Errorf("error %q draws %q, want %q", text, got, want)
+			t.Errorf("error %q draws\n%s\nwant\n%s", text, strings.Join(got, "\n"), strings.Join(want, "\n"))
 		}
+	}
+	if n := strings.Count(tv.View(40, 10), "\n") + 1; n > 10 {
+		t.Errorf("a twelve line error makes the body %d lines of 10", n)
 	}
 
 	tv.scope.Entity = &catalog.Entity{ID: "HOST-000000000000C001", Type: "HOST", Name: "web\n1"}

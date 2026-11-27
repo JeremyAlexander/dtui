@@ -1260,6 +1260,33 @@ func (v *tableView) loadingText() []string {
 	return lines
 }
 
+// errorLines lays an error text out in width cells and at most limit lines.
+// An error keeps the lines it came with, blank ones and indentation
+// included: dtctl's query errors are paragraphs with indented examples. Each
+// line may repeat tenant data, so each is made safe on its own (oneLine), and
+// one too long wraps under its own indentation. A text that does not fit ends
+// in a line that says so.
+func errorLines(text string, width, limit int) []string {
+	var out []string
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimRight(strings.ReplaceAll(line, "\t", "    "), " ")
+		body := strings.TrimLeft(line, " ")
+		// An indentation the width cannot afford is cut, not the text.
+		indent := strings.Repeat(" ", min(len(line)-len(body), max(width/2, 0)))
+		if body = oneLine(body); body == "" {
+			out = append(out, "")
+			continue
+		}
+		for _, part := range wrapLines(body, width-len(indent)) {
+			out = append(out, indent+part)
+		}
+	}
+	if limit > 0 && len(out) > limit {
+		out = append(out[:limit-1], "…")
+	}
+	return out
+}
+
 // placeNote centres a dim line in a body of the given width. One wider than
 // the body wraps instead: wrapping pads to the wrap width, which would push a
 // short line to the left margin.
@@ -1325,10 +1352,12 @@ func (v *tableView) renderTable(width, height int) string {
 	}
 
 	if v.err != nil {
-		// The text continues under itself, not under the mark; it may
-		// repeat tenant data, so it is made one safe line before wrapping.
-		text := strings.ReplaceAll(wrap(oneLine(v.err.Error()), width-2), "\n", "\n  ")
-		b.WriteString("\n" + theme.Error.Render("✗ "+text))
+		// The text continues under itself, not under the mark, on as many
+		// lines as the body has left.
+		b.WriteString("\n")
+		room := max(height-strings.Count(b.String(), "\n"), 1)
+		text := strings.Join(errorLines(v.err.Error(), width-2, room), "\n  ")
+		b.WriteString(theme.Error.Render("✗ " + text))
 		return b.String()
 	}
 	for _, line := range v.captionLines(width) {
