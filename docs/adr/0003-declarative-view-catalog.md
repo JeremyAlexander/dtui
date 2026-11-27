@@ -14,7 +14,9 @@ enrichment, detail tabs) rendered by one generic table engine. Adding a
 view is configuration, not plumbing. Bespoke `viewModel` implementations
 exist only where a table genuinely doesn't fit: home, DQL escape hatch,
 trace waterfall, session timeline, record inspector, metrics charts,
-smartscape navigator, and the problem/vulnerability pages.
+smartscape navigator, and the problem/vulnerability pages. The flame graph
+of the hotspots analysis is proposed as one more
+([ADR-0023](0023-flame-graph-is-a-bespoke-screen.md)).
 
 ## Consequences
 

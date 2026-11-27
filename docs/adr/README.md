@@ -29,6 +29,10 @@ can read in two minutes.
 | [0019](0019-agents-may-navigate-a-listening-tui.md) | Agents may drive a TUI started with `--listen`: push pages and save personal presets over a local socket |
 | [0020](0020-last-filter-on-catalog-jumps.md) | A catalog jump restores that view's last unscoped server filter |
 | [0023](0023-flame-graph-is-a-bespoke-screen.md) | The flame graph is a bespoke screen, and the last depth of profiling *(proposed)* |
+| [0024](0024-open-a-frames-source-locally.md) | Opening a frame's source is local, read-only and never runs anything *(proposed)* |
 
 New ADRs: next number, same three sections, `Accepted`/`Superseded` status.
+One that is still under review says `Proposed` and is marked so here; it
+binds nothing until it is accepted. (0021 and 0022 are taken by records on
+other branches.)
 Record a decision when reversing it would ripple through more than one view.

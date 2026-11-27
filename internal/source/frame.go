@@ -5,7 +5,7 @@
 // A frame's label comes from the environment and is text an attacker may
 // have chosen. It is never run, never joined to a path and never opened: it
 // is only compared with the names of files a walk of the directory found
-// (docs/adr/0023-flame-graph-is-a-bespoke-screen.md).
+// (docs/adr/0024-open-a-frames-source-locally.md).
 package source
 
 import "strings"

@@ -20,7 +20,9 @@ list → detail (curated tabs) → pre-scoped signal drills → exits (`o` deep
 link, `c` command echo). Beyond that cap the answer is an exit, not a new
 tab. Bespoke pages stay the enumerated exceptions
 ([ADR-0003](0003-declarative-view-catalog.md)) — problem, vulnerability,
-trace waterfall, navigator — and a new one requires an ADR.
+trace waterfall, navigator — and a new one requires an ADR. The flame graph
+is proposed as one, and as the depth cap of profiling
+([ADR-0023](0023-flame-graph-is-a-bespoke-screen.md)).
 
 Rendering exists to **pick the next keystroke**: glanceable sparklines,
 badges, gradient bars, color-coded severity. Never to present:
