@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -101,7 +102,8 @@ func profilerOver(t *testing.T, env http.RoundTripper) dtctlProfiler {
 // recordedProfiler is the dtctl-backed profiler over the recording: each
 // analysis is answered with the result recorded for its kind, whatever
 // process and window it asks about, so a recording is read by exactly the
-// code a live result is.
+// code a live result is. The hotspots recording holds the waiting threads,
+// so it answers only a request that asks for them.
 func recordedProfiler(t *testing.T) dtctlProfiler {
 	t.Helper()
 	result := func(file string) string {
@@ -121,6 +123,9 @@ func recordedProfiler(t *testing.T) dtctlProfiler {
 	return profilerOver(t, roundTrip(func(r *http.Request) (*http.Response, error) {
 		switch {
 		case strings.Contains(r.URL.Path, "/methodhotspots/"):
+			if r.URL.Query().Get("showWaiting") != "true" {
+				return answering(400, nil, `{"error":{"code":400,"message":"the recording was taken with showWaiting=true"}}`)(r)
+			}
 			return answering(200, nil, hotspots)(r)
 		case strings.Contains(r.URL.Path, "/memoryallocation/"):
 			return answering(200, nil, allocations)(r)
@@ -354,12 +359,14 @@ func TestProfilingFailuresAreClassified(t *testing.T) {
 			t.Errorf("403 wording lacks %q: %s", want, msg)
 		}
 	}
-	// A status that says nothing about an analysis is shown as the API put it.
+	// A status that says nothing about an analysis is named, with what the
+	// API said about the request.
 	hotspots, _ := sourcesAt(profilerOver(t, answering(401, nil, `{"error":{"code":401,"message":"token expired"}}`)))
 	_, err := hotspots(context.Background(), scope, "")
 	var f *profileFailure
-	if err == nil || errors.As(err, &f) || !strings.Contains(err.Error(), "API error (401): token expired") {
-		t.Errorf("HTTP 401: got %v, want the API's own error", err)
+	const want = "the environment answered the request for the analysis with status 401: token expired — press r to ask again"
+	if !errors.As(err, &f) || f.Reason != profileUnexpectedStatus || err.Error() != want {
+		t.Errorf("HTTP 401 reads\n %v, want\n %s", err, want)
 	}
 }
 
@@ -974,6 +981,63 @@ func TestProfilingFailureWording(t *testing.T) {
 		if got := tc.err.Error(); got != tc.want || strings.Contains(got, "t-4711") {
 			t.Errorf("%s reads\n %q, want\n %q", tc.name, got, tc.want)
 		}
+	}
+
+	// What dtctl does not classify is worded all the same: its text is the
+	// SDK's, with the task token and, when no response came, the result URL.
+	const token = "t-4711-MARKER"
+	resultURL := "https://env.example.invalid/platform/x/result?token=" + token + "&serverId=1"
+	refused := &url.Error{Op: "Get", URL: resultURL, Err: errors.New("dial tcp: connection refused")}
+	submit := func(err error) error {
+		return profilingFailure(&codelevelanalysis.Error{Phase: codelevelanalysis.PhaseSubmit, Err: err}, shopProcess.ID)
+	}
+	for _, tc := range []struct {
+		name   string
+		err    error
+		reason profileReason
+		want   string
+	}{
+		{"a poll answered with 401",
+			poll(fmt.Errorf("codelevelanalysis: poll (token %s): %w", token, httpclient.NewAPIError(401, "Unauthorized "+token, ""))),
+			profileUnexpectedStatus,
+			"the environment answered with status 401 while dtui waited for the analysis — press r to ask again"},
+		{"a submit answered with 418",
+			submit(fmt.Errorf("codelevelanalysis: submit: %w", httpclient.NewAPIError(418, "teapot", ""))),
+			profileUnexpectedStatus,
+			"the environment answered the request for the analysis with status 418: teapot — press r to ask again"},
+		{"a poll answered with a status that is no failure",
+			poll(fmt.Errorf("codelevelanalysis: poll (token %s): unexpected status 302", token)),
+			profileMalformed,
+			"the environment's answer is not an analysis result (this API is experimental and may have changed)"},
+		{"polls that got no response",
+			poll(fmt.Errorf("codelevelanalysis: poll failed 5 times in a row (token %s): %w", token, refused)),
+			profileUnreachable,
+			"the environment did not answer while dtui waited for the analysis: dial tcp: connection refused — press r to ask again"},
+		{"a submit that got no response",
+			submit(fmt.Errorf("codelevelanalysis: submit: %w", refused)),
+			profileUnreachable,
+			"the environment did not answer the request for the analysis: dial tcp: connection refused — press r to ask again"},
+		{"a reason dtctl adds later",
+			profilingFailureOf(profiling.Failure{Reason: profiling.FailureReason("quota_" + token[:6]), StatusCode: 402, Message: "see " + resultURL}, shopProcess.ID),
+			profileOther,
+			"the analysis failed for a reason dtui has no words for (quota_t-4711, status 402) — press r to ask again"},
+	} {
+		var f *profileFailure
+		if !errors.As(tc.err, &f) || f.Reason != tc.reason {
+			t.Errorf("%s: got %v, want reason %s", tc.name, tc.err, tc.reason)
+			continue
+		}
+		if got := tc.err.Error(); got != tc.want || strings.Contains(got, "MARKER") {
+			t.Errorf("%s reads\n %q, want\n %q", tc.name, got, tc.want)
+		}
+		// Nor does the failure carry the token for a later wording to show.
+		if strings.Contains(fmt.Sprintf("%+v", *f), "MARKER") {
+			t.Errorf("%s keeps the task token: %+v", tc.name, *f)
+		}
+	}
+	// A cancelled analysis is the cancellation and nothing of the request.
+	if got := submit(fmt.Errorf("codelevelanalysis: submit: %w", &url.Error{Op: "Get", URL: resultURL, Err: context.Canceled})); got != context.Canceled {
+		t.Errorf("a cancelled analysis reads %q", got)
 	}
 
 	// A failure that is not one of an analysis keeps its own text.
@@ -1592,4 +1656,86 @@ func TestProfilingEvictsTheAnalysisReadLongestAgo(t *testing.T) {
 	read(profileCacheSize, profileCacheSize+1, "a fifth process")
 	read(0, profileCacheSize+1, "the first analysis, read before the fifth arrived, must be kept")
 	read(1, profileCacheSize+2, "the second analysis, read longest ago, must be the one dropped")
+}
+
+// What the adapter asks the environment for is what the view shows: the
+// process as the API knows it, the window to the millisecond, and for the
+// hotspots the waiting threads, which four of the five thread-state lenses
+// read.
+func TestProfilingRequestsWhatTheViewShows(t *testing.T) {
+	var asked []*http.Request
+	p := profilerOver(t, roundTrip(func(r *http.Request) (*http.Response, error) {
+		asked = append(asked, r)
+		return answering(200, nil, `{"dataNodes":[]}`)(r)
+	}))
+	q := profileQuery{Entity: shopProcess.ID, From: scenarioNow.Add(-90*time.Minute + 125*time.Millisecond), To: scenarioNow.Add(-250 * time.Millisecond)}
+	if _, err := p.Hotspots(context.Background(), q); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.Allocations(context.Background(), q); err != nil {
+		t.Fatal(err)
+	}
+	if len(asked) != 2 {
+		t.Fatalf("%d requests, want one per analysis", len(asked))
+	}
+	from, to := fmt.Sprintf("from=%d", q.From.UnixMilli()), fmt.Sprintf("to=%d", q.To.UnixMilli())
+	for i, want := range []struct{ path, query string }{
+		{"/methodhotspots/PROCESS_GROUP_INSTANCE-000000000000A001", from + "&showWaiting=true&" + to},
+		{"/memoryallocation/PROCESS_GROUP_INSTANCE-000000000000A001", from + "&" + to},
+	} {
+		if got := asked[i].URL; !strings.HasSuffix(got.Path, want.path) || got.Query().Encode() != want.query {
+			t.Errorf("request %d is %s?%s, want …%s?%s", i+1, got.Path, got.Query().Encode(), want.path, want.query)
+		}
+	}
+}
+
+// An answer that is not an analysis says so, in dtui's words: a 200 that is
+// not JSON, and a 202 that names no task to wait for.
+func TestProfilingAnswerThatIsNoAnalysis(t *testing.T) {
+	scope := catalog.Scope{Entity: shopProcess, Timeframe: timeframe(t, "2h")}
+	const worded = "the environment's answer is not an analysis result (this API is experimental and may have changed)"
+	for _, tc := range []struct {
+		name   string
+		status int
+		body   string
+		want   string
+	}{
+		{"a page of HTML", 200, "<html><body>sign in</body></html>", worded + ": it is not JSON"},
+		{"a 202 without a task", 202, "{}", worded},
+	} {
+		hotspots, _ := sourcesAt(profilerOver(t, answering(tc.status, nil, tc.body)))
+		_, err := hotspots(context.Background(), scope, "")
+		var f *profileFailure
+		if !errors.As(err, &f) || f.Reason != profileMalformed || err.Error() != tc.want {
+			t.Errorf("%s reads\n %v, want\n %s", tc.name, err, tc.want)
+		}
+	}
+}
+
+// The catalog cannot import dtctl, so it spells out what dtctl's profiling
+// package defines: the longest window, the thread states, the caller of an
+// outermost frame, and what an analysis runs on. They have to agree.
+func TestProfilingCatalogAgreesWithDtctl(t *testing.T) {
+	if catalog.ProfileMaxWindow != profiling.MaxWindow {
+		t.Errorf("the view analyses at most %s, dtctl at most %s", catalog.ProfileMaxWindow, profiling.MaxWindow)
+	}
+	var states []string
+	for _, l := range catalog.HotspotLenses[:len(catalog.HotspotLenses)-1] {
+		states = append(states, l.Name)
+	}
+	want := []string{string(profiling.StateRunning), string(profiling.StateLock), string(profiling.StateNetIO),
+		string(profiling.StateDiskIO), string(profiling.StateWait)}
+	if strings.Join(states, " ") != strings.Join(want, " ") {
+		t.Errorf("the thread-state lenses are %v, dtctl's states %v", states, want)
+	}
+	if fn, why := catalog.FocusTarget(catalog.Scope{}, map[string]any{catalog.ProfFunction: profiling.RootCaller}); fn != "" || why == "" {
+		t.Errorf("dtctl's root caller %q is offered as a function to focus (%q, %q)", profiling.RootCaller, fn, why)
+	}
+	spec := catalog.Lookup("hotspots")
+	for _, typ := range []string{"PROCESS", "PROCESS_GROUP_INSTANCE", "PROCESS_GROUP", "SERVICE", "HOST", "CONTAINER_GROUP_INSTANCE"} {
+		id := typ + "-000000000000A001"
+		if got, want := spec.Scopable(catalog.Entity{ID: id, Type: typ}), profiling.EligibleEntity(id); got != want {
+			t.Errorf("%s: the view offers an analysis=%v, dtctl runs one=%v", typ, got, want)
+		}
+	}
 }

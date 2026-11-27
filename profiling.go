@@ -97,6 +97,10 @@ const (
 	profileServerError  profileReason = "server_error"  // 5xx
 	profileNotCompleted profileReason = "not_completed" // still running after the last poll
 	profileMalformed    profileReason = "malformed"     // the answer is not an analysis result
+	// What dtctl does not classify.
+	profileUnexpectedStatus profileReason = "unexpected_status" // a failure status with no meaning of its own here (401)
+	profileUnreachable      profileReason = "unreachable"       // no response at all
+	profileOther            profileReason = "other"             // a reason dtctl has and dtui does not know
 )
 
 // profileFailure is a failure the views word themselves, so that what the
@@ -107,8 +111,13 @@ type profileFailure struct {
 	Entity string
 	// Status is the HTTP status the environment answered with, if it did.
 	Status int
-	// Message is the API's own message, when there is one.
+	// Message is the API's own message, when there is one; for
+	// profileUnreachable why no response came, and for profileOther dtctl's
+	// name of the reason.
 	Message string
+	// Polling says the failure came while waiting for the result, not on
+	// the request that starts the analysis.
+	Polling bool
 }
 
 func (f *profileFailure) Error() string {
@@ -149,6 +158,22 @@ func (f *profileFailure) Error() string {
 		return "the analysis was still running when dtui stopped asking for its result — press r to ask again"
 	case profileMalformed:
 		return detail("the environment's answer is not an analysis result (this API is experimental and may have changed)")
+	case profileUnexpectedStatus:
+		if f.Polling {
+			return fmt.Sprintf("the environment answered with status %d while dtui waited for the analysis — press r to ask again", f.Status)
+		}
+		return detail(fmt.Sprintf("the environment answered the request for the analysis with status %d", f.Status)) + " — press r to ask again"
+	case profileUnreachable:
+		if f.Polling {
+			return detail("the environment did not answer while dtui waited for the analysis") + " — press r to ask again"
+		}
+		return detail("the environment did not answer the request for the analysis") + " — press r to ask again"
+	case profileOther:
+		reason := f.Message
+		if f.Status != 0 {
+			reason += fmt.Sprintf(", status %d", f.Status)
+		}
+		return fmt.Sprintf("the analysis failed for a reason dtui has no words for (%s) — press r to ask again", reason)
 	}
 	return f.Message
 }
