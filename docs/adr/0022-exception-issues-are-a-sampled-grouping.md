@@ -28,19 +28,22 @@ rest how the view uses it.
   type, then the evidence (the parameterised message, or a module and a
   function per frame), so no two inputs can run together. It depends on no
   locale and no map order. It does depend on the Go toolchain's Unicode
-  tables, which decide what the stack readers take for an identifier; a Go
-  release that changes them is treated as a change to a table. `e1` is frozen
-  by the first dtui release that shows a key. From then on a change that can
-  move an exception to another key ships as `e2`, and a change to a table the
-  key reads is such a change: the vendor prefixes, the pass-through names, the
-  message rules. Until that release `e1` may be repinned. Two golden files
-  make the step a conscious one: the `e1` keys of a corpus, and one digest per
-  declaration the key is computed from (a `const` block is one). The digests
-  cover declarations; the code of a function is covered by the corpus and the
-  tests alone. The readers and the corpus are the specification; this record
-  names the rules and does not replace them. One vector for another
-  implementation: an event with the type `é` and nothing else hashes the bytes
-  `1:42:é` to `e1:c7bd5892e50a`.
+  tables, which decide what the stack readers take for an identifier. Their
+  version is pinned beside the digests, so a Go release that changes it fails
+  the pin test (`TestExceptionKeyInputsArePinned`); if every corpus key still
+  holds, that line is repinned without a new key version, and only if a corpus
+  key changes is it a new key version. `e1` is frozen by the first dtui
+  release that shows a key. From then on a change that can move an exception
+  to another key ships as `e2`, and a change to a table the key reads is such
+  a change: the vendor prefixes, the pass-through names, the message rules.
+  Until that release `e1` may be repinned. Two golden files make the step a
+  conscious one: the `e1` keys of a corpus, and one digest per declaration the
+  key is computed from (a `const` block is one). The digests cover
+  declarations; the code of a function is covered by the corpus and the tests
+  alone. The readers and the corpus are the specification; this record names
+  the rules and does not replace them. One vector for another implementation:
+  an event with the type `é` and nothing else hashes the bytes `1:42:é` to
+  `e1:c7bd5892e50a`.
 - **One event per span is keyed.** Of a span's exception events that give a
   type, a message that is not empty once parameterised, or a frame a reader
   can use, take the last one flagged `exception.is_caused_by_root`, else the
