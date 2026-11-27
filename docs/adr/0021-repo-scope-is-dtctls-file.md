@@ -257,7 +257,9 @@ header. A view that carries neither shows no scope.
   `--context <name>` when the session's context is not the one dtctl would
   use. dtui's context is session-local (`--context`, `DTCTL_CONTEXT` or the
   workspace file), so without it a pasted command runs on dtctl's current
-  context. Every argument is quoted for a POSIX shell by one helper of the
+  context. `o` hands over the same query text, the one that was sent, on every
+  view the rewrite reaches; today `o` and `ctrl+q` on `:query` read the text
+  as typed. Every argument is quoted for a POSIX shell by one helper of the
   catalog, which every echo goes through, and no whitespace inside the query
   is folded: a service name may hold an apostrophe or two spaces, and a
   segment's variables are joined with `&`. Today's `echoQuery` wraps the text
