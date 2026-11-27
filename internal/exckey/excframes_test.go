@@ -322,7 +322,6 @@ created by main.main in goroutine 1
 				"github.com/acme/shop/cart", "Service.AddItem",
 				"github.com/acme/shop/cart", "Total",
 				"net/http", "HandlerFunc.ServeHTTP",
-				"main", "main.func1",
 				"main", "main")},
 		{"the throw site is below the panic and what ran while panicking", `goroutine 51 [running]:
 net/http.(*conn).serve.func1()
@@ -1718,6 +1717,44 @@ const (
 	// without.
 	dotnetNestedTimeLimit = 1500 * time.Millisecond
 )
+
+// A closure, the wrapper of a go or defer statement and a closure in a
+// closure are numbered in the order they stand in their function, so the
+// numbers move when one is added above. None stays in a name: the code is
+// the function's.
+func TestGoGeneratedNames(t *testing.T) {
+	cases := []struct{ line, module, function string }{
+		{"main.run.func1()", "main", "run"},
+		{"main.run.func2()", "main", "run"},
+		{"main.run.func1.1()", "main", "run"},
+		{"main.run.func1.2.3(0x1)", "main", "run"},
+		{"main.run.func1.gowrap2()", "main", "run"},
+		{"main.run.gowrap1()", "main", "run"},
+		{"main.run.deferwrap2()", "main", "run"},
+		{"shop/internal/cart.(*Service).AddItem.func1(0x1)", "shop/internal/cart", "Service.AddItem"},
+		{"shop/internal/cart.(*Service).AddItem.func1.deferwrap1(0x1)", "shop/internal/cart", "Service.AddItem"},
+		{"shop/internal/cart.glob..func1()", "shop/internal/cart", "glob"},
+		{"shop/internal/cart.init.0()", "shop/internal/cart", "init"},
+		{"shop/internal/cart.init.func1()", "shop/internal/cart", "init"},
+		{"created by main.run.func1 in goroutine 1", "main", "run"},
+		// A function may be named like a generated one, and a name only
+		// ends that way where a number does.
+		{"main.func1()", "main", "func1"},
+		{"shop/internal/cart..func1()", "shop/internal/cart", ".func1"},
+		{"main.gowrap1(0x1)", "main", "gowrap1"},
+		{"main.run.func()", "main", "run.func"},
+		{"main.run.func1x()", "main", "run.func1x"},
+		{"main.run.wrap1()", "main", "run.wrap1"},
+		{"main.(*V2).Get(0x1)", "main", "V2.Get"},
+		{"main.run.func1.Close(0x1)", "main", "run.func1.Close"},
+	}
+	for _, tc := range cases {
+		f, ok := goFrame(tc.line)
+		if !ok || f.Module != tc.module || f.Function != tc.function {
+			t.Errorf("%s\n got %q %q %v\nwant %q %q", tc.line, f.Module, f.Function, ok, tc.module, tc.function)
+		}
+	}
+}
 
 // The runtime prints more than the plain dump shows: a system header with
 // the goroutine's pointers, frame pointers after a file line, "_" for an

@@ -44,6 +44,14 @@ var (
 	// The runtime's entry points of a panic. "panic" itself is printed
 	// without a package.
 	goPanicRe = regexp.MustCompile(`^(?:gopanic|goPanic\w+|panic\w*|sigpanic\w*|fatalpanic|throw)$`)
+	// What the compiler appends to a function for the code it generates
+	// from it: a closure ("run.func1", and "glob..func1" for one of a
+	// package-level variable), the wrapper of a go or defer statement
+	// ("run.gowrap1", "run.deferwrap2"), a closure in a closure
+	// ("run.func1.2") and one init function of several ("init.0"). The
+	// numbers follow the order in the source, so they move when a closure
+	// is added above; the code is the function's, and none stays in a name.
+	goGeneratedRe = regexp.MustCompile(`(?:\.+(?:func|gowrap|deferwrap)\d+|\.\d+)+$`)
 	// A method's receiver is written "(*Type)" or "(Type)".
 	goReceiver = strings.NewReplacer("(*", "", "(", "", ")", "")
 )
@@ -115,6 +123,12 @@ func goFrame(line string) (StackFrame, bool) {
 		module, function = name[:slash+dot], name[slash+dot+1:]
 	}
 	function = goReceiver.Replace(function)
+	// Every generated name ends in a digit; few names do.
+	if end := len(function) - 1; end >= 0 && function[end] >= '0' && function[end] <= '9' {
+		if named := goGeneratedRe.ReplaceAllString(function, ""); named != "" {
+			function = named
+		}
+	}
 	if function == "" {
 		return StackFrame{}, false
 	}

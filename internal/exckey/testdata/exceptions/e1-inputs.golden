@@ -43,6 +43,7 @@ ca633138620f561e	var dotnetVendorPrefixes
 f0adf6a90bda193b	var goArgsRe
 02bbcc03877b5fc6	var goDependencyRe
 7f6b5deaba5a3796	var goFileRe
+91fa9fc092450657	var goGeneratedRe
 d28d2de98dfd7427	var goGoroutineRe
 bd5cb2dab2295a66	var goNameRe
 8f88eb56f7b20fc0	var goPanicHeaders
