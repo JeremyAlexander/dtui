@@ -907,3 +907,37 @@ func TestProfilingChromeFitsEightyColumns(t *testing.T) {
 		}
 	}
 }
+
+// r asks the source for a new reading; nothing else does. A lens switch
+// reads what the source holds.
+func TestOnlyRAsksForAFreshRead(t *testing.T) {
+	a, tv, calls, _ := profilingCalls(t)
+	fresh := func() []bool {
+		out := make([]bool, len(*calls))
+		for i, ctx := range *calls {
+			out[i] = FreshRead(ctx)
+		}
+		return out
+	}
+	tv.Update(dataMsg{owner: tv, seq: tv.seq, records: []map[string]any{{catalog.ProfFunction: "com.example.Main.run"}}})
+	press(a, key("]"))
+	tv.Update(dataMsg{owner: tv, seq: tv.seq, records: []map[string]any{{catalog.ProfFunction: "com.example.Main.run"}}})
+	press(a, key("r"))
+	press(a, key("]"))
+	if got, want := fmt.Sprint(fresh()), "[false false true false]"; got != want {
+		t.Errorf("open, ], r, ] read fresh: %s, want %s", got, want)
+	}
+
+	// On an ordinary API view r is a plain refetch, marked the same way.
+	var slos []bool
+	a.ds.sources["slos"] = func(ctx context.Context, _ catalog.Scope, _ string) ([]map[string]any, error) {
+		slos = append(slos, FreshRead(ctx))
+		return nil, nil
+	}
+	_, cmd := a.Update(NavigateMsg{Target: "slos"})
+	deliver(a, cmd)
+	press(a, key("r"))
+	if got, want := fmt.Sprint(slos), "[false true]"; got != want {
+		t.Errorf("slos open and r read fresh: %s, want %s", got, want)
+	}
+}

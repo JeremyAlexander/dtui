@@ -283,6 +283,23 @@ func ReportProgress(ctx context.Context, text string) {
 	}
 }
 
+type freshReadKey struct{}
+
+// WithFreshRead marks a call as one the user asked for with r, on a view
+// whose rows are already there: a Source that keeps results answers it with
+// a new one. Every other call (a lens, a drill, a return to the view) reads
+// what the source holds.
+func WithFreshRead(ctx context.Context) context.Context {
+	return context.WithValue(ctx, freshReadKey{}, true)
+}
+
+// FreshRead reports whether the call was marked by WithFreshRead. Exported,
+// like ReportProgress, because sources live in the main package.
+func FreshRead(ctx context.Context) bool {
+	fresh, _ := ctx.Value(freshReadKey{}).(bool)
+	return fresh
+}
+
 // query runs a DQL query asynchronously. In-flight queries are never
 // cancelled mid-poll (the executor prints a cancellation notice to stderr,
 // which would corrupt the alternate screen); stale results are dropped via

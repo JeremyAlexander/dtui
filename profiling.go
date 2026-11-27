@@ -174,13 +174,6 @@ func profileWindowCheck(tf catalog.Timeframe, now time.Time) error {
 	return nil
 }
 
-// profileCacheTTL is how long an analysis of a moving window ("last 2h") is
-// reused, counted from when it arrived. Switching the thread-state lens and
-// walking callers and callees read the same analysis, so within the TTL they
-// cost no request; after it, the next read (or r) analyses the window as it
-// then is.
-const profileCacheTTL = 2 * time.Minute
-
 // profileAbandonGrace is how long an analysis nobody waits for keeps running.
 // A lens switch cancels the view's call and issues the next one a moment
 // later, and that gap must not restart a minute-long analysis; for a view that
@@ -192,8 +185,11 @@ const profileAbandonGrace = 2 * time.Second
 const profileCacheSize = 4
 
 // profileRuns shares analyses between the calls of the views. A call for an
-// analysis that is cached gets it at once; one for an analysis in flight
-// joins it. The analysis is cancelled shortly after the last call waiting for
+// analysis that is kept gets it at once, however long ago it arrived: the
+// lenses, the focus drills and a return to the view read one analysis, and
+// the caption states the clock times it covers. Only a fresh read (r,
+// tui.FreshRead) replaces it. A call for an analysis in flight joins it,
+// a fresh one too. The analysis is cancelled shortly after the last call waiting for
 // it was (the view was left): dtui then stops asking for its result. No
 // request tells the environment so; what it does with an analysis nobody
 // polls is not known.
@@ -214,10 +210,8 @@ type profileRun struct {
 	// arrived: the one with the lowest is dropped first.
 	used   int
 	window catalog.ProfileWindow
-	pinned bool // an absolute, closed window: its analysis never goes stale
 
 	done    chan struct{}
-	at      time.Time // when the analysis arrived
 	result  any
 	err     error
 	cancel  context.CancelFunc
@@ -246,8 +240,8 @@ func profileNote(ctx context.Context, text string) {
 	}
 }
 
-// get returns the analysis for key, running fetch unless it is cached or in
-// flight, and the window it covers. A call that is already cancelled starts
+// get returns the analysis for key, running fetch unless it is kept or in
+// flight, and the window it covers. A fresh read drops the kept one first. A call that is already cancelled starts
 // nothing.
 func (r *profileRuns) get(ctx context.Context, key string, tf catalog.Timeframe,
 	fetch func(ctx context.Context, w catalog.ProfileWindow) (any, error),
@@ -257,7 +251,7 @@ func (r *profileRuns) get(ctx context.Context, key string, tf catalog.Timeframe,
 	}
 	r.mu.Lock()
 	run := r.runs[key]
-	if run != nil && run.finished() && !run.pinned && r.now().Sub(run.at) > profileCacheTTL {
+	if run != nil && run.finished() && tui.FreshRead(ctx) {
 		delete(r.runs, key)
 		run = nil
 	}
@@ -309,7 +303,6 @@ func (r *profileRuns) start(key string, tf catalog.Timeframe,
 	run := &profileRun{
 		key:     key,
 		window:  catalog.ProfileWindowOf(tf, r.now()),
-		pinned:  tf.Absolute() && !tf.To.IsZero(),
 		done:    make(chan struct{}),
 		waiters: map[context.Context]struct{}{},
 	}
@@ -329,7 +322,7 @@ func (r *profileRuns) start(key string, tf catalog.Timeframe,
 		defer cancel()
 		result, err := fetch(runCtx, run.window)
 		r.mu.Lock()
-		run.result, run.err, run.at = result, err, r.now()
+		run.result, run.err = result, err
 		r.use(run)
 		close(run.done)
 		// A failure is not kept: the next call asks again. The calls

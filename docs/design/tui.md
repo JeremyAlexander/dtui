@@ -968,7 +968,9 @@ are dropped by `(owner, seq)` rather than by cancellation (see
 [learnings.md](../dev/learnings.md) section 3). The one exception is a spec
 that sets `CancelOnLeave` (the profiling view): its call takes minutes, so the
 view cancels the call's context when it leaves the breadcrumb trail, and
-auto-refresh skips it.
+auto-refresh skips it. Its source keeps a finished analysis, so `r` marks its
+call as a fresh read (`WithFreshRead`, read by the source with `FreshRead`);
+every other fetch reads what the source holds.
 
 ### Refresh & data handling
 

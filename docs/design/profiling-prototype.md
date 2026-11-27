@@ -70,10 +70,13 @@ dtctl exec profiling allocations PROCESS-… --raw -o json > allocations.json
 5. **A 2h window.** A longer selection is analysed for its last 2h, and the
    caption says so ("last 2h of the selected 24h", ADR-0007). A window in the
    future is refused before anything is asked.
-6. **`r` within two minutes reuses the analysis.** Lenses and focus drills read
-   one cached analysis, kept for two minutes after it arrived; the caption
-   states the clock range it covers. Two views share one exactly when they
-   would send the same request.
+6. **Only `r` replaces an analysis.** Lenses, focus drills and a return to
+   the view read one kept analysis, however long ago it arrived, so walking
+   the call graph never starts a second one; the caption states the clock
+   range it covers, which is the only sign that a result is old. `r` runs
+   the analysis again, also for a closed window, and joins one still in
+   flight. The four read last are kept. Two views share one exactly when
+   they would send the same request.
 7. **No preview pane, no app-only toggle.** A row has nothing more to show
    than its cells and the footnote, which spells the selected function out;
    the pane would only narrow the table. dtctl's app-only filter has no key.

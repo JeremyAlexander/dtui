@@ -720,72 +720,89 @@ func cachedRuns(runs *profileRuns) int {
 	return len(runs.runs)
 }
 
-// An analysis is reused for two minutes from when it arrived, however long it
-// took: one that ran for 90s is not already stale 30s later.
-func TestProfilingCacheAgesFromCompletion(t *testing.T) {
-	p := &blockingProfiler{release: make(chan struct{}), finished: make(chan error, 4)}
+// A finished analysis answers every read of its window (a lens, a focused
+// function, a return to the view) however long ago it arrived: reading a
+// table for ten minutes and pressing enter must not cost a second analysis.
+// Only a fresh read (r) replaces it, a closed window's included, and a fresh
+// read of an analysis still running joins it.
+func TestProfilingKeepsAnAnalysisUntilAFreshRead(t *testing.T) {
 	now := scenarioNow
 	var clock sync.Mutex
-	runs := newProfileRuns()
-	runs.now = func() time.Time {
-		clock.Lock()
-		defer clock.Unlock()
-		return now
+	newRuns := func() *profileRuns {
+		runs := newProfileRuns()
+		runs.now = func() time.Time {
+			clock.Lock()
+			defer clock.Unlock()
+			return now
+		}
+		return runs
 	}
 	advance := func(d time.Duration) {
 		clock.Lock()
 		now = now.Add(d)
 		clock.Unlock()
 	}
+	closedWindow := catalog.Timeframe{From: scenarioNow.Add(-3 * time.Hour), To: scenarioNow.Add(-2 * time.Hour), Dur: time.Hour}
+
+	for _, tf := range []catalog.Timeframe{timeframe(t, "2h"), closedWindow} {
+		p := &recordingProfiler{}
+		hotspots := hotspotsSource(p, newRuns())
+		read := func(ctx context.Context, arg string, want int, what string) map[string]any {
+			t.Helper()
+			records, err := hotspots(ctx, catalog.Scope{Entity: shopProcess, Timeframe: tf, Arg: arg}, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := p.asked(); got != want {
+				t.Fatalf("%s: %d analyses, want %d", what, got, want)
+			}
+			summary, _ := catalog.SplitSummary(records)
+			return summary
+		}
+		first := read(context.Background(), "", 1, "the first read")
+		advance(10 * time.Minute)
+		if got := read(context.Background(), "com.example.Main.run", 1, "a focus drill ten minutes later"); got[catalog.ProfSumTo] != first[catalog.ProfSumTo] {
+			t.Errorf("the focus drill reads a window up to %v, the table one up to %v", got[catalog.ProfSumTo], first[catalog.ProfSumTo])
+		}
+		advance(6 * time.Hour)
+		read(context.Background(), "", 1, "a return six hours later")
+		read(tui.WithFreshRead(context.Background()), "", 2, "a fresh read")
+		read(context.Background(), "", 2, "a read after the fresh one")
+	}
+
+	// A fresh read of an analysis in flight joins it.
+	p := &blockingProfiler{release: make(chan struct{}), finished: make(chan error, 2)}
+	runs := newRuns()
 	hotspots := hotspotsSource(p, runs)
-	scope := catalog.Scope{Entity: shopProcess, Timeframe: timeframe(t, "2h")}
-	read := func() map[string]any {
-		t.Helper()
-		records, err := hotspots(context.Background(), scope, "")
-		if err != nil {
+	done := make(chan error, 2)
+	for i, ctx := range []context.Context{context.Background(), tui.WithFreshRead(context.Background())} {
+		go func() {
+			_, err := hotspots(ctx, catalog.Scope{Entity: shopProcess, Timeframe: timeframe(t, "2h")}, "")
+			done <- err
+		}()
+		for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(time.Millisecond) {
+			runs.mu.Lock()
+			waiting := 0
+			for _, run := range runs.runs {
+				waiting += len(run.waiters)
+			}
+			runs.mu.Unlock()
+			if waiting == i+1 {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("%d calls wait for the analysis, want %d", waiting, i+1)
+			}
+		}
+	}
+	close(p.release)
+	for range 2 {
+		if err := <-done; err != nil {
 			t.Fatal(err)
 		}
-		summary, _ := catalog.SplitSummary(records)
-		return summary
 	}
-	started := func() int {
-		p.mu.Lock()
-		defer p.mu.Unlock()
-		return p.started
-	}
-
-	first := make(chan map[string]any, 1)
-	go func() { first <- read() }()
-	for started() == 0 {
-		time.Sleep(time.Millisecond)
-	}
-	advance(90 * time.Second) // the analysis takes 90s
-	p.release <- struct{}{}
-	if got := (<-first)[catalog.ProfSumTo]; got != "2026-07-15T12:00:00Z" {
-		t.Fatalf("the first reading covers up to %v", got)
-	}
-
-	// A read that the cache does not answer starts an analysis, which the
-	// test has to release: within reports whether one was needed.
-	within := func() (map[string]any, bool) {
-		t.Helper()
-		got := make(chan map[string]any, 1)
-		go func() { got <- read() }()
-		select {
-		case summary := <-got:
-			return summary, false
-		case p.release <- struct{}{}:
-			return <-got, true
-		}
-	}
-	advance(119 * time.Second)
-	if summary, fresh := within(); fresh || summary[catalog.ProfSumTo] != "2026-07-15T12:00:00Z" {
-		t.Fatalf("119s after it arrived: a new analysis=%v, window to %v; want the first one reused", fresh, summary[catalog.ProfSumTo])
-	}
-	advance(2 * time.Second)
-	if summary, fresh := within(); !fresh || summary[catalog.ProfSumTo] != "2026-07-15T12:03:31Z" || started() != 2 {
-		t.Errorf("121s after it arrived: a new analysis=%v, window to %v, %d analyses; want a second one up to 12:03:31",
-			fresh, summary[catalog.ProfSumTo], started())
+	if p.started != 1 {
+		t.Errorf("a fresh read of an analysis in flight started number %d", p.started)
 	}
 }
 

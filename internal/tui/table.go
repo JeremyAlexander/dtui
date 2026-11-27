@@ -45,9 +45,11 @@ type tableView struct {
 	// through every fetch that replaces the call (Refresh).
 	progress *callProgress
 	started  time.Time
-	seq      int
-	dql      string
-	elapsed  string
+	// fresh marks the next API call as a fresh read (Reload).
+	fresh   bool
+	seq     int
+	dql     string
+	elapsed string
 
 	sortCol  int // -1 = fetch order
 	sortDesc bool
@@ -336,6 +338,14 @@ func (v *tableView) composeRosterDQL() string {
 	return v.spec.Query(s)
 }
 
+// Reload is r: a refresh the user asked for. An API source that keeps its
+// results (the profiling view's analyses) is told so and answers with a new
+// one; a query runs again either way.
+func (v *tableView) Reload() tea.Cmd {
+	v.fresh = true
+	return v.Refresh()
+}
+
 func (v *tableView) Refresh() tea.Cmd {
 	if v.parked {
 		// Nobody watches a view that is off the trail: it fetches when it
@@ -425,6 +435,9 @@ func (v *tableView) fetch() tea.Cmd {
 			}
 			ctx, v.cancel = context.WithCancel(ctx)
 		}
+		if v.fresh {
+			ctx, v.fresh = WithFreshRead(ctx), false
+		}
 		return v.ds.call(withProgress(ctx, v.progress), v, v.seq, v.spec.API, v.scope, v.dql)
 	}
 	if v.spec.RecordCap > 0 {
@@ -479,8 +492,8 @@ func (v *tableView) Returned() tea.Cmd {
 
 // AutoRefreshes reports whether the periodic refresh ('R') applies to the
 // view. It does not where a fetch is an analysis the view cancels on leaving:
-// a tick would replace the call in flight every interval, and submit a new
-// analysis each time the source's cached one expired.
+// a tick would replace the call in flight every interval, and read again
+// what the source already holds. Only r (Reload) asks for a new analysis.
 func (v *tableView) AutoRefreshes() bool { return !v.spec.CancelOnLeave }
 
 func (v *tableView) SetTimeframe(tf catalog.Timeframe) tea.Cmd {

@@ -648,6 +648,15 @@ func autoRefreshes(v viewModel) bool {
 	return true
 }
 
+// reload refreshes a view because the user pressed r, which a view that can
+// tell the difference hears as Reload.
+func reload(v viewModel) tea.Cmd {
+	if r, ok := v.(interface{ Reload() tea.Cmd }); ok {
+		return r.Reload()
+	}
+	return v.Refresh()
+}
+
 func (a *app) handleKey(msg tea.KeyMsg) tea.Cmd {
 	key := msg.String()
 
@@ -748,7 +757,7 @@ func (a *app) handleKey(msg tea.KeyMsg) tea.Cmd {
 		case "o":
 			return a.openSelection()
 		case "r":
-			return top.Refresh()
+			return reload(top)
 		case "R":
 			a.refreshIdx = (a.refreshIdx + 1) % len(refreshIntervals)
 			a.refreshGen++
