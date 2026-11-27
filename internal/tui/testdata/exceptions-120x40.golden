@@ -8,7 +8,7 @@
    100  11:59:53      TimeoutError      upstrea…  payments    app     │  message
     50  11:59:49      TypeError         Cannot …  frontend    app     │   cart <n> is locked
     50  11:59:47      HttpError         HTTP 50…  inventory   message │  thrown at
-    50  11:59:45      (nothing record…            legacy-ba…          │   com.example.shop.cart.CartService.addItem
+    50  11:59:45      (no key)                    legacy-ba…          │   com.example.shop.cart.CartService.addItem
                                                                       │  then
                                                                       │   com.example.shop.web.CartController.post
                                                                       │  services: cart, checkout

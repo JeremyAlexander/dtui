@@ -451,7 +451,7 @@ func TestExceptionIssueColumns(t *testing.T) {
 			t.Errorf("%s = %q, want %q", title, got, want)
 		}
 	}
-	if got := cell(rows[1], "EXCEPTION"); got != "(nothing recorded)" {
+	if got := cell(rows[1], "EXCEPTION"); got != "(no key)" {
 		t.Errorf("keyless EXCEPTION = %q", got)
 	}
 	// Neither a message nor a frame: the cell is empty.
@@ -630,12 +630,52 @@ func TestPreviewTitleOfRowsWithoutAType(t *testing.T) {
 		issueSpan(1, "2026-07-15T11:59:58Z", "cart", "", "disk full", ""),
 		issueSpan(2, "2026-07-15T11:59:57Z", "cart", "", "", ""),
 	})
-	for i, want := range []string{"exception", "(nothing recorded)"} {
+	for i, want := range []string{"exception", "(no key)"} {
 		if got := PreviewTitle(rows[i]); got != want {
 			t.Errorf("row %d: title = %q, want %q", i, got, want)
 		}
 		if got := exceptionsSpec.Columns[2].Text(rows[i]); got != want {
 			t.Errorf("row %d: EXCEPTION cell = %q, want %q", i, got, want)
 		}
+	}
+}
+
+// A span has no key when none of its exception events gives a type, a
+// message that is non-empty once parameterised, or a frame a reader can
+// use. Such spans recorded something, but nothing to group by: they are
+// counted in the one keyless last row, whatever its count, and that row
+// does not claim that nothing was recorded.
+func TestGroupExceptionIssuesCountsEverySpanWithoutAKeyInTheLastRow(t *testing.T) {
+	spans := []map[string]any{
+		issueSpan(1, "2026-07-15T11:00:00Z", "a", "T", "", ""),
+		issueSpan(2, "2026-07-15T11:00:05Z", "a", "", " \t ", ""),             // a message of white space
+		issueSpan(3, "2026-07-15T11:00:04Z", "b", "", "", "no frame in here"), // a stack no reader can use
+		issueSpan(4, "2026-07-15T11:00:03Z", "b", "", "", ""),                 // nothing at all
+	}
+	rows := GroupExceptionIssues(spans)
+	issues := issuesOf(t, rows)
+	if len(issues) != 2 {
+		t.Fatalf("issues = %+v, want one keyed and one keyless", issues)
+	}
+	last := issues[1]
+	if issues[0].Key == "" || last.Key != "" || last.Count != 3 || last.Rung != "" {
+		t.Errorf("issues = %+v, want the keyless row last with 3 spans though it is the loudest", issues)
+	}
+	if issues[0].Count+last.Count != len(spans) {
+		t.Errorf("counts add up to %d, want %d", issues[0].Count+last.Count, len(spans))
+	}
+	if got := Str(rows[1], "span.id"); got != Str(spans[1], "span.id") {
+		t.Errorf("the keyless row opens span %q, want its newest", got)
+	}
+	spec := Lookup("exceptions")
+	for _, c := range spec.Columns {
+		if c.Title == "EXCEPTION" {
+			if got := c.Text(rows[1]); got != "(no key)" {
+				t.Errorf("keyless EXCEPTION = %q", got)
+			}
+		}
+	}
+	if text, _ := spec.Yank(rows[1]); text != "" {
+		t.Errorf("the keyless row yanked %q", text)
 	}
 }

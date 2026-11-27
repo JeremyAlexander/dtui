@@ -166,11 +166,13 @@ type ExceptionIssue struct {
 	Newest, Oldest string
 }
 
-// name is what a row is called where its type would stand: the type, or a
-// stand-in when the event recorded none, or nothing at all.
+// name is what a row is called where its type would stand: the type, a
+// stand-in when the keyed event recorded none, or what the keyless row is:
+// its spans may have recorded something, but nothing a key can be built
+// from.
 func (issue ExceptionIssue) name() string {
 	if issue.Key == "" {
-		return "(nothing recorded)"
+		return "(no key)"
 	}
 	return firstNonEmpty(issue.Type, "exception")
 }
@@ -192,9 +194,10 @@ func issueOf(rec map[string]any) ExceptionIssue {
 
 // GroupExceptionIssues turns a sample of exception-bearing spans into one
 // row per issue key: the loudest issue first, then the one seen last, then
-// by key. Every span is counted in exactly one row; a span whose exception
-// events carry no type, message or stack has no key and is counted in a
-// keyless last row.
+// by key. Every span is counted in exactly one row; a span none of whose
+// exception events gives a type, a message that is non-empty once
+// parameterised, or a usable frame has no key and is counted in a keyless
+// last row, so the counts add up to the size of the sample.
 //
 // A row holds the issue under exceptionIssueKey and, as real span fields,
 // the start time and the ids of the span that describes the group: its

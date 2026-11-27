@@ -8,7 +8,7 @@
    100  11:59:53      TimeoutError            upstream timed out after <n>              payments      app     │  message
     50  11:59:49      TypeError               Cannot read properties of undefined (re…  frontend      app     │   cart <n> is locked
     50  11:59:47      HttpError               HTTP 503 from stock service               inventory     message │  thrown at
-    50  11:59:45      (nothing recorded)                                                legacy-batch          │   com.example.shop.cart.CartService.addItem
+    50  11:59:45      (no key)                                                          legacy-batch          │   com.example.shop.cart.CartService.addItem
                                                                                                               │  then
                                                                                                               │   com.example.shop.web.CartController.post
                                                                                                               │  services: cart, checkout

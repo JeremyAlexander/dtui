@@ -8,7 +8,7 @@
    100  11:59:53      TimeoutError            upstream t…  payments      app
     50  11:59:49      TypeError               Cannot rea…  frontend      app
     50  11:59:47      HttpError               HTTP 503 f…  inventory     message
-    50  11:59:45      (nothing recorded)                   legacy-batch
+    50  11:59:45      (no key)                             legacy-batch
 
 
 
