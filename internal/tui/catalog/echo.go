@@ -4,7 +4,9 @@ import "strings"
 
 // EchoCommand renders a command echo: a line that a POSIX shell parses back
 // into command's words, the operand and the flags, and nothing else. Every
-// echo that carries a value goes through here. The operand and the flags are
+// echo that carries a value is meant to go through here; two do not yet
+// (echoQuery in the tui's datasource.go, and the snapshots echo in
+// livedebugger.go; docs/dev/tech-debt.md). The operand and the flags are
 // values (a query, an id from a record, a segment) and whoever writes the
 // tenant's data picks them, so each is quoted unless it is plainly a single
 // word; command is the fixed `dtctl <verb> <resource>` text and is not.

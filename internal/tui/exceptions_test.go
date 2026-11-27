@@ -1092,3 +1092,29 @@ func TestExceptionsFoldedPreviewNamesTheKeyThatOpensTheRecord(t *testing.T) {
 		t.Errorf("the fold of the preview:\n%s", out)
 	}
 }
+
+// The echo is shown as text: a control sequence in it (from a query the
+// user typed, or a segment id) is drawn, not sent to the terminal.
+func TestFooterShowsAnEchoAsText(t *testing.T) {
+	const colour, paste = "\x1b[38;2;1;2;3m", "\x1b[201~"
+	a := testApp(t, "exceptions")
+	tv := seedSample(t, a, issueSpans(), nil)
+	tv.dql = "fetch spans " + colour + paste + " | limit 1"
+	if !strings.Contains(tv.Echo(), colour) {
+		t.Fatalf("the case lost its control bytes: %q", tv.Echo())
+	}
+	if out := a.View(); strings.Contains(out, colour) || strings.Contains(out, paste) || !strings.Contains(out, "␛[201~") {
+		t.Errorf("the footer passes the echo's control bytes through:\n%q", out[max(len(out)-400, 0):])
+	}
+	press(a, key("c"))
+	if strings.ContainsRune(a.status, 0x1b) || !strings.Contains(a.status, "␛[201~") {
+		t.Errorf("status after c = %q", a.status)
+	}
+	logs := testApp(t, "logs")
+	lv := logs.top().(*tableView)
+	lv.searches, lv.dql = []string{"x"}, "fetch logs "+paste
+	press(logs, key("c"))
+	if strings.ContainsRune(logs.status, 0x1b) || !strings.Contains(logs.status, "␛[201~") {
+		t.Errorf("logs status after c = %q", logs.status)
+	}
+}

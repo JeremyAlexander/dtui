@@ -710,10 +710,13 @@ func (a *app) handleKey(msg tea.KeyMsg) tea.Cmd {
 		case "c":
 			if echo := top.Echo(); echo != "" {
 				yank(echo)
+				// The clipboard takes the echo as it is; the status line
+				// shows it, and what is shown is text.
+				shown := catalog.SafeText(flatten(echo))
 				if note := exitNote(top); note != "" {
-					return status("copied " + note + ": " + flatten(echo))
+					return status("copied " + note + ": " + shown)
 				}
-				return status("copied: " + flatten(echo))
+				return status("copied: " + shown)
 			}
 			return nil
 		case "o":
@@ -1315,7 +1318,7 @@ func (a *app) renderFooter() string {
 		line2 = " " + theme.Echo.Render("≈ "+a.notice.text)
 	default:
 		if echo := a.top().Echo(); echo != "" {
-			line2 = " " + theme.Echo.Render("≡ "+flatten(echo))
+			line2 = " " + theme.Echo.Render("≡ "+catalog.SafeText(flatten(echo)))
 		}
 	}
 	return line1 + "\n" + ansi.Truncate(line2, a.width, "…")
