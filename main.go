@@ -198,6 +198,7 @@ as W would. See dtui send --help.`,
 			DeletePreset:     deletePersonalPreset(personalPresetsPath(cfg.CurrentContext)),
 		}
 		opts.SourceRoot, opts.Editor, opts.SourceRefused = sourceSettings(os.Getwd, os.UserHomeDir, os.Getenv)
+		opts.EditorUnknown = source.UnknownEditor(os.Getenv)
 		if listen {
 			opts.Listen = listenRemote(remoteSession)
 		}

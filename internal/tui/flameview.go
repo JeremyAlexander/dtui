@@ -384,17 +384,16 @@ func (v *flameView) Crumb() string {
 
 func (v *flameView) Echo() string { return catalog.HotspotStacksEcho(v.scope) }
 
-// Selection is the selected frame's function and the process analysed, for
-// the keys that act on an entity (o opens it, . pins it).
+// Selection is the process analysed, for the keys that act on an entity (o
+// opens it, . pins it).
 func (v *flameView) Selection() (map[string]any, *catalog.Entity) {
 	if v.scope.Entity == nil {
 		return nil, nil
 	}
-	rec := map[string]any{catalog.ProfEntityID: v.scope.Entity.ID}
-	if fn, ok := v.selectedFunction(); ok {
-		rec[catalog.ProfFunction] = fn
-	}
-	return rec, v.scope.Entity
+	// The frame's name is not in the record: it is text from the
+	// environment, and a name that reads as a link would be offered to o as
+	// a destination ahead of the process.
+	return map[string]any{catalog.ProfEntityID: v.scope.Entity.ID}, v.scope.Entity
 }
 
 // YankText copies the selected frame's function, spelled out.

@@ -153,10 +153,24 @@ func TestDetectEditor(t *testing.T) {
 		{"EDITOR", map[string]string{"EDITOR": "subl -w"}, "sublime"},
 		{"a terminal editor has no link", map[string]string{"EDITOR": "nvim", "VISUAL": "vim"}, ""},
 		{"a program on Windows", map[string]string{"EDITOR": "Code.exe"}, "vscode"},
+		{"a launcher script on Windows", map[string]string{"EDITOR": `C:\Tools\code.cmd`}, "vscode"},
+		{"arguments after a tab", map[string]string{"EDITOR": "code\t--wait"}, "vscode"},
+		{"a blank setting is no setting", map[string]string{"DTUI_EDITOR": "   ", "TERM_PROGRAM": "vscode"}, "vscode"},
+		{"a blank setting, then EDITOR", map[string]string{"DTUI_EDITOR": "\t", "EDITOR": "zed"}, "zed"},
 	} {
-		e, ok := DetectEditor(func(key string) string { return tc.env[key] })
+		getenv := func(key string) string { return tc.env[key] }
+		e, ok := DetectEditor(getenv)
 		if e.ID != tc.want || ok != (tc.want != "") {
 			t.Errorf("%s: %q (%v), want %q", tc.name, e.ID, ok, tc.want)
+		}
+		// A setting that names no editor is the one case the reader is told
+		// about: it turned the detection off.
+		wantUnknown := ""
+		if set := strings.TrimSpace(tc.env["DTUI_EDITOR"]); set != "" && tc.want == "" {
+			wantUnknown = set
+		}
+		if got := UnknownEditor(getenv); got != wantUnknown {
+			t.Errorf("%s: unknown editor %q, want %q", tc.name, got, wantUnknown)
 		}
 	}
 }

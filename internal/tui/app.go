@@ -69,6 +69,10 @@ type Options struct {
 	// "" means none is known, and the file's place is copied instead.
 	SourceRoot string
 	Editor     string
+	// EditorUnknown is what DTUI_EDITOR names when it is no editor dtui
+	// knows: the reader is told at the start, and again where an editor
+	// would have been used.
+	EditorUnknown string
 	// SourceRefused says why a repository was found and SourceRoot is ""
 	// all the same (a home directory, a whole volume), for O to say.
 	SourceRefused string
@@ -260,7 +264,7 @@ func newApp(opts Options) (*app, error) {
 	a := &app{
 		opts: opts,
 		ds: &dataSource{exec: opts.Executor, sources: opts.Sources,
-			source: newSourceLookup(opts.SourceRoot, opts.Editor)},
+			source: newSourceLookup(opts.SourceRoot, opts.Editor).withUnknownEditor(opts.EditorUnknown)},
 		tf:               catalog.DefaultTimeframe,
 		hist:             loadHistory(opts.HistoryPath, opts.ContextName),
 		qhist:            loadQueryHistory(opts.QueryHistoryPath),
@@ -366,17 +370,27 @@ func (a *app) pinRejected(name string) bool {
 
 func (a *app) top() viewModel { return a.stack[len(a.stack)-1] }
 
+// startupNotice is the one line the session starts with, if it has one: the
+// host's own, or else that DTUI_EDITOR names no editor.
+func (a *app) startupNotice() tea.Cmd {
+	switch {
+	case a.opts.StartupNotice != "" && a.opts.StartupNoticeErr:
+		return statusErr(a.opts.StartupNotice)
+	case a.opts.StartupNotice != "":
+		return status(a.opts.StartupNotice)
+	case a.opts.EditorUnknown != "":
+		return statusErr(unknownEditorNotice(a.opts.EditorUnknown))
+	}
+	return nil
+}
+
 func (a *app) Init() tea.Cmd {
 	// Fire the session's derived-field lookups once up front (Azure
 	// subscription names, and any future opaque-id→name mapping). Centralized
 	// here so no view needs a per-type trigger; warm before most lists land.
 	cmds := []tea.Cmd{a.top().Init(), a.ds.ensureDerived()}
-	if a.opts.StartupNotice != "" {
-		if a.opts.StartupNoticeErr {
-			cmds = append(cmds, statusErr(a.opts.StartupNotice))
-		} else {
-			cmds = append(cmds, status(a.opts.StartupNotice))
-		}
+	if notice := a.startupNotice(); notice != nil {
+		cmds = append(cmds, notice)
 	}
 	// Workspace segments resolve asynchronously: the first paint is never
 	// blocked, and the initial unsegmented queries are superseded by the

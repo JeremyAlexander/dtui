@@ -690,7 +690,7 @@ func TestFlameGraphExits(t *testing.T) {
 		t.Errorf("c echoes %s", got)
 	}
 	rec, entity := fv.Selection()
-	if entity == nil || entity.ID != "PROCESS-000000000000A001" || rec[catalog.ProfFunction] != "main" {
+	if entity == nil || entity.ID != "PROCESS-000000000000A001" || len(rec) != 1 || rec[catalog.ProfEntityID] != entity.ID {
 		t.Errorf("selection %v of %v", rec, entity)
 	}
 	if fv.AutoRefreshes() {

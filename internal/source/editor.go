@@ -80,7 +80,9 @@ var commands = map[string]string{
 // VISUAL or EDITOR names a program one of them is known by. The values are
 // read as names only; nothing in them is run.
 func DetectEditor(getenv func(string) string) (Editor, bool) {
-	if id := getenv("DTUI_EDITOR"); id != "" {
+	// A blank setting is no setting. One that names no editor is not
+	// guessed around: UnknownEditor has it, for the reader to be told.
+	if id := strings.TrimSpace(getenv("DTUI_EDITOR")); id != "" {
 		return EditorByID(id)
 	}
 	hint := ""
@@ -101,11 +103,30 @@ func DetectEditor(getenv func(string) string) (Editor, bool) {
 			break
 		}
 		// "code --wait" names code; the rest is for a shell, which is not asked.
-		program, _, _ := strings.Cut(strings.TrimSpace(getenv(name)), " ")
-		program = strings.TrimSuffix(strings.ToLower(filepath.Base(program)), ".exe")
+		fields := strings.Fields(getenv(name))
+		if len(fields) == 0 {
+			continue
+		}
+		// The value may be another platform's path: its last part either way.
+		program := strings.ToLower(fields[0])
+		program = program[strings.LastIndexAny(program, `/\`)+1:]
+		for _, ext := range []string{".exe", ".cmd", ".bat"} {
+			program = strings.TrimSuffix(program, ext)
+		}
 		hint = commands[program]
 	}
 	return EditorByID(hint)
+}
+
+// UnknownEditor is what DTUI_EDITOR is set to when it names no editor of
+// EditorIDs, and "" otherwise. Such a setting leaves dtui without an editor,
+// which nothing else would say.
+func UnknownEditor(getenv func(string) string) string {
+	id := strings.TrimSpace(getenv("DTUI_EDITOR"))
+	if _, ok := EditorByID(id); ok {
+		return ""
+	}
+	return id
 }
 
 // escapePath percent-encodes every byte of a path but the slashes between
