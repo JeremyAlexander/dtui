@@ -114,6 +114,21 @@ func TestTailStartStopsAtAProjection(t *testing.T) {
 	}
 }
 
+// A query typed on one line and the same query on four give the same value
+// picker query, as they give the same composed query: both read the stages,
+// not the line breaks.
+func TestFieldsSummaryQueryReadsAOneLineQueryByItsStages(t *testing.T) {
+	lines := "fetch logs\n| filter a == 1\n| sort timestamp desc\n| limit 10"
+	oneLine := "fetch logs | filter a == 1 | sort timestamp desc | limit 10"
+	target, facets := Facet{Field: "loglevel"}, []Facet{{Field: "host", Value: "h"}}
+	want := "fetch logs\n| search \"*x*\"\n| filter a == 1\n| filter host == \"h\"\n| fieldsSummary loglevel, topValues: 250"
+	for name, dql := range map[string]string{"four lines": lines, "one line": oneLine} {
+		if got := FieldsSummaryQuery(dql, target, []string{"x"}, facets); got != want {
+			t.Errorf("%s: summary query =\n%s\nwant\n%s", name, got, want)
+		}
+	}
+}
+
 // Search stages must land directly after the source command — DQL rejects
 // them after transforming commands like parse/expand/summarize (validated
 // live: SEARCH_COMMAND_NOT_ALLOWED_AFTER on the pods pipeline). Multiple
