@@ -43,7 +43,9 @@ boundary (two since go-runewidth 0.0.31), although the submitted query
 holds it. Under that variable or `LC_ALL=ja_JP.UTF-8`, moving the cursor up
 onto a line of such characters places the next edit one cell to the left;
 go-runewidth 0.0.31, which dtctl requires since 0.46.0, extends that to a
-CJK locale named without a charset (`LC_ALL=ja_JP`). Fix: one width
+CJK locale named without a charset (`LC_ALL=ja_JP`). Bubbles' `textinput`
+(truncation) and `glamour` (wrapping) measure with go-runewidth too and
+shift with it. Fix: one width
 convention in bubbles' `textarea` upstream, or a wrapper in dtui that
 measures both paths the same way.
 
@@ -90,11 +92,16 @@ and the `logQuery` beside it clip each other. Fix: send the timeframe's
 could import the shell. `TestTUIOpensNoListener` matches the identifier
 `net`, so an aliased import passes. `TestTUIHasNoDirectTenantAccess` and
 `TestWorkspaceHasNoTenantAccess` refuse `net/http` but no other HTTP
-client. And nothing refuses a `replace` or `exclude` in the committed
+client. `TestCatalogIsFrameworkFree` knows the terminal framework by the
+prefix `github.com/charmbracelet/` only, and would match nothing after a
+move to a release published under `charm.land/`. An import walk over a
+folder that holds no non-test Go file passes every guard built on it. And
+nothing refuses a `replace` or `exclude` in the committed
 `go.mod`, with either of which `go install github.com/dynatrace-oss/dtui@latest`
 rejects the module. Fix: compare whole path elements, resolve the import
-behind the identifier, name the HTTP clients in the module graph, and fail
-on a `replace` or `exclude` directive.
+behind the identifier, name the HTTP clients in the module graph, match the
+framework under both hosts, fail a walk that reads no file, and fail on a
+`replace` or `exclude` directive.
 
 ## Partial-result classifier is a copy of dtctl's
 
@@ -118,14 +125,14 @@ User-Agent and the query header then report. Fix:
 `makefile` and `.goreleaser.yaml` stamp dtui's version, commit and date
 into dtctl's `pkg/version`. dtctl's executor sends that `Version` in its
 `dt-client-context` header under the app name `dtctl`, so the header gives
-dtui's version as dtctl's. `Commit` and `Date` are read only by dtctl's
-`cmd` package, which dtui does not link, yet the comments beside the flags
-say consumed packages read them and `ldflagProblems` in
-`invariants_test.go` requires all three. Open
+dtui's version as dtctl's. A build that passes no such flag (`wasm/build.sh`,
+`go install`) sends dtctl's own default version instead. `Commit` and `Date`
+are read only by dtctl's `cmd` package, which dtui does not link, yet
+`ldflagProblems` in `invariants_test.go` requires all three. Open
 decision, to take with whoever reads that header: stop stamping dtctl, so
 the header names the dtctl that is linked, or stamp `Version` only. Fix:
-after that decision, drop the unused flags, their requirement in the test
-and the comments.
+after that decision, drop the unused flags and their requirement in the
+test.
 
 ## The dtctl path guard reads text, not a build
 
@@ -133,3 +140,13 @@ and the comments.
 path. It cannot see what a build stamps: a recipe that loses `$(LDFLAGS)`
 still passes. Fix: keep the text test, and add one assertion on the stamped
 value to the snapshot build that `.github/workflows/ci.yml` already runs.
+
+## Builds embed the builder's paths
+
+Neither `wasm/build.sh` nor `.goreleaser.yaml` passes `-trimpath`, so
+`dtui.wasm` and the release binaries carry the absolute paths of the
+toolchain, the module cache and the checkout they were built from. For a
+local wasm build that includes a home folder, and with it a user name. The
+extension is loaded unpacked today and the file is git-ignored, so nothing
+leaves the machine. Fix: decide `-trimpath` for both builds together,
+before the extension is distributed.
