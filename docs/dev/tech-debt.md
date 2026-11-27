@@ -129,13 +129,14 @@ combining sequence and leave the mark on the ellipsis, and an empty package
 segment loses a dot. Hostile or malformed labels only. Fix: make the label
 safe first and cut by grapheme cluster.
 
-## Below 24 lines a table shows its header and no rows
+## Nothing is tested below 24 lines
 
-At 80x10 the screen keeps its height but the profiling view draws the
-column header and no row; `tableView.pageSize` returns 10 when the body fits
-only the chrome. 80x24 is the smallest supported size
-(`docs/design/tui.md`). Fix: decide what a table gives up first below it
-(the lens strip, the caption, the footnote) and test at 80x12.
+80x24 is the smallest supported size (`docs/design/tui.md`). Under it the
+profiling view keeps its five lines of chrome and gives up rows: at 80x10
+it shows one row and no footnote. A review saw the column header with no
+row at that size on an earlier commit. Fix: decide what a table gives up
+first below 24 lines (the lens strip, the caption, the footnote) and add a
+snapshot at 80x12.
 
 ## A profiling answer of another shape reads as an idle process
 
