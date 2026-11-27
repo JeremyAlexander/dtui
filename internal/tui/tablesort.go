@@ -21,27 +21,42 @@ func (v *tableView) sortKey(col catalog.Column, rec map[string]any) any {
 	}
 }
 
-// sortRows orders rows by the active sort column (stable; empties last).
+// sortRows orders rows by the active sort column (stable; empties last). It
+// sorts a copy: rows can be the fetched slice itself (applyFilter without a
+// filter), and that keeps the fetch order "no sort" returns to. Each row's
+// key is read once, since a column may build it from the whole row.
 func (v *tableView) sortRows() {
 	if v.sortCol < 0 || v.sortCol >= len(v.columns()) {
 		return
 	}
 	col := v.columns()[v.sortCol]
-	sort.SliceStable(v.rows, func(i, j int) bool {
-		a, aEmpty := sortable(v.sortKey(col, v.rows[i]))
-		b, bEmpty := sortable(v.sortKey(col, v.rows[j]))
-		if aEmpty != bEmpty {
-			return bEmpty // empties sink regardless of direction
+	type keyed struct {
+		rec   map[string]any
+		key   any
+		empty bool
+	}
+	rows := make([]keyed, len(v.rows))
+	for i, rec := range v.rows {
+		rows[i].rec = rec
+		rows[i].key, rows[i].empty = sortable(v.sortKey(col, rec))
+	}
+	sort.SliceStable(rows, func(i, j int) bool {
+		a, b := rows[i], rows[j]
+		if a.empty != b.empty {
+			return b.empty // empties sink regardless of direction
 		}
-		if aEmpty {
+		if a.empty {
 			return false
 		}
-		less := cmpSortable(a, b) < 0
 		if v.sortDesc {
-			less = cmpSortable(a, b) > 0
+			return cmpSortable(a.key, b.key) > 0
 		}
-		return less
+		return cmpSortable(a.key, b.key) < 0
 	})
+	v.rows = make([]map[string]any, len(rows))
+	for i, row := range rows {
+		v.rows[i] = row.rec
+	}
 }
 
 // defaultDesc picks the natural direction for a freshly selected sort column:
