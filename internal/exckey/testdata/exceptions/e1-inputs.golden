@@ -31,6 +31,7 @@ b29bd30168fc254b	const msgWinPathWord, msgWinPathWords
 405ee81cc12fde3e	const stackVoteLines, stackTextMax, stackLineMax
 83b5dd168ff56a1b	const stackWordEnds
 f6b370e98019e7df	const wordBytes
+15.0.0	unicode.Version
 b3635d365a0f43f2	var deployHomes
 e4510216bc423701	var deployRoots
 ffcd8606722ec0d2	var dotnetClosureRe
